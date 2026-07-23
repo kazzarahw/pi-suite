@@ -17,8 +17,14 @@ export interface Diagnostic {
   code?: string;
 }
 
+/**
+ * The todo statuses, in order. Feed into `StringEnum(TODO_STATUSES)` when building
+ * pi-todo's tool schema so the wire enum stays in sync with {@link TodoStatus}.
+ */
+export const TODO_STATUSES = ["pending", "in_progress", "done"] as const;
+
 /** Status of a todo item (pi-todo). */
-export type TodoStatus = "pending" | "in_progress" | "done";
+export type TodoStatus = (typeof TODO_STATUSES)[number];
 
 /** A single todo item, shared by pi-todo emissions and any subscriber. */
 export interface TodoItem {

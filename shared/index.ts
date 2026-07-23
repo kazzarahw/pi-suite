@@ -17,6 +17,6 @@ export type {
   EventPayloads,
   EventName,
 } from "./events.ts";
-export { EVENTS } from "./events.ts";
+export { EVENTS, TODO_STATUSES } from "./events.ts";
 
 export { TAG_PREFIX, tagName, injectionHeader, injectionBlock } from "./tags.ts";
