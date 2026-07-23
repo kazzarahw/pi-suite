@@ -1,16 +1,29 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { loadConfig, saveConfig } from "./src/config.ts";
+import { defaultExec } from "./src/browser.ts";
+import { buildBrowserTool } from "./src/tools.ts";
+import { buildBrowserCommand } from "./src/command.ts";
 
 /**
- * pi-browser — the web, in house style.
+ * pi-browser — the web, in one house-style tool.
  *
- * Registers one `browser` tool (an `action` enum wrapping the `agent-browser`
- * CLI's verbs — snapshot/open/click/type/…) plus `web_search` / `web_fetch`.
+ * Registers a single `browser` tool: an `action` enum wrapping the agent-browser
+ * CLI (open / snapshot / read / search / click / type / … over a persistent
+ * session). `search` and `read` fold in what would have been web_search / web_fetch.
  *
- * Not yet implemented. Build spec:
- *   docs/superpowers/plans/2026-07-20-pi-browser.md
- *   (Build step 2 is a hard gate: confirm the real `agent-browser` CLI first
- *    via `agent-browser skills get core --full`.)
+ * Build spec: docs/superpowers/plans/2026-07-20-pi-browser.md
  */
 export default function piBrowser(pi: ExtensionAPI): void {
-  // TODO: wire the `browser` action dispatch and the web tools per the spec.
+  pi.registerTool(
+    buildBrowserTool({
+      loadConfig: () => loadConfig(),
+      exec: defaultExec,
+    }),
+  );
+
+  const command = buildBrowserCommand({
+    loadConfig: () => loadConfig(),
+    saveConfig: (c) => saveConfig(c),
+  });
+  pi.registerCommand(command.name, command.options);
 }
