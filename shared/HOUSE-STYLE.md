@@ -51,9 +51,17 @@ the human, and the human mostly just configures and walks away.
 
 ## 3 · Tools (the agent surface)
 
-- **Naming:** `<domain>_<verb>`, snake_case — `git_checkpoint`, `todo_add`,
-  `browser_navigate`, `memory_recall`, `lens_hover`. A **bare verb** is allowed
-  when an extension exposes exactly one tool: `consult`, `spawn`.
+- **Naming:** `<domain>_<verb>`, snake_case — `todo_write`, `memory_recall`,
+  `web_search`. A **bare verb** is allowed when an extension exposes exactly one
+  tool: `consult`, `spawn`.
+- **Dispatch tools (action enum over N tools):** when a domain exposes many
+  variant actions over a shared target or session, expose **one** `<domain>` tool
+  whose `action` is a `StringEnum`, not a tool per action — e.g.
+  `browser({ action, … })` wrapping agent-browser's ~40 verbs, or
+  `lens({ action, … })` for hover/references/definition/rename. Use shared,
+  action-gated params, each described with which actions it applies to. Reach for
+  this whenever a per-action design would mint more than ~3–4 near-identical
+  tools; the goal is a tight agent surface, not one tool per capability.
 - **Enums:** always `StringEnum` (from `@earendil-works/pi-ai`) — never
   `Type.Union([Type.Literal(...)])` (Google-provider compatibility).
 - **Params:** typebox schemas, snake_case, **every param has a `description`**.
@@ -89,6 +97,7 @@ defined once in `pi-shared`:
 - pi-lens waits for its own `lens:clean` before running the verify (test) pass.
 - pi-git checkpoints on `todo:task-complete`.
 - pi-memory records a gotcha on `verify:failed`.
+- pi-git hooks Pi's own **fork lifecycle** (`session_before_fork` → `session_shutdown{reason:"fork"}`) so a user message-rewind also reverts the files changed since — the harness surface at its purest: no tool, no command, the agent isn't even aware.
 
 **Hook hygiene:** keep handlers fast and idempotent; never block the loop on slow
 work without honoring `ctx.signal`; reserve `{ block: true }` for the `"block"`
@@ -102,13 +111,14 @@ Only two legitimate kinds of command:
 
 1. **Configuration:** `/pi-<name>` opens an interactive config (via `ctx.ui`),
    persisted to settings (§7). One per extension.
-2. **Explicit human override** the agent should *not* do autonomously — e.g.
-   `/rollback <checkpoint>` (a human choosing to revert). Rare; add only when a
-   real human-in-the-loop decision exists.
+2. **Explicit human override** the agent should *not* do autonomously. Genuinely
+   rare — prefer hooking a native Pi affordance over inventing a command. The
+   suite currently ships **none**: rewinding a message rides Pi's built-in
+   `/fork` (pi-git hooks its lifecycle) rather than a custom `/rollback`.
 
-Core capabilities are never commands. If you're tempted to add `/checkpoint` or
-`/recall`, stop — those are `git_checkpoint` (tool) / auto-checkpoint (hook) and
-`memory_recall` (tool).
+Core capabilities are never commands. If you're tempted to add `/checkpoint`,
+`/rollback`, or `/recall`, stop — checkpointing and restore are pi-git *hooks*
+(auto on turn / on fork), and recall is `memory_recall` (tool).
 
 ---
 
@@ -149,7 +159,10 @@ lens · diagnostics after edit to src/foo.ts
   | `"block"` | additionally hard-`{ block: true }` the offending action on failure |
 
   Extensions may add domain-specific sub-flags, but the top-level `mode` is
-  universal and means the same thing everywhere.
+  universal and means the same thing everywhere. Extensions with **no blockable
+  action** support `off`/`notify` only and treat `block` as `notify` — pi-git
+  (checkpointing is invisible and non-blocking; `off` disables it) and pi-memory
+  (writes aren't gated). Document this collapse per extension.
 
 ---
 
@@ -191,14 +204,20 @@ coded one.
 
 ---
 
-## Appendix · Per-extension surface map (illustrative, refine when building)
+## Appendix · Per-extension surface map
 
-| Extension | Tools (agent) | Emits / subscribes (harness) | Commands (user) |
+Nine tools across the suite — a deliberately tight agent surface. The rule that
+keeps it small: automatic behavior is a **hook**, not a tool (pi-git); many
+variant actions collapse behind one **`action` enum** tool (`browser`, `lens`);
+and read paths are covered by tool-result echoes + context injection, not extra
+read tools (pi-todo).
+
+| Extension | Tools (agent) | Emits / subscribes · hooks (harness) | Commands (user) |
 |---|---|---|---|
 | **pi-consult** | `consult` | emits `consult:answered` | `/pi-consult` |
-| **pi-git** | `git_checkpoint`, `git_rollback`, `git_worktree_*` | emits `git:*`; subs `todo:task-complete`; hooks auto-checkpoint on settle, guards destructive `tool_call` | `/pi-git`, `/rollback` |
-| **pi-lens** | `lens_hover`, `lens_rename`, `lens_references`, `lens_definition` | emits `lens:*`/`verify:*`; hooks inject diagnostics on `tool_result`, run tests on `agent_settled` | `/pi-lens` |
-| **pi-memory** | `memory_recall`, `memory_write` | emits `memory:*`; subs `verify:failed`; hooks inject on `context`/`session_start` | `/pi-memory` |
-| **pi-spawn** | `spawn` (+ `spawn_status`?) | emits `spawn:*` | `/pi-spawn` |
-| **pi-todo** | `todo_add`, `todo_update`, `todo_complete`, `todo_list` | emits `todo:*`; renders widget | `/pi-todo` |
-| **pi-browser** | `browser_navigate`, `browser_snapshot`, `browser_click`, `browser_type`, `browser_screenshot`, `web_search`, `web_fetch` | — | `/pi-browser` |
+| **pi-git** | **none** | emits `git:*`; subs `todo:task-complete`; hooks: checkpoint each turn, **restore on Pi's fork lifecycle**; worktree capability for pi-spawn | `/pi-git` |
+| **pi-lens** | `lens` *(action enum)* | emits `lens:*`/`verify:*`; hooks: inject diagnostics on `tool_result`, **auto-verify on `agent_settled`** (no verify tool) | `/pi-lens` |
+| **pi-memory** | `memory_recall`, `memory_write` | emits `memory:*`; subs `verify:failed`; hooks inject on `session_start`/`context` | `/pi-memory` |
+| **pi-spawn** | `spawn` *(`tasks` list — 1 or many)* | emits `spawn:*` | `/pi-spawn` |
+| **pi-todo** | `todo_write` | emits `todo:*`; hooks: widget + inject list on `session_start`/`session_compact` | `/pi-todo` |
+| **pi-browser** | `browser` *(action enum)*, `web_search`, `web_fetch` | — | `/pi-browser` |
