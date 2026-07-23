@@ -249,7 +249,7 @@
 
     "path-scurry": ["path-scurry@2.0.2", "", { "dependencies": { "lru-cache": "^11.0.0", "minipass": "^7.1.2" } }, "sha512-3O/iVVsJAPsOnpwWIeD+d6z/7PmqApyQePUtCndjatj/9I5LylHvt5qluFaBT3I5h3r1ejfR056c+FCv+NnNXg=="],
 
-    "pi-shared": ["pi-shared@github:kazzarahw/pi-shared#dbc9b21", {}, "kazzarahw-pi-shared-dbc9b21", "sha512-Xi5dMlJadVf9eLghfx5nQiTzDB+8cpDweAwcAWmwY6ltWtJN40gShRuXizBpCJtG6uExyRA63oCajTLULjflxA=="],
+    "pi-shared": ["pi-shared@github:kazzarahw/pi-shared#6517a26", {}, "kazzarahw-pi-shared-6517a26", "sha512-UoduXLBZQByflcrSx8r3VOV/yPy+/gVZ1HYTBKita57/L2u9GSuipyoRVyoqwEN2xm373bUgBIKgnQwmbFrjmQ=="],
 
     "proper-lockfile": ["proper-lockfile@4.1.2", "", { "dependencies": { "graceful-fs": "^4.2.4", "retry": "^0.12.0", "signal-exit": "^3.0.2" } }, "sha512-TjNPblN4BwAWMXU8s9AEz4JmQxnD1NNL7bNOY/AKUzyamc379FWASUhc/K1pL2noVb+XmZKLL68cjzLsiOAMaA=="],
 
