@@ -6,6 +6,10 @@ import { createLspClient, uriToPath, type LspClient } from "./client.ts";
 import { DEFAULT_SERVERS, type ServerSpec } from "./config.ts";
 import type { Diagnostic } from "../diagnostics.ts";
 
+/** Max time to wait for a cold server's first project-load/publish before proceeding anyway. */
+const WARM_TIMEOUT_MS = 6000;
+const delay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
 export interface LspManager {
   /** Ensure the file's server is up and the file is opened; resolves the client (null if no server). */
   ready(path: string): Promise<LspClient | null>;
@@ -19,6 +23,8 @@ interface Entry {
   client: LspClient;
   proc: ChildProcess;
   ready: Promise<void>;
+  /** Resolves on the server's first publishDiagnostics — a reliable "project loaded" signal. */
+  warm: Promise<void>;
 }
 
 export function createManager(cwd: string, servers: Record<string, ServerSpec> = DEFAULT_SERVERS): LspManager {
@@ -51,7 +57,12 @@ export function createManager(cwd: string, servers: Record<string, ServerSpec> =
           proc.stdout?.on("data", (d) => cb(d.toString()));
         },
       });
+      let markWarm: () => void = () => {};
+      const warm = new Promise<void>((resolve) => {
+        markWarm = resolve;
+      });
       client.onDiagnostics((uri, ds) => {
+        markWarm(); // first publish ≈ project loaded/analyzed (queries are accurate from here)
         const file = uriToPath(uri);
         diagnostics.set(file, ds);
         const ws = waiters.get(file);
@@ -61,7 +72,7 @@ export function createManager(cwd: string, servers: Record<string, ServerSpec> =
         }
       });
       const ready = client.initialize(pathToFileURL(cwd).toString()).catch(() => {});
-      entry = { client, proc, ready };
+      entry = { client, proc, ready, warm };
       clients.set(cmdKey, entry);
     }
     return { entry, spec };
@@ -86,6 +97,11 @@ export function createManager(cwd: string, servers: Record<string, ServerSpec> =
     if (!r) return null;
     await r.entry.ready; // didOpen must follow `initialized`
     syncFile(r.entry, r.spec, path);
+    // Wait for the server to finish its initial project load before trusting results.
+    // Its first publishDiagnostics is an accurate "loaded" signal — measured: cross-file
+    // references become complete within ~0.1s of it. Bounded so a server that never
+    // publishes still proceeds (degraded, as before) instead of hanging.
+    await Promise.race([r.entry.warm, delay(WARM_TIMEOUT_MS)]);
     return r.entry.client;
   }
 
