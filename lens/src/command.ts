@@ -6,14 +6,15 @@ export interface CommandDeps {
   loadConfig: () => LensConfig;
   saveConfig: (c: LensConfig) => void;
   detectVerify: () => string | null;
+  health: () => string;
 }
 
-/** `/pi-lens` — no arg shows config; `mode <m>` / `verify <cmd>` set fields. */
+/** `/pi-lens` — no arg shows config + tool health; `mode <m>` / `verify <cmd>` / `autoformat on|off` set fields. */
 export function buildLensCommand(deps: CommandDeps) {
   return {
     name: "pi-lens" as const,
     options: {
-      description: "View pi-lens config, or set 'mode <m>' / 'verify <cmd>'.",
+      description: "View pi-lens config + tool health, or set 'mode <m>' / 'verify <cmd>' / 'autoformat on|off'.",
       handler: async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
         const trimmed = args.trim();
         const sp = trimmed.indexOf(" ");
@@ -23,7 +24,11 @@ export function buildLensCommand(deps: CommandDeps) {
 
         if (!key) {
           const verify = cfg.verifyCmd || `${deps.detectVerify() ?? "(none)"} (auto)`;
-          ctx?.ui?.notify?.(`[pi-lens] mode: ${cfg.mode} · verify: ${verify}`, "info");
+          ctx?.ui?.notify?.(
+            `[pi-lens] mode: ${cfg.mode} · autoFormat: ${cfg.autoFormat ? "on" : "off"} · verify: ${verify}`,
+            "info",
+          );
+          ctx?.ui?.notify?.(`[pi-lens] ${deps.health()}`, "info");
           return;
         }
         if (key === "mode") {
@@ -40,7 +45,16 @@ export function buildLensCommand(deps: CommandDeps) {
           ctx?.ui?.notify?.(`[pi-lens] verify command set to: ${value || "(autodetect)"}`, "info");
           return;
         }
-        ctx?.ui?.notify?.(`[pi-lens] unknown option "${key}" (use: mode <m> | verify <cmd>)`, "error");
+        if (key === "autoformat") {
+          const on = value === "on" || value === "true";
+          deps.saveConfig({ ...cfg, autoFormat: on });
+          ctx?.ui?.notify?.(`[pi-lens] autoFormat ${on ? "on" : "off"}`, "info");
+          return;
+        }
+        ctx?.ui?.notify?.(
+          `[pi-lens] unknown option "${key}" (use: mode <m> | verify <cmd> | autoformat on|off)`,
+          "error",
+        );
       },
     },
   };

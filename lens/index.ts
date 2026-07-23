@@ -3,8 +3,10 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { defaultExec } from "./src/exec.ts";
 import { loadConfig, saveConfig, autodetectVerify } from "./src/config.ts";
 import { createManager } from "./src/lsp/manager.ts";
-import { runLinters, lintersFor } from "./src/linters.ts";
-import { mergeDiagnostics, formatDiagnostics, type Diagnostic } from "./src/diagnostics.ts";
+import { runLinters } from "./src/linters.ts";
+import { toolchainFor, DEFAULT_TOOLCHAINS, runFormatter } from "./src/toolchains.ts";
+import { formatHealth, probeAvailability, whichOnPath } from "./src/health.ts";
+import { mergeDiagnostics, formatDiagnostics, formatFormatted, type Diagnostic } from "./src/diagnostics.ts";
 import { runVerify, formatVerify } from "./src/verify.ts";
 import { buildLensTool } from "./src/tools.ts";
 import { buildLensCommand } from "./src/command.ts";
@@ -37,32 +39,51 @@ export default function piLens(pi: ExtensionAPI): void {
 
   // Static feedback: inject diagnostics after the agent reads/writes/edits a file.
   pi.on("tool_result", async (event, ctx) => {
-    if (loadConfig().mode === "off") return;
+    const cfg = loadConfig();
+    if (cfg.mode === "off") return;
     if (!FILE_TOOLS.has(event.toolName)) return;
     const rel = pathFromInput(event.input);
     if (!rel) return;
     const file = resolve(ctx?.sessionManager?.getCwd?.() ?? cwd, rel);
+    const tc = toolchainFor(file);
+    const isEdit = EDIT_TOOLS.has(event.toolName);
+
+    // Opt-in auto-format runs first (write/edit only) so diagnostics reflect the formatted bytes.
+    let reformatNote = "";
+    if (isEdit && cfg.autoFormat && tc?.formatter) {
+      try {
+        if ((await runFormatter(file, tc.formatter, defaultExec, ctx?.signal)).changed) {
+          reformatNote = formatFormatted(rel, tc.formatter.name);
+        }
+      } catch {
+        /* never break an edit because the formatter misbehaved */
+      }
+    }
 
     let diags: Diagnostic[] = [];
     try {
       const lsp = await manager.pull(file);
-      const lint = await runLinters(file, lintersFor(file), defaultExec);
+      const lint = tc ? await runLinters(file, tc.linters, defaultExec) : [];
       diags = mergeDiagnostics(lsp, lint);
     } catch {
       return; // never break a read/edit because the LSP misbehaved
     }
 
     hasErrors = diags.some((d) => d.severity === "error");
-    if (EDIT_TOOLS.has(event.toolName)) dirty = true;
+    if (isEdit) dirty = true;
 
-    if (diags.length === 0) {
+    // Compose the injection: a diagnostics block (or lens:clean), plus a reformat note when formatted.
+    const blocks: string[] = [];
+    if (diags.length > 0) {
+      pi.events.emit("lens:issues", { file, diagnostics: diags });
+      blocks.push(formatDiagnostics(rel, diags));
+    } else {
       pi.events.emit("lens:clean", { file });
-      return;
     }
-    pi.events.emit("lens:issues", { file, diagnostics: diags });
-    const block = formatDiagnostics(rel, diags);
+    if (reformatNote) blocks.push(reformatNote);
+    if (blocks.length === 0) return;
     return {
-      content: [...event.content, { type: "text" as const, text: `\n${block}` }],
+      content: [...event.content, { type: "text" as const, text: `\n${blocks.join("\n")}` }],
       details: event.details,
       isError: event.isError,
     };
@@ -97,6 +118,7 @@ export default function piLens(pi: ExtensionAPI): void {
     loadConfig: () => loadConfig(),
     saveConfig: (c) => saveConfig(c),
     detectVerify: () => autodetectVerify(cwd),
+    health: () => formatHealth(probeAvailability(DEFAULT_TOOLCHAINS, whichOnPath)),
   });
   pi.registerCommand(command.name, command.options);
 }

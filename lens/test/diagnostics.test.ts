@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { mergeDiagnostics, formatDiagnostics, type Diagnostic } from "../src/diagnostics.ts";
+import { mergeDiagnostics, formatDiagnostics, formatFormatted, type Diagnostic } from "../src/diagnostics.ts";
 
 const d = (over: Partial<Diagnostic> = {}): Diagnostic => ({
   file: "a.ts",
@@ -23,4 +23,10 @@ test("formatDiagnostics returns '' when clean, a <pi-lens> block otherwise", () 
   expect(out).toContain("3:7");
   expect(out).toContain("undefined x");
   expect(out).toContain("ts2304");
+});
+
+test("formatFormatted builds a <pi-lens> reformat note", () => {
+  expect(formatFormatted("src/a.ts", "prettier")).toBe(
+    "<pi-lens>\nlens · formatted src/a.ts\n  ✓ reformatted with prettier\n</pi-lens>",
+  );
 });

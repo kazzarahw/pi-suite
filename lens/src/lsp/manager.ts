@@ -3,7 +3,8 @@ import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { extname } from "node:path";
 import { createLspClient, uriToPath, type LspClient } from "./client.ts";
-import { DEFAULT_SERVERS, type ServerSpec } from "./config.ts";
+import type { ServerSpec } from "./config.ts";
+import { lspServers } from "../toolchains.ts";
 import type { Diagnostic } from "../diagnostics.ts";
 
 /** Max time to wait for a cold server's first project-load/publish before proceeding anyway. */
@@ -27,7 +28,7 @@ interface Entry {
   warm: Promise<void>;
 }
 
-export function createManager(cwd: string, servers: Record<string, ServerSpec> = DEFAULT_SERVERS): LspManager {
+export function createManager(cwd: string, servers: Record<string, ServerSpec> = lspServers()): LspManager {
   const clients = new Map<string, Entry>();
   const diagnostics = new Map<string, Diagnostic[]>();
   const opened = new Set<string>();

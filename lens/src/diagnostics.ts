@@ -43,3 +43,8 @@ export function formatDiagnostics(path: string, ds: Diagnostic[]): string {
     .join("\n");
   return injectionBlock("lens", header, body);
 }
+
+/** A `<pi-lens>` note that a file was auto-formatted (on-disk content changed after the edit). Pure. */
+export function formatFormatted(path: string, formatter: string): string {
+  return injectionBlock("lens", injectionHeader("lens", `formatted ${path}`), `  ✓ reformatted with ${formatter}`);
+}

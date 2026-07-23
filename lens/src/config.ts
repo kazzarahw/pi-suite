@@ -8,9 +8,11 @@ export interface LensConfig {
   mode: Mode;
   /** Test/build command; "" = autodetect (see autodetectVerify). */
   verifyCmd: string;
+  /** Auto-format a file after write/edit (default off). Runs the language's formatter in place. */
+  autoFormat: boolean;
 }
 
-export const DEFAULTS: LensConfig = { mode: DEFAULT_MODE, verifyCmd: "" };
+export const DEFAULTS: LensConfig = { mode: DEFAULT_MODE, verifyCmd: "", autoFormat: false };
 
 export function configPath(): string {
   const agentDir = process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent");
@@ -23,6 +25,7 @@ export function loadConfig(path: string = configPath()): LensConfig {
     return {
       mode: (MODES as readonly string[]).includes(p.mode as string) ? (p.mode as Mode) : DEFAULT_MODE,
       verifyCmd: typeof p.verifyCmd === "string" ? p.verifyCmd : DEFAULTS.verifyCmd,
+      autoFormat: typeof p.autoFormat === "boolean" ? p.autoFormat : DEFAULTS.autoFormat,
     };
   } catch {
     return { ...DEFAULTS };
