@@ -41,3 +41,9 @@ export function formatHealth(statuses: ToolStatus[]): string {
   if (miss.length) parts.push(`missing: ${miss.join(", ")}`);
   return parts.join(" · ");
 }
+
+/** Compact health for a settings-panel subtitle: only what's missing (or "all tools installed"). */
+export function formatHealthCompact(statuses: ToolStatus[]): string {
+  const miss = statuses.filter((s) => !s.available).map((s) => s.bin).sort();
+  return miss.length ? `missing tools: ${miss.join(", ")}` : "all tools installed";
+}

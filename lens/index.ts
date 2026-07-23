@@ -5,7 +5,7 @@ import { loadConfig, saveConfig, autodetectVerify } from "./src/config.ts";
 import { createManager } from "./src/lsp/manager.ts";
 import { runLinters } from "./src/linters.ts";
 import { toolchainFor, DEFAULT_TOOLCHAINS, runFormatter } from "./src/toolchains.ts";
-import { formatHealth, probeAvailability, whichOnPath } from "./src/health.ts";
+import { formatHealth, formatHealthCompact, probeAvailability, whichOnPath } from "./src/health.ts";
 import { mergeDiagnostics, formatDiagnostics, formatFormatted, type Diagnostic } from "./src/diagnostics.ts";
 import { runVerify, formatVerify } from "./src/verify.ts";
 import { buildLensTool } from "./src/tools.ts";
@@ -119,6 +119,7 @@ export default function piLens(pi: ExtensionAPI): void {
     saveConfig: (c) => saveConfig(c),
     detectVerify: () => autodetectVerify(cwd),
     health: () => formatHealth(probeAvailability(DEFAULT_TOOLCHAINS, whichOnPath)),
+    healthCompact: () => formatHealthCompact(probeAvailability(DEFAULT_TOOLCHAINS, whichOnPath)),
   });
   pi.registerCommand(command.name, command.options);
 }
