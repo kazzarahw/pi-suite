@@ -1,0 +1,34 @@
+{
+  "name": "pi-memory",
+  "version": "0.1.0",
+  "description": "Persistent write-back memory: the agent records durable learnings and recalls them across sessions.",
+  "license": "AGPL-3.0",
+  "private": true,
+  "type": "module",
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "keywords": [
+    "pi-package"
+  ],
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "bun test",
+    "clean": "echo 'nothing to clean'",
+    "build": "echo 'nothing to build'"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-agent-core": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  },
+  "devDependencies": {
+    "pi-shared": "github:kazzarahw/pi-shared",
+    "@types/bun": "latest",
+    "typescript": "^5"
+  }
+}
