@@ -49,6 +49,25 @@ const req = (value: string | undefined, name: string, action: string): string =>
   return value;
 };
 
+/**
+ * Keyless search endpoints, tried in order. DuckDuckGo's HTML endpoint is the most scrape-tolerant
+ * (clean title/url/snippet results); Bing is the fallback. The DDG/Google JS sites bot-block headless
+ * Chromium, so they're intentionally not used.
+ */
+export const SEARCH_URLS: Array<(query: string) => string> = [
+  (q) => `https://html.duckduckgo.com/html/?q=${encodeURIComponent(q)}`,
+  (q) => `https://www.bing.com/search?q=${encodeURIComponent(q)}`,
+];
+
+const BLOCK_MARKERS =
+  /captcha|unusual traffic|are you human|verify you are|wait a moment|too many requests|access denied|\b429\b|\b418\b/i;
+
+/** Heuristic: does search output look like a bot-wall / empty page rather than real results? */
+export function looksBlocked(output: string): boolean {
+  const t = output.trim();
+  return t.length < 40 || BLOCK_MARKERS.test(t);
+}
+
 /** Map an action + args to the `agent-browser` subcommand argv. Pure; throws on a missing required arg. */
 export function browserArgv(action: BrowserAction, args: BrowserArgs): string[] {
   switch (action) {
@@ -57,8 +76,8 @@ export function browserArgv(action: BrowserAction, args: BrowserArgs): string[] 
     case "read":
       return args.url ? ["read", args.url] : ["read"];
     case "search":
-      // Bing returns results to a plain GET+read (DuckDuckGo bot-blocks headless browsers).
-      return ["read", `https://www.bing.com/search?q=${encodeURIComponent(req(args.query, "query", action))}`];
+      // Single-shot form; runBrowser() tries the full SEARCH_URLS fallback chain for reliability.
+      return ["read", SEARCH_URLS[0]!(req(args.query, "query", action))];
     case "snapshot":
       return ["snapshot", "-i"];
     case "click":
@@ -126,6 +145,20 @@ export async function runBrowser(
   signal?: AbortSignal,
 ): Promise<string> {
   const sessionArgs = cfg.session ? ["--session", cfg.session] : [];
+
+  // search: try each keyless engine until one returns usable (non-blocked) results.
+  if (action === "search") {
+    const query = req(args.query, "query", "search");
+    let last = "";
+    for (const build of SEARCH_URLS) {
+      const { stdout, code } = await exec(cfg.binPath, [...sessionArgs, "read", build(query)], { signal });
+      const out = stdout.trim();
+      if (code === 0 && !looksBlocked(out)) return out;
+      if (out) last = out;
+    }
+    return last || "(search returned no usable results — try the 'open' action on a specific URL)";
+  }
+
   const argv = [...sessionArgs, ...browserArgv(action, args)];
   const { stdout, stderr, code } = await exec(cfg.binPath, argv, { signal });
   if (code !== 0) {

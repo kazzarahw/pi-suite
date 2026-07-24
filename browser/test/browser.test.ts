@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { browserArgv, runBrowser, type ExecFn } from "../src/browser.ts";
+import { browserArgv, runBrowser, looksBlocked, type ExecFn } from "../src/browser.ts";
 import type { BrowserConfig } from "../src/config.ts";
 
 test("browserArgv builds the right agent-browser argv per action", () => {
@@ -8,7 +8,7 @@ test("browserArgv builds the right agent-browser argv per action", () => {
   expect(browserArgv("read", { url: "https://x.com" })).toEqual(["read", "https://x.com"]);
   expect(browserArgv("search", { query: "agent browser cli" })).toEqual([
     "read",
-    "https://www.bing.com/search?q=agent%20browser%20cli",
+    "https://html.duckduckgo.com/html/?q=agent%20browser%20cli",
   ]);
   expect(browserArgv("snapshot", {})).toEqual(["snapshot", "-i"]);
   expect(browserArgv("click", { ref: "@e2" })).toEqual(["click", "@e2"]);
@@ -47,4 +47,32 @@ test("runBrowser runs binPath + argv, returns trimmed stdout, prepends session",
 test("runBrowser throws with stderr text on a non-zero exit", async () => {
   const exec: ExecFn = async () => ({ stdout: "", stderr: "boom", code: 3 });
   await expect(runBrowser("snapshot", {}, { binPath: "agent-browser" }, exec)).rejects.toThrow("boom");
+});
+
+test("looksBlocked flags bot-walls and tiny output, not real results", () => {
+  expect(looksBlocked("")).toBe(true);
+  expect(looksBlocked("Please complete the CAPTCHA to continue")).toBe(true);
+  expect(looksBlocked("Wait A Moment — we're seeing unusual traffic")).toBe(true);
+  expect(
+    looksBlocked("GitHub - mvdan/sh: a shell parser and formatter\ngithub.com/mvdan/sh\nIncludes shfmt for formatting."),
+  ).toBe(false);
+});
+
+test("runBrowser search falls back to the next engine when the first is blocked", async () => {
+  const seen: string[] = [];
+  const exec: ExecFn = async (_cmd, args) => {
+    const url = args[args.length - 1]!;
+    seen.push(url);
+    if (url.includes("duckduckgo")) return { stdout: "unusual traffic detected, wait a moment", stderr: "", code: 0 };
+    return { stdout: "1. Result title\nexample.com\nA real snippet for the query goes here.", stderr: "", code: 0 };
+  };
+  const out = await runBrowser("search", { query: "x" }, { binPath: "agent-browser" }, exec);
+  expect(out).toContain("Result title");
+  expect(seen[0]).toContain("duckduckgo");
+  expect(seen[1]).toContain("bing");
+});
+
+test("runBrowser search requires a query", async () => {
+  const exec: ExecFn = async () => ({ stdout: "", stderr: "", code: 0 });
+  await expect(runBrowser("search", {}, { binPath: "agent-browser" }, exec)).rejects.toThrow('"query" is required');
 });
