@@ -5,6 +5,7 @@ import { extname } from "node:path";
 import { createLspClient, uriToPath, type LspClient } from "./client.ts";
 import type { ServerSpec } from "./config.ts";
 import { lspServers } from "../toolchains.ts";
+import { whichOnPath } from "../health.ts";
 import type { Diagnostic } from "../diagnostics.ts";
 
 /** Max time to wait for a cold server's first project-load/publish before proceeding anyway. */
@@ -28,7 +29,11 @@ interface Entry {
   warm: Promise<void>;
 }
 
-export function createManager(cwd: string, servers: Record<string, ServerSpec> = lspServers()): LspManager {
+export function createManager(
+  cwd: string,
+  servers: Record<string, ServerSpec> = lspServers(),
+  which: (bin: string) => boolean = whichOnPath,
+): LspManager {
   const clients = new Map<string, Entry>();
   const diagnostics = new Map<string, Diagnostic[]>();
   const opened = new Set<string>();
@@ -38,6 +43,11 @@ export function createManager(cwd: string, servers: Record<string, ServerSpec> =
     const ext = extname(path).slice(1).toLowerCase();
     const spec = servers[ext];
     if (!spec) return null;
+    // Fail fast on a missing binary — treat it as "no server", exactly like an unmapped
+    // extension. Spawning a binary that isn't there yields a process that never answers
+    // `initialize`, and the LSP request has no timeout, so awaiting it hangs the read/edit
+    // hook forever. (This is what froze `.json`/`.go` reads: those servers are commonly absent.)
+    if (!which(spec.command[0]!)) return null;
     const cmdKey = spec.command.join(" ");
     let entry = clients.get(cmdKey);
     if (!entry) {
@@ -47,20 +57,29 @@ export function createManager(cwd: string, servers: Record<string, ServerSpec> =
       } catch {
         return null;
       }
-      proc.on("error", () => {
-        /* missing binary etc. — degrade to no diagnostics */
+      let markWarm: () => void = () => {};
+      const warm = new Promise<void>((resolve) => {
+        markWarm = resolve;
       });
+      // If the process dies (crash, or a binary that vanished after the which-check), unblock
+      // every awaiter and drop the entry so the next call can retry — never leave a wait hanging.
+      const onDead = (): void => {
+        markWarm();
+        clients.delete(cmdKey);
+      };
+      proc.on("error", onDead);
+      proc.on("exit", onDead);
       const client = createLspClient({
         write: (s) => {
-          proc.stdin?.write(s);
+          try {
+            proc.stdin?.write(s);
+          } catch {
+            /* stdin closed (server died) — the write is lost; awaiters unblock via onDead */
+          }
         },
         onData: (cb) => {
           proc.stdout?.on("data", (d) => cb(d.toString()));
         },
-      });
-      let markWarm: () => void = () => {};
-      const warm = new Promise<void>((resolve) => {
-        markWarm = resolve;
       });
       client.onDiagnostics((uri, ds) => {
         markWarm(); // first publish ≈ project loaded/analyzed (queries are accurate from here)
@@ -72,7 +91,9 @@ export function createManager(cwd: string, servers: Record<string, ServerSpec> =
           for (const w of ws) w(ds);
         }
       });
-      const ready = client.initialize(pathToFileURL(cwd).toString()).catch(() => {});
+      // Race init against `warm`: a healthy server settles this when `initialize` returns; a
+      // dead one settles `warm` via onDead — so `ready()` can never block on init forever.
+      const ready = Promise.race([client.initialize(pathToFileURL(cwd).toString()).catch(() => {}), warm]);
       entry = { client, proc, ready, warm };
       clients.set(cmdKey, entry);
     }
