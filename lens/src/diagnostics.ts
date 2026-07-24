@@ -1,4 +1,4 @@
-import { injectionBlock, injectionHeader, type Diagnostic } from "pi-shared";
+import { injectionBlock, injectionHeader, type Diagnostic } from "../../shared/index.ts";
 
 export type { Diagnostic };
 

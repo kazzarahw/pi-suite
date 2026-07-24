@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import type { TodoItem } from "pi-shared";
+import type { TodoItem } from "../../shared/index.ts";
 import { appendState, restoreState } from "../src/persist.ts";
 
 const todos = (n: string): TodoItem[] =>

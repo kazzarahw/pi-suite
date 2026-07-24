@@ -1,10 +1,10 @@
 /**
- * pi-shared — types & constants for the pi-* extension suite.
+ * shared — types, constants, and helpers for the pi-suite extensions.
  *
  * The single source of truth for the cross-extension contract: the enforcement
  * dial (§7), the event vocabulary (§4), and the injection-tag format (§6).
- * Consumed as a devDependency; the types erase at compile time. See
- * HOUSE-STYLE.md for the full contract.
+ * An internal module of the pi-suite package — imported by relative path, never
+ * as a dependency. See docs/HOUSE-STYLE.md for the full contract.
  */
 
 export type { Mode } from "./mode.ts";

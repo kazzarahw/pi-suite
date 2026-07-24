@@ -1,4 +1,4 @@
-import type { Mode, TodoItem } from "pi-shared";
+import type { Mode, TodoItem } from "../../shared/index.ts";
 
 /**
  * A "keep going" reminder when work remains, or `null` when the list is empty or

@@ -1,4 +1,4 @@
-import type { TodoItem, TodoStatus } from "pi-shared";
+import type { TodoItem, TodoStatus } from "../../shared/index.ts";
 
 export type { TodoItem, TodoStatus };
 

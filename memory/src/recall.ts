@@ -1,4 +1,4 @@
-import { injectionBlock, injectionHeader } from "pi-shared";
+import { injectionBlock, injectionHeader } from "../../shared/index.ts";
 import type { Memory } from "./frontmatter.ts";
 
 /** Rank memories by how many query terms appear in name/description/body; cap at `limit`. Pure. */

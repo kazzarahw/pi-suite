@@ -1,4 +1,4 @@
-import { injectionBlock, type TodoItem, type TodoStatus } from "pi-shared";
+import { injectionBlock, type TodoItem, type TodoStatus } from "../../shared/index.ts";
 
 const MARKERS: Record<TodoStatus, string> = {
   pending: "▢",

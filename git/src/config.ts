@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { DEFAULT_MODE, MODES, type Mode } from "pi-shared";
+import { DEFAULT_MODE, MODES, type Mode } from "../../shared/index.ts";
 
 /** pi-git configuration. `checkpoint.include` is always "all" in v1 (kept for forward-compat). */
 export interface GitConfig {

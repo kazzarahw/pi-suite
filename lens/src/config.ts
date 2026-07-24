@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { DEFAULT_MODE, MODES, type Mode } from "pi-shared";
+import { DEFAULT_MODE, MODES, type Mode } from "../../shared/index.ts";
 
 export interface LensConfig {
   /** off = manual `lens` tool only; notify (default) = inject diagnostics + auto-verify; block = notify in v1 (hard gating deferred). */

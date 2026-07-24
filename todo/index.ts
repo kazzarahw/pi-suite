@@ -1,5 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { TodoItem } from "pi-shared";
+import type { TodoItem } from "../shared/index.ts";
 import { loadConfig, saveConfig } from "./src/config.ts";
 import { renderTodos, formatInjection } from "./src/render.ts";
 import { pendingReminder, nudgeAction } from "./src/nudge.ts";

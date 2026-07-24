@@ -1,4 +1,4 @@
-import { injectionBlock, injectionHeader } from "pi-shared";
+import { injectionBlock, injectionHeader } from "../../shared/index.ts";
 import type { ExecFn } from "./exec.ts";
 
 export interface VerifyResult {

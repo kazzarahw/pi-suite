@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { DEFAULT_MODE, MODES, type Mode } from "pi-shared";
+import { DEFAULT_MODE, MODES, type Mode } from "../../shared/index.ts";
 
 export interface MemoryConfig {
   /** off = no index injection / no auto-capture; notify (default) = both. block collapses to notify. */

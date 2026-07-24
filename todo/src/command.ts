@@ -2,7 +2,7 @@ import type { AutocompleteItem } from "@earendil-works/pi-tui";
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { getSettingsListTheme } from "@earendil-works/pi-coding-agent";
 import { Container, type SettingItem, SettingsList } from "@earendil-works/pi-tui";
-import { MODES, type Mode } from "pi-shared";
+import { MODES, type Mode } from "../../shared/index.ts";
 import type { TodoConfig } from "./config.ts";
 
 export interface CommandDeps {

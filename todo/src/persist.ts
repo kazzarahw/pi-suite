@@ -1,4 +1,4 @@
-import type { TodoItem } from "pi-shared";
+import type { TodoItem } from "../../shared/index.ts";
 
 /** Custom-entry type used to persist todo state in the session (not sent to the LLM). */
 const ENTRY_TYPE = "todo-state";

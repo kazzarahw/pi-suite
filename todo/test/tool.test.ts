@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test";
 import { buildTodoTool } from "../src/tool.ts";
-import type { TodoItem } from "pi-shared";
+import type { TodoItem } from "../../shared/index.ts";
 
 function fakeCtx() {
   return { ui: { setWidget() {} } };

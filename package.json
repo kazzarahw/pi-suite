@@ -1,13 +1,19 @@
 {
-  "name": "pi-spawn",
+  "name": "pi-suite",
   "version": "0.1.0",
-  "description": "Delegate tasks to specialized subagents that run in isolated context, with streaming and parallelism.",
+  "description": "A small, self-consistent, agent-facing extension suite for Pi: consult, git, lens, memory, spawn, todo, browser.",
   "license": "AGPL-3.0",
   "private": true,
   "type": "module",
   "pi": {
     "extensions": [
-      "./index.ts"
+      "./memory/index.ts",
+      "./todo/index.ts",
+      "./git/index.ts",
+      "./consult/index.ts",
+      "./spawn/index.ts",
+      "./browser/index.ts",
+      "./lens/index.ts"
     ]
   },
   "keywords": [
@@ -16,8 +22,7 @@
   "scripts": {
     "check": "tsc --noEmit",
     "test": "bun test",
-    "clean": "echo 'nothing to clean'",
-    "build": "echo 'nothing to build'"
+    "smoke": "./scripts/smoke-install.sh"
   },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",
@@ -27,7 +32,6 @@
     "typebox": "*"
   },
   "devDependencies": {
-    "pi-shared": "github:kazzarahw/pi-shared",
     "@types/bun": "latest",
     "typescript": "^5"
   }

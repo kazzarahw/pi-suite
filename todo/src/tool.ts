@@ -1,6 +1,6 @@
 import { Type, type Static } from "typebox";
 import { StringEnum } from "@earendil-works/pi-ai";
-import { TODO_STATUSES, type TodoItem } from "pi-shared";
+import { TODO_STATUSES, type TodoItem } from "../../shared/index.ts";
 import type { AgentToolResult, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { applyWrite, type TodoInput } from "./state.ts";
 import { renderTodos } from "./render.ts";
