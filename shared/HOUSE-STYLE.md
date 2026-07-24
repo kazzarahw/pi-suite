@@ -52,7 +52,7 @@ the human, and the human mostly just configures and walks away.
 ## 3 · Tools (the agent surface)
 
 - **Naming:** `<domain>_<verb>`, snake_case — `todo_write`, `memory_recall`,
-  `web_search`. A **bare verb** is allowed when an extension exposes exactly one
+  `memory_write`. A **bare verb** is allowed when an extension exposes exactly one
   tool: `consult`, `spawn`.
 - **Dispatch tools (action enum over N tools):** when a domain exposes many
   variant actions over a shared target or session, expose **one** `<domain>` tool
@@ -93,11 +93,11 @@ defined once in `pi-shared`:
 | `spawn:started` / `spawn:finished` | pi-spawn | `{ agent, summary? }` |
 | `consult:answered` | pi-consult | `{ model, topic }` |
 
-**Cooperation this enables (design intent):**
-- pi-lens waits for its own `lens:clean` before running the verify (test) pass.
-- pi-git checkpoints on `todo:task-complete`.
-- pi-memory records a gotcha on `verify:failed`.
-- pi-git hooks Pi's own **fork lifecycle** (`session_before_fork` → `session_shutdown{reason:"fork"}`) so a user message-rewind also reverts the files changed since — the harness surface at its purest: no tool, no command, the agent isn't even aware.
+**Cooperation this enables — what's wired today vs. intended:**
+- **Wired:** pi-memory records a gotcha on `verify:failed` (pi-lens → pi-memory; opt-in via `autoCapture`).
+- **Wired:** pi-git hooks Pi's own **fork lifecycle** (`session_before_fork` → `session_shutdown{reason:"fork"}`) so a user message-rewind also reverts the files changed since — the harness surface at its purest: no tool, no command, the agent isn't even aware.
+- **By internal state, not the bus:** pi-lens gates its verify pass on "an edit landed and parses cleanly" via its own `dirty`/`hasErrors` flags rather than a `lens:clean` event — same effect, no cross-extension coupling.
+- **Intended but not wired:** pi-git checkpointing on `todo:task-complete` — pi-git instead checkpoints **every turn** (keyed to the user-message entry), which is strictly more robust; the event is available if a finer trigger is ever wanted.
 
 **Hook hygiene:** keep handlers fast and idempotent; never block the loop on slow
 work without honoring `ctx.signal`; reserve `{ block: true }` for the `"block"`
@@ -206,7 +206,7 @@ coded one.
 
 ## Appendix · Per-extension surface map
 
-Nine tools across the suite — a deliberately tight agent surface. The rule that
+Seven tools across the suite — a deliberately tight agent surface. The rule that
 keeps it small: automatic behavior is a **hook**, not a tool (pi-git); many
 variant actions collapse behind one **`action` enum** tool (`browser`, `lens`);
 and read paths are covered by tool-result echoes + context injection, not extra
@@ -215,9 +215,9 @@ read tools (pi-todo).
 | Extension | Tools (agent) | Emits / subscribes · hooks (harness) | Commands (user) |
 |---|---|---|---|
 | **pi-consult** | `consult` | emits `consult:answered` | `/pi-consult` |
-| **pi-git** | **none** | emits `git:*`; subs `todo:task-complete`; hooks: checkpoint each turn, **restore on Pi's fork lifecycle**; worktree capability for pi-spawn | `/pi-git` |
-| **pi-lens** | `lens` *(action enum)* | emits `lens:*`/`verify:*`; hooks: inject diagnostics on `tool_result`, **auto-verify on `agent_settled`** (no verify tool) | `/pi-lens` |
-| **pi-memory** | `memory_recall`, `memory_write` | emits `memory:*`; subs `verify:failed`; hooks inject on `session_start`/`context` | `/pi-memory` |
+| **pi-git** | **none** | emits `git:*`; hooks: checkpoint each turn (keyed to the user-message entry), **restore on Pi's fork lifecycle**; worktree capability (pi-spawn integration deferred) | `/pi-git` |
+| **pi-lens** | `lens` *(action enum)* | emits `lens:*`/`verify:*`; hooks: inject diagnostics (LSP + linters, multi-language toolchain) + opt-in auto-format on `tool_result`, **auto-verify on `agent_settled`** (no verify tool), prewarm servers on `session_start` | `/pi-lens` |
+| **pi-memory** | `memory_recall`, `memory_write` | emits `memory:*`; subs `verify:failed` (auto-capture); hooks: inject the memory INDEX on `context` | `/pi-memory` |
 | **pi-spawn** | `spawn` *(`tasks` list — 1 or many)* | emits `spawn:*` | `/pi-spawn` |
 | **pi-todo** | `todo_write` | emits `todo:*`; hooks: widget + inject list on `session_start`/`session_compact` | `/pi-todo` |
-| **pi-browser** | `browser` *(action enum)*, `web_search`, `web_fetch` | — | `/pi-browser` |
+| **pi-browser** | `browser` *(action enum — `search`/`read`/`open`/`snapshot`/…)* | — | `/pi-browser` |
