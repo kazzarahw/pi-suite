@@ -1,0 +1,31 @@
+{
+  "name": "pi-shared",
+  "version": "0.1.0",
+  "description": "Types & constants for the pi-* extension suite: event vocabulary, enforcement mode, injection tags. Consumed as a devDependency; types erase at compile time.",
+  "license": "AGPL-3.0",
+  "type": "module",
+  "types": "./index.ts",
+  "exports": {
+    ".": "./index.ts",
+    "./mode": "./mode.ts",
+    "./events": "./events.ts",
+    "./tags": "./tags.ts"
+  },
+  "files": [
+    "index.ts",
+    "mode.ts",
+    "events.ts",
+    "tags.ts",
+    "HOUSE-STYLE.md"
+  ],
+  "keywords": [
+    "pi-package"
+  ],
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "typescript": "^5"
+  }
+}
