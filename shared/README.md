@@ -8,13 +8,13 @@ The hub of my **`pi-*` extension suite** for [Pi](https://pi.dev) — a small, s
 |---|---|---|
 | [pi-consult](https://github.com/kazzarahw/pi-consult) | A second opinion — run `claude --model` for read-only advice | `consult` |
 | [pi-git](https://github.com/kazzarahw/pi-git) | Automatic per-turn checkpoints; rewinding a message reverts the files changed since it (via Pi's fork lifecycle) | *none — pure hooks* |
-| [pi-lens](https://github.com/kazzarahw/pi-lens) | Real-time LSP + linter diagnostics injected after edits, plus an automatic test/verify pass | `lens` *(action enum)* |
+| [pi-lens](https://github.com/kazzarahw/pi-lens) | Real-time LSP + linter diagnostics (multi-language) injected after edits, opt-in auto-format, and an automatic test/verify pass | `lens` *(action enum)* |
 | [pi-memory](https://github.com/kazzarahw/pi-memory) | Persistent write-back memory: record durable learnings, recall them across sessions | `memory_recall`, `memory_write` |
 | [pi-spawn](https://github.com/kazzarahw/pi-spawn) | Delegate tasks to isolated subagents, one or many in parallel | `spawn` |
 | [pi-todo](https://github.com/kazzarahw/pi-todo) | The agent's task list, rendered as a live widget | `todo_write` |
-| [pi-browser](https://github.com/kazzarahw/pi-browser) | Browser automation (wrapping `agent-browser`) plus web search and fetch | `browser` *(action enum)*, `web_search`, `web_fetch` |
+| [pi-browser](https://github.com/kazzarahw/pi-browser) | The web in one tool (wrapping `agent-browser`): search, fetch/read, snapshot with `@ref`s, click/type — over a persistent browser session | `browser` *(action enum)* |
 
-Nine tools total — a deliberately tight agent surface. See [`HOUSE-STYLE.md`](./HOUSE-STYLE.md) for why (automatic behavior is a hook not a tool; variant actions collapse behind one `action`-enum tool; the agent + harness are the consumers, not the user).
+Seven tools total — a deliberately tight agent surface. See [`HOUSE-STYLE.md`](./HOUSE-STYLE.md) for why (automatic behavior is a hook not a tool; variant actions collapse behind one `action`-enum tool; the agent + harness are the consumers, not the user).
 
 ## Install the suite
 
