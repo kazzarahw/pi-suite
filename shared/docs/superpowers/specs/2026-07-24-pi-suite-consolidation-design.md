@@ -123,7 +123,31 @@ restores it: an extension directory may import from `shared/` and its own `src/`
 and nothing else. Cross-extension coupling, if it is ever wanted, belongs on the
 event bus (sub-project 3), not in an import.
 
-### D8 — Blast radius is unchanged by consolidation
+### D8 — Test strategy: preserve as guard, merge where forced, add a layer
+
+The existing suite was assessed rather than assumed weak. `pi-git/test/git.test.ts`
+(real repos in tmpdir, round-tripping snapshot/restore including the `.gitignore` and
+post-snapshot-removal edge cases), `pi-lens/test/manager.test.ts` (a `within()` helper
+that turns a hang into a failure, pinning the missing-binary regression), and
+`pi-todo/test/state.test.ts` (id preservation, newly-completed detection) are all
+genuinely valuable. The deficiency is **coverage shape, not quality**: all 152 tests
+sit below the wiring layer and none at it — which is precisely why the review's
+hook-layer findings went unnoticed.
+
+Therefore:
+
+- **Unchanged during the move.** They are the behavior-preservation guard, and
+  rewriting tests and moving code simultaneously destroys the evidence that the move
+  was clean.
+- **Merged where dedup forces it.** Seven near-identical `config.test.ts` files
+  become one parameterized suite over `ConfigSpec`, because there is now one config
+  module. Same for the `exec` tests. Assertions carry over; they are not rewritten.
+- **A layer is added, not substituted** (see *Verification*).
+- **Quality upgrades are deferred to sub-project 2**, where a better test naturally
+  accompanies the fix it covers. Rewriting lens/spawn/memory tests before those fixes
+  exist would mean writing them twice.
+
+### D9 — Blast radius is unchanged by consolidation
 
 *Verified:* Pi aborts startup entirely when any extension's factory throws — both
 for one multi-extension package and for separate single-extension packages. The
@@ -231,9 +255,15 @@ export function fakeCtx(overrides?: Partial<ExtensionContext>): ExtensionContext
 
 ## Verification & acceptance
 
-**The existing 152 tests must pass unchanged.** Test *paths* move; test *bodies* do
-not. Any diff to a test body is a red flag requiring justification — these tests are
-the behavior-preservation guard.
+**The existing tests are the behavior-preservation guard** (see D8). Test *paths*
+move; test *bodies* do not, with exactly one permitted exception: the seven
+`config.test.ts` files and the duplicated `exec` tests merge into one parameterized
+suite each, since they now cover one module. Assertions carry over verbatim. Any
+*other* diff to a test body is a red flag requiring justification.
+
+Expected count after merge: 152 minus the deduplicated config/exec cases, plus the
+three new layers below. The exact number is an output of the migration, not a target
+— but a *drop* in distinct assertions is a defect.
 
 Three additions, in descending order of value:
 
@@ -252,13 +282,16 @@ Three additions, in descending order of value:
 
 **Acceptance criteria:**
 
-- [ ] 152 existing tests pass, bodies unmodified
+- [ ] All pre-existing tests pass; bodies unmodified except the permitted config/exec merge
+- [ ] No net loss of distinct assertions versus the pre-migration suite
 - [ ] `tsc --noEmit` clean across the consolidated tree
 - [ ] Install smoke test passes (the P0 is provably fixed)
 - [ ] Contract test passes
 - [ ] Wiring tests cover all seven `index.ts` files
 - [ ] Lint rule (D7) passes and fails on a deliberate cross-extension import
-- [ ] Live tmux TUI dogfood: all seven extensions, all seven `/pi-*` panels
+- [ ] Live tmux TUI dogfood (`tmux new-session -d -s pi …` + `send-keys` + `capture-pane`):
+      all seven extensions exercised, all seven `/pi-*` panels opened, and at least one
+      hook-driven behavior per extension confirmed on screen — not merely "pi started"
 - [ ] `git log --follow` reaches pre-migration history for a file from each extension
 
 ---
