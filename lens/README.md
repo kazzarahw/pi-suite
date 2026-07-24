@@ -2,12 +2,12 @@
 
 **Real-time code feedback** — a [Pi](https://pi.dev) extension that injects LSP + linter diagnostics after the agent reads or edits a file, runs an automatic test/verify pass, optionally auto-formats, and exposes one `lens` tool for precise code navigation. Multi-language, with each tool using its own defaults and honoring the project's config.
 
-Part of the [`pi-*` suite](https://github.com/kazzarahw/pi-shared).
+Part of the [pi-suite](../README.md).
 
 ## What it does
 
 - **Diagnostics on read/edit** — after a `read`/`write`/`edit`, gathers the file's LSP diagnostics plus linter output, merges them, and injects a `<pi-lens>` block (or stays silent when clean).
-- **Auto-verify on settle** — once edits land and parse cleanly, runs the project's test/build command (autodetected: `bun test` / `npm test` / `pytest`) and reports pass/fail. Emits `verify:passed` / `verify:failed` (the latter feeds [pi-memory](https://github.com/kazzarahw/pi-memory)).
+- **Auto-verify on settle** — once edits land and parse cleanly, runs the project's test/build command (autodetected: `bun test` / `npm test` / `pytest`) and reports pass/fail. Emits `verify:passed` / `verify:failed` (the latter feeds [memory](../memory)).
 - **Opt-in auto-format** — on write/edit, run the language's formatter in place, re-sync the LSP, and note the reformat. Off by default.
 - **Prewarm** — start the language servers on session start (incl. after `/fork`) so the first read is fast.
 - **`lens` tool** — `hover` / `references` / `definition` / `rename` at a position, via a hand-rolled minimal LSP client (more precise than grep).
@@ -46,7 +46,7 @@ lens({ action: "hover" | "references" | "definition" | "rename", path, line, col
 ## Install
 
 ```sh
-pi install git:github.com/kazzarahw/pi-lens
+pi install git:github.com/kazzarahw/pi-suite
 ```
 
 Language servers, linters, and formatters are discovered on `PATH` (install what you use). AGPL-3.0.

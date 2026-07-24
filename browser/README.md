@@ -2,7 +2,7 @@
 
 **The web in one tool** — a [Pi](https://pi.dev) extension wrapping the [`agent-browser`](https://www.npmjs.com/package/agent-browser) CLI: search, fetch, snapshot, and interact with real pages, over a persistent browser session. Keyless — no search API, no provider config.
 
-Part of the [`pi-*` suite](https://github.com/kazzarahw/pi-shared).
+Part of the [pi-suite](../README.md).
 
 ## What it does
 
@@ -33,7 +33,7 @@ Key actions:
 ## Install
 
 ```sh
-pi install git:github.com/kazzarahw/pi-browser
+pi install git:github.com/kazzarahw/pi-suite
 ```
 
 Requires the `agent-browser` CLI on `PATH`. AGPL-3.0.

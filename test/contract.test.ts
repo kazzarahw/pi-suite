@@ -117,13 +117,13 @@ test("EVENTS declares one event per emitting domain, and the vocabulary does not
 // ---------------------------------------------------------------------------
 
 test("HOUSE-STYLE mentions every tool the suite actually registers", () => {
-  const doc = readFileSync(join(ROOT, "shared", "HOUSE-STYLE.md"), "utf8");
+  const doc = readFileSync(join(ROOT, "docs", "HOUSE-STYLE.md"), "utf8");
   const missing = ALL_TOOLS.filter((t) => !doc.includes(t));
   expect(missing).toEqual([]);
 });
 
 test("HOUSE-STYLE mentions every /pi-<name> command", () => {
-  const doc = readFileSync(join(ROOT, "shared", "HOUSE-STYLE.md"), "utf8");
+  const doc = readFileSync(join(ROOT, "docs", "HOUSE-STYLE.md"), "utf8");
   const missing = SURFACE.map((e) => `/${e.command}`).filter((c) => !doc.includes(c));
   expect(missing).toEqual([]);
 });

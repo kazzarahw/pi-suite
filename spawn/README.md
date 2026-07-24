@@ -2,7 +2,7 @@
 
 **Delegate to isolated subagents** — a [Pi](https://pi.dev) extension that hands tasks to specialized subagents, each running in a fresh `pi` process, one solo or many in parallel.
 
-Part of the [`pi-*` suite](https://github.com/kazzarahw/pi-shared).
+Part of the [pi-suite](../README.md).
 
 ## What it does
 
@@ -40,7 +40,7 @@ Agents are markdown files (frontmatter: `name`, `description`, optional `model`,
 ## Install
 
 ```sh
-pi install git:github.com/kazzarahw/pi-spawn
+pi install git:github.com/kazzarahw/pi-suite
 ```
 
 AGPL-3.0.

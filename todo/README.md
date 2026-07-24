@@ -2,7 +2,7 @@
 
 The **agent's task list** for [Pi](https://pi.dev) — a persistent, session-aware todo list rendered as a live widget, with a gentle nudge to keep multi-step work on track.
 
-Part of the [`pi-*` suite](https://github.com/kazzarahw/pi-shared).
+Part of the [pi-suite](../README.md).
 
 ## What it does
 
@@ -33,7 +33,7 @@ Send the **complete** list every call — it replaces the previous one. `status`
 ## Install
 
 ```sh
-pi install git:github.com/kazzarahw/pi-todo
+pi install git:github.com/kazzarahw/pi-suite
 ```
 
 AGPL-3.0.

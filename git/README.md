@@ -2,7 +2,7 @@
 
 **Message-rewind that reverts files too** — a [Pi](https://pi.dev) extension that makes Pi's native `/fork` (rewinding to an earlier message) also roll the working tree back to how it was then. Pure harness behavior: **no agent tools, no commands to run** — it just works.
 
-Part of the [`pi-*` suite](https://github.com/kazzarahw/pi-shared).
+Part of the [pi-suite](../README.md).
 
 ## What it does
 
@@ -18,7 +18,7 @@ Emits `git:checkpoint { ref, reason }` and `git:rollback { ref, reason }`.
 | Setting | Default | Meaning |
 |---|---|---|
 | `mode` | `notify` | `off` disables checkpointing; `notify`/`block` both = checkpoint + restore-on-rewind (nothing to block, so they're equivalent) |
-| `worktrees.auto` | `false` | give parallel [pi-spawn](https://github.com/kazzarahw/pi-spawn) jobs an isolated worktree *(integration deferred)* |
+| `worktrees.auto` | `false` | give parallel [spawn](../spawn) jobs an isolated worktree *(integration deferred)* |
 | `worktrees.baseDir` | `.pi/worktrees` | where worktrees are created |
 
 Requires a git repository (checkpoints no-op outside one).
@@ -26,7 +26,7 @@ Requires a git repository (checkpoints no-op outside one).
 ## Install
 
 ```sh
-pi install git:github.com/kazzarahw/pi-git
+pi install git:github.com/kazzarahw/pi-suite
 ```
 
 AGPL-3.0.

@@ -2,7 +2,7 @@
 
 **Persistent, write-back memory** — a [Pi](https://pi.dev) extension that lets the agent record durable learnings and recall them across sessions, with a progressive-disclosure index always in context.
 
-Part of the [`pi-*` suite](https://github.com/kazzarahw/pi-shared).
+Part of the [pi-suite](../README.md).
 
 ## What it does
 
@@ -23,7 +23,7 @@ Emits `memory:wrote { keys }` / `memory:recalled { keys }`.
 ## Automatic behavior (hooks)
 
 - **Index injection** on the `context` hook — the `<pi-memory>` index rides every call (when `mode ≠ off`).
-- **Auto-capture** on `verify:failed` (from [pi-lens](https://github.com/kazzarahw/pi-lens)) — records a gotcha memory. Off by default (naive capture is noisy).
+- **Auto-capture** on `verify:failed` (from [lens](../lens)) — records a gotcha memory. Off by default (naive capture is noisy).
 
 ## Configure
 
@@ -38,7 +38,7 @@ Emits `memory:wrote { keys }` / `memory:recalled { keys }`.
 ## Install
 
 ```sh
-pi install git:github.com/kazzarahw/pi-memory
+pi install git:github.com/kazzarahw/pi-suite
 ```
 
 AGPL-3.0.

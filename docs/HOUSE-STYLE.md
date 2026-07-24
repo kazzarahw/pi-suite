@@ -31,21 +31,32 @@ the human, and the human mostly just configures and walks away.
 
 ## 2 · Identity & packaging
 
-- **GitHub:** `kazzarahw/pi-<name>`. **Package `name`:** `pi-<name>` (unscoped;
-  not published to npm — installed via `pi install git:github.com/kazzarahw/pi-<name>`).
+- **GitHub:** `kazzarahw/pi-suite` — **one repo, one package, seven extensions**.
+  Unscoped, not published to npm; installed via `pi install git:github.com/kazzarahw/pi-suite`.
 - **License:** AGPL-3.0. Reference behavior/docs/API of other packages; do not
   paste their source.
 - **Runtime:** TypeScript, ESM, Bun. Pi core packages (`@earendil-works/pi-ai`,
   `@earendil-works/pi-agent-core`, `@earendil-works/pi-coding-agent`,
   `@earendil-works/pi-tui`, `typebox`) go in `peerDependencies: "*"` — never bundle them.
-- **Repo skeleton (identical across all 7):**
+- **Nothing imported at runtime may live in `devDependencies`.** Pi installs with
+  `npm install --omit=dev`, so a devDependency is simply absent on a real install.
+  This is not a style preference — the pre-consolidation suite violated it and every
+  `pi install git:...` failed with `Cannot find package 'pi-shared'`. Guarded by
+  `scripts/smoke-install.sh` in CI.
+- **Repo skeleton:**
   ```
-  pi-<name>/
-  ├── package.json     # pi manifest + "pi-package" keyword + peerDeps + pi-shared devDep
-  ├── index.ts         # default export: (pi: ExtensionAPI) => { ... }
-  ├── README.md
-  └── LICENSE          # AGPL-3.0
+  pi-suite/
+  ├── package.json     # ONE pi manifest listing all 7 extension entry points
+  ├── tsconfig.json
+  ├── docs/            # HOUSE-STYLE.md + specs/plans
+  ├── shared/          # internal module: contract types + config/exec/panel helpers
+  ├── <name>/          # one dir per extension: index.ts, src/, test/, README.md
+  ├── test/            # repo-wide guards: contract + boundaries
+  └── scripts/         # smoke-install.sh
   ```
+- **Load order matters** and is fixed in `package.json`: `tool_result` handlers chain
+  as middleware in load order, so **lens loads last** and its diagnostics injection
+  wraps outermost.
 
 ---
 
@@ -81,7 +92,7 @@ Automatic behavior via `pi.on(...)`; cross-extension coordination via
 `pi.events`. This is what makes the suite feel native.
 
 **Event vocabulary** — namespaced `domain:event`, documented JSON payloads,
-defined once in `pi-shared`:
+defined once in `shared/events.ts`:
 
 | Event | Emitted by | Payload |
 |---|---|---|
@@ -150,7 +161,7 @@ lens · diagnostics after edit to src/foo.ts
 - **Front-end:** the `/pi-<name>` command (§5) reads/writes those settings
   interactively. Settings file and command stay in sync.
 - **Universal enforcement dial** — every automation-capable extension exposes the
-  same three-level `mode` (type defined in `pi-shared`):
+  same three-level `mode` (type defined in `shared/mode.ts`):
 
   | `mode` | Behavior |
   |---|---|
@@ -187,20 +198,34 @@ lens · diagnostics after edit to src/foo.ts
 
 ---
 
-## 10 · The `pi-shared` package
+## 10 · The `shared/` module
 
-Types + constants only. Zero runtime, zero bundling cost (a `devDependency`;
-types erase at compile time). Single source of truth for the cross-extension
-contract, so mismatches are caught by the type-checker.
+An **internal module of the `pi-suite` package**, imported by relative path
+(`../shared/index.ts`). Not a package, not a dependency of any kind — which is
+precisely the point: there is nothing for `--omit=dev` to strip. It was formerly a
+separate `pi-shared` repo consumed as a `devDependency`, and that arrangement is
+what broke every git install (§2).
 
 Contents:
-- Event names + payload types (§4).
-- The `mode` enum (§7).
-- Injection-tag helpers/constants (§6).
-- Shared param-name types where useful (§3).
+- Event names + payload types (§4) — `events.ts`.
+- The `mode` enum (§7) — `mode.ts`.
+- Injection-tag helpers (§6) — `tags.ts`.
+- The agent-surface SSOT (§3, appendix) — `surface.ts`.
+- The config mechanism (§7) — `config.ts`. Path resolution, read/write, and the
+  corrupt-file fallback are shared; each extension keeps its own `parse`.
+- The settings panel (§5) — `settings-panel.ts`.
+- The subprocess runner (§9) — `exec.ts`. Always resolves, never rejects.
+- A fake `ExtensionAPI` for wiring tests — `test/harness.ts`.
 
-This document lives here too — `pi-shared` is both the written contract and the
-coded one.
+`shared/` must stay a **leaf**: it may not import from any extension. Enforced by
+`test/boundaries.test.ts`.
+
+**This document is checked against the code, not the other way round.**
+`test/contract.test.ts` asserts that every tool and command named here is actually
+registered, and that every emitted event exists in `EVENTS`. Prior versions of this
+file claimed a wrong tool count, a pi-git worktree capability that was dead code, and
+event subscriptions that did not exist; each was found by hand weeks later. Drift is
+now a CI failure.
 
 ---
 
