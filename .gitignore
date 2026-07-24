@@ -1,3 +1,6 @@
 node_modules/
 .ruff_cache/
 *.log
+
+# Never belongs in the repo: pi writes project-scope state here.
+.pi/
