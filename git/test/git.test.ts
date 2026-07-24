@@ -2,7 +2,8 @@ import { test, expect } from "bun:test";
 import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createGit, defaultExec } from "../src/git.ts";
+import { createGit } from "../src/git.ts";
+import { defaultExec } from "../../shared/exec.ts";
 
 async function setupRepo(): Promise<string> {
   const dir = mkdtempSync(join(tmpdir(), "pi-git-test-"));

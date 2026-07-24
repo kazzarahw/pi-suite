@@ -1,5 +1,5 @@
 import { injectionBlock, injectionHeader } from "../../shared/index.ts";
-import type { ExecFn } from "./exec.ts";
+import type { ExecFn } from "../../shared/exec.ts";
 
 export interface VerifyResult {
   passed: boolean;

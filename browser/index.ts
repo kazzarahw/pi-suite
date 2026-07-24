@@ -1,6 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { loadConfig, saveConfig } from "./src/config.ts";
-import { defaultExec } from "./src/browser.ts";
+import { defaultExec } from "../shared/exec.ts";
 import { buildBrowserTool } from "./src/tools.ts";
 import { buildBrowserCommand } from "./src/command.ts";
 

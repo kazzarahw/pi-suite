@@ -102,6 +102,15 @@ migration notes:
 |---|---|---|
 | `PI_CODING_AGENT_DIR` | honored by pi-lens, pi-memory; ignored by the other five | honored by all seven |
 | `execFile` `maxBuffer` | 32MB (lens, consult) / 64MB (git, browser) | 64MB for all |
+| empty-`stderr` fallback | pi-browser substitutes `error.message`; the other three return `""` | all four substitute `error.message` |
+
+**Amended during implementation (Task 3).** The third row was discovered while
+unifying `exec`: pi-browser's runner falls back to the spawn error's message when a
+failure produces no stderr (ENOENT, abort), and the other three return an empty
+string. A union has to pick one, and dropping the fallback would *degrade* pi-browser,
+whose error path reads `stderr.trim() || "(no stderr)"`. Adopting it strictly improves
+pi-git's and pi-consult's error messages for the same reason. Recorded here rather
+than absorbed silently — the point of D5 is that every convergence is visible.
 
 No other behavior changes. Config file paths and semantics are otherwise untouched.
 

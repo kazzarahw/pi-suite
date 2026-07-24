@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Diagnostic } from "./diagnostics.ts";
-import type { ExecFn } from "./exec.ts";
+import type { ExecFn } from "../../shared/exec.ts";
 
 export interface LinterSpec {
   name: string;

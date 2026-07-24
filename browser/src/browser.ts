@@ -1,4 +1,5 @@
-import { execFile } from "node:child_process";
+import type { ExecFn } from "../../shared/exec.ts";
+export type { ExecFn };
 import type { BrowserConfig } from "./config.ts";
 
 export type BrowserAction =
@@ -35,12 +36,6 @@ export interface BrowserArgs {
   what?: string;
   wait?: string;
 }
-
-export type ExecFn = (
-  cmd: string,
-  args: string[],
-  opts?: { signal?: AbortSignal },
-) => Promise<{ stdout: string; stderr: string; code: number }>;
 
 const req = (value: string | undefined, name: string, action: string): string => {
   if (value === undefined || value === "") {
@@ -121,20 +116,6 @@ export function browserArgv(action: BrowserAction, args: BrowserArgs): string[] 
     }
   }
 }
-
-export const defaultExec: ExecFn = (cmd, args, opts) =>
-  new Promise((resolve) => {
-    execFile(cmd, args, { signal: opts?.signal, maxBuffer: 64 * 1024 * 1024 }, (error, stdout, stderr) => {
-      const code =
-        error && typeof (error as { code?: unknown }).code === "number"
-          ? (error as { code: number }).code
-          : error
-            ? 1
-            : 0;
-      const err = stderr && stderr.length > 0 ? stderr : error ? (error as Error).message : "";
-      resolve({ stdout: stdout ?? "", stderr: err, code });
-    });
-  });
 
 /** Run one agent-browser action, returning its stdout. Throws on a non-zero exit. */
 export async function runBrowser(

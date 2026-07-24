@@ -1,33 +1,8 @@
-import { execFile } from "node:child_process";
+import type { ExecFn } from "../../shared/exec.ts";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-/** Injectable command runner (always `git`), so tests can fake or use real git. */
-export type ExecFn = (
-  cmd: string,
-  args: string[],
-  opts?: { cwd?: string; env?: Record<string, string> },
-) => Promise<{ stdout: string; stderr: string; code: number }>;
-
-/** Real runner: `execFile`, merging any extra env over the process env. */
-export const defaultExec: ExecFn = (cmd, args, opts) =>
-  new Promise((resolve) => {
-    execFile(
-      cmd,
-      args,
-      { cwd: opts?.cwd, env: { ...process.env, ...(opts?.env ?? {}) }, maxBuffer: 64 * 1024 * 1024 },
-      (error, stdout, stderr) => {
-        const code =
-          error && typeof (error as { code?: unknown }).code === "number"
-            ? (error as { code: number }).code
-            : error
-              ? 1
-              : 0;
-        resolve({ stdout: stdout ?? "", stderr: stderr ?? "", code });
-      },
-    );
-  });
 
 export interface Worktree {
   path: string;

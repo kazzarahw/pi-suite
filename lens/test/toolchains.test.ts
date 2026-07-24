@@ -10,7 +10,7 @@ import {
   RUFF_FORMAT,
   GOFMT,
 } from "../src/toolchains.ts";
-import type { ExecFn } from "../src/exec.ts";
+import type { ExecFn } from "../../shared/exec.ts";
 
 test("toolchainFor resolves known extensions with lsp + linters + formatter", () => {
   const ts = toolchainFor("src/a.ts");

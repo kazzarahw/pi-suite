@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { RUFF, ESLINT, SHELLCHECK, hasEslintConfig, runLinters } from "../src/linters.ts";
-import type { ExecFn } from "../src/exec.ts";
+import type { ExecFn } from "../../shared/exec.ts";
 
 test("RUFF parses ruff json output into Diagnostic[]", () => {
   const json = JSON.stringify([

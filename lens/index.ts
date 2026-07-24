@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { defaultExec } from "./src/exec.ts";
+import { defaultExec } from "../shared/exec.ts";
 import { loadConfig, saveConfig, autodetectVerify } from "./src/config.ts";
 import { createManager } from "./src/lsp/manager.ts";
 import { runLinters } from "./src/linters.ts";

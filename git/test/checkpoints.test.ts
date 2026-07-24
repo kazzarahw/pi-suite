@@ -2,7 +2,8 @@ import { test, expect } from "bun:test";
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createGit, defaultExec } from "../src/git.ts";
+import { createGit } from "../src/git.ts";
+import { defaultExec } from "../../shared/exec.ts";
 import {
   checkpoint,
   checkpointRef,

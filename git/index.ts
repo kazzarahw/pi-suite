@@ -1,5 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { createGit, defaultExec } from "./src/git.ts";
+import { createGit } from "./src/git.ts";
+import { defaultExec } from "../shared/exec.ts";
 import { loadConfig, saveConfig } from "./src/config.ts";
 import { checkpointTurn, restoreOnForkShutdown, type PendingFork } from "./src/hooks.ts";
 import { currentUserEntryId } from "./src/checkpoints.ts";

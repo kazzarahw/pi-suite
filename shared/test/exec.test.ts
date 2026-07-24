@@ -1,0 +1,72 @@
+import { test, expect } from "bun:test";
+import { defaultExec, MAX_BUFFER } from "../exec.ts";
+
+/** Reject if a promise doesn't settle within `ms` — turns a hang into a clear failure. */
+const within = <T>(ms: number, p: Promise<T>): Promise<T> =>
+  Promise.race([
+    p,
+    new Promise<T>((_, rej) => setTimeout(() => rej(new Error(`did not settle within ${ms}ms`)), ms)),
+  ]);
+
+test("defaultExec captures stdout and exit 0 for a successful command", async () => {
+  const r = await defaultExec("sh", ["-c", "printf hello"]);
+  expect(r.code).toBe(0);
+  expect(r.stdout).toBe("hello");
+});
+
+test("defaultExec propagates a non-zero exit code", async () => {
+  expect((await defaultExec("sh", ["-c", "exit 7"])).code).toBe(7);
+});
+
+test("defaultExec captures stderr alongside a non-zero exit", async () => {
+  const r = await defaultExec("sh", ["-c", "printf boom >&2; exit 3"]);
+  expect(r.code).toBe(3);
+  expect(r.stderr).toContain("boom");
+});
+
+// The guarantee the LSP-hang fix leans on: a missing binary must RESOLVE (code != 0),
+// never hang — unlike the hand-rolled LSP request(). Locks it against a future regression.
+test("defaultExec resolves promptly on a missing binary (never hangs)", async () => {
+  const r = await within(2000, defaultExec("pi-suite-definitely-not-a-real-binary", ["--x"]));
+  expect(r.code).not.toBe(0);
+});
+
+// Carried over from pi-browser: when a spawn fails with no stderr (e.g. ENOENT), surface
+// the error message rather than an empty string, so callers can report something useful.
+test("defaultExec falls back to the error message when stderr is empty", async () => {
+  const r = await defaultExec("pi-suite-definitely-not-a-real-binary", []);
+  expect(r.stderr.length).toBeGreaterThan(0);
+});
+
+// Carried over from pi-lens: the working directory must be honored.
+test("defaultExec honors cwd", async () => {
+  const r = await defaultExec("sh", ["-c", "pwd"], { cwd: "/tmp" });
+  expect(r.stdout.trim()).toBe("/tmp");
+});
+
+// Carried over from pi-git: extra env is merged OVER process.env, not replacing it.
+test("defaultExec merges env over process.env rather than replacing it", async () => {
+  const r = await defaultExec("sh", ["-c", "printf '%s|%s' \"$PI_SUITE_TEST_VAR\" \"$HOME\""], {
+    env: { PI_SUITE_TEST_VAR: "set-by-test" },
+  });
+  const [custom, home] = r.stdout.split("|");
+  expect(custom).toBe("set-by-test");
+  expect(home).toBe(process.env.HOME);
+});
+
+test("defaultExec settles rather than hanging when the signal is already aborted", async () => {
+  const r = await within(2000, defaultExec("sh", ["-c", "sleep 5"], { signal: AbortSignal.abort() }));
+  expect(r.code).not.toBe(0);
+});
+
+test("defaultExec settles when the signal aborts mid-flight", async () => {
+  const ac = new AbortController();
+  const p = defaultExec("sh", ["-c", "sleep 5"], { signal: ac.signal });
+  setTimeout(() => ac.abort(), 50);
+  const r = await within(3000, p);
+  expect(r.code).not.toBe(0);
+});
+
+test("MAX_BUFFER is 64MB", () => {
+  expect(MAX_BUFFER).toBe(64 * 1024 * 1024);
+});

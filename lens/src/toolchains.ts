@@ -3,7 +3,7 @@ import { extname } from "node:path";
 import type { ServerSpec } from "./lsp/config.ts";
 import type { LinterSpec } from "./linters.ts";
 import { RUFF, ESLINT, SHELLCHECK } from "./linters.ts";
-import type { ExecFn } from "./exec.ts";
+import type { ExecFn } from "../../shared/exec.ts";
 
 /** An in-place code formatter for a language. Success = exit 0; we diff bytes to detect changes. */
 export interface FormatterSpec {
