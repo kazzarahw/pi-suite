@@ -1,5 +1,8 @@
 import { test, expect } from "bun:test";
-import { RUFF, ESLINT, SHELLCHECK, runLinters } from "../src/linters.ts";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { RUFF, ESLINT, SHELLCHECK, hasEslintConfig, runLinters } from "../src/linters.ts";
 import type { ExecFn } from "../src/exec.ts";
 
 test("RUFF parses ruff json output into Diagnostic[]", () => {
@@ -21,9 +24,39 @@ test("runLinters runs each spec via exec and flattens", async () => {
     stderr: "",
     code: 1,
   });
-  const ds = await runLinters("a.py", [RUFF], exec);
+  const ds = await runLinters("a.py", [RUFF], exec, "/tmp");
   expect(ds).toHaveLength(1);
   expect(ds[0]!.source).toBe("ruff");
+});
+
+test("hasEslintConfig detects flat, legacy, and package.json configs", () => {
+  const dir = mkdtempSync(join(tmpdir(), "lens-eslint-"));
+  expect(hasEslintConfig(dir)).toBe(false);
+  writeFileSync(join(dir, "eslint.config.js"), "export default [];");
+  expect(hasEslintConfig(dir)).toBe(true);
+  rmSync(dir, { recursive: true, force: true });
+
+  const dir2 = mkdtempSync(join(tmpdir(), "lens-eslint-"));
+  writeFileSync(join(dir2, "package.json"), JSON.stringify({ eslintConfig: { rules: {} } }));
+  expect(hasEslintConfig(dir2)).toBe(true);
+  rmSync(dir2, { recursive: true, force: true });
+});
+
+test("runLinters skips a spec whose enabledFor is false (no spawn), runs it once enabled", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "lens-gate-"));
+  let spawned = 0;
+  const exec: ExecFn = async () => {
+    spawned++;
+    return { stdout: "[]", stderr: "", code: 0 };
+  };
+  // ESLINT.enabledFor = hasEslintConfig → false in an empty dir, so it must not spawn.
+  expect(await runLinters(join(dir, "a.ts"), [ESLINT], exec, dir)).toEqual([]);
+  expect(spawned).toBe(0);
+  // Add a config → it runs.
+  writeFileSync(join(dir, "eslint.config.js"), "export default [];");
+  await runLinters(join(dir, "a.ts"), [ESLINT], exec, dir);
+  expect(spawned).toBe(1);
+  rmSync(dir, { recursive: true, force: true });
 });
 
 test("ESLINT parses eslint json (severity 2=error, 1=warning)", () => {

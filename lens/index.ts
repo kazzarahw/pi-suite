@@ -5,6 +5,7 @@ import { loadConfig, saveConfig, autodetectVerify } from "./src/config.ts";
 import { createManager } from "./src/lsp/manager.ts";
 import { runLinters } from "./src/linters.ts";
 import { toolchainFor, DEFAULT_TOOLCHAINS, runFormatter } from "./src/toolchains.ts";
+import { discoverWarmTargets, listWorkspaceFiles } from "./src/prewarm.ts";
 import { formatHealth, formatHealthCompact, probeAvailability, whichOnPath } from "./src/health.ts";
 import { mergeDiagnostics, formatDiagnostics, formatFormatted, type Diagnostic } from "./src/diagnostics.ts";
 import { runVerify, formatVerify } from "./src/verify.ts";
@@ -44,7 +45,8 @@ export default function piLens(pi: ExtensionAPI): void {
     if (!FILE_TOOLS.has(event.toolName)) return;
     const rel = pathFromInput(event.input);
     if (!rel) return;
-    const file = resolve(ctx?.sessionManager?.getCwd?.() ?? cwd, rel);
+    const projectCwd = ctx?.sessionManager?.getCwd?.() ?? cwd;
+    const file = resolve(projectCwd, rel);
     const tc = toolchainFor(file);
     const isEdit = EDIT_TOOLS.has(event.toolName);
 
@@ -63,7 +65,7 @@ export default function piLens(pi: ExtensionAPI): void {
     let diags: Diagnostic[] = [];
     try {
       const lsp = await manager.pull(file);
-      const lint = tc ? await runLinters(file, tc.linters, defaultExec) : [];
+      const lint = tc ? await runLinters(file, tc.linters, defaultExec, projectCwd) : [];
       diags = mergeDiagnostics(lsp, lint);
     } catch {
       return; // never break a read/edit because the LSP misbehaved
@@ -107,6 +109,21 @@ export default function piLens(pi: ExtensionAPI): void {
     // Surface it to the agent — guarded on hasUI so print/JSON mode doesn't stall (see pi-todo).
     if (ctx?.hasUI) {
       pi.sendMessage({ customType: "pi-lens", content: formatVerify(result), display: true }, { deliverAs: "nextTurn" });
+    }
+  });
+
+  // Prewarm: on session start (incl. after /fork, which restarts the LSP cold), open one file per
+  // present+installed language server in the background so the agent's first read/query is fast.
+  // Interactive-only and best-effort — never blocks startup.
+  pi.on("session_start", async (_event, ctx) => {
+    const cfg = loadConfig();
+    if (!ctx?.hasUI || cfg.mode === "off" || !cfg.prewarm) return;
+    const dir = ctx?.sessionManager?.getCwd?.() ?? cwd;
+    try {
+      const targets = discoverWarmTargets(DEFAULT_TOOLCHAINS, whichOnPath, listWorkspaceFiles(dir));
+      for (const target of targets) void manager.ready(target).catch(() => {});
+    } catch {
+      /* prewarm is best-effort */
     }
   });
 

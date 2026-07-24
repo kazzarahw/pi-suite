@@ -68,7 +68,7 @@ export function buildLensCommand(deps: CommandDeps) {
   return {
     name: "pi-lens" as const,
     options: {
-      description: "Configure pi-lens: '/pi-lens' opens the settings panel; or 'mode <m>' / 'verify <cmd>' / 'autoformat on|off'.",
+      description: "Configure pi-lens: '/pi-lens' opens the settings panel; or 'mode <m>' / 'verify <cmd>' / 'autoformat on|off' / 'prewarm on|off'.",
       handler: async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
         const trimmed = args.trim();
         const sp = trimmed.indexOf(" ");
@@ -97,9 +97,15 @@ export function buildLensCommand(deps: CommandDeps) {
           ctx?.ui?.notify?.(`[pi-lens] autoFormat ${on ? "on" : "off"}`, "info");
           return;
         }
+        if (key === "prewarm") {
+          const on = value === "on" || value === "true";
+          deps.saveConfig({ ...cfg, prewarm: on });
+          ctx?.ui?.notify?.(`[pi-lens] prewarm ${on ? "on" : "off"}`, "info");
+          return;
+        }
         if (key) {
           ctx?.ui?.notify?.(
-            `[pi-lens] unknown option "${key}" (use: mode <m> | verify <cmd> | autoformat on|off)`,
+            `[pi-lens] unknown option "${key}" (use: mode <m> | verify <cmd> | autoformat on|off | prewarm on|off)`,
             "error",
           );
           return;
@@ -116,12 +122,14 @@ export function buildLensCommand(deps: CommandDeps) {
         const items: SettingItem[] = [
           { id: "mode", label: "Mode", currentValue: cfg.mode, values: [...MODES] },
           { id: "autoformat", label: "Auto-format", currentValue: cfg.autoFormat ? "on" : "off", values: ["on", "off"] },
+          { id: "prewarm", label: "Prewarm LSP", currentValue: cfg.prewarm ? "on" : "off", values: ["on", "off"] },
           { id: "verify", label: "Verify", currentValue: cfg.verifyCmd || "(autodetect)", values: verifyPresets(cfg) },
         ];
         const apply = (id: string, val: string): void => {
           const c = deps.loadConfig();
           if (id === "mode") deps.saveConfig({ ...c, mode: val as Mode });
           else if (id === "autoformat") deps.saveConfig({ ...c, autoFormat: val === "on" });
+          else if (id === "prewarm") deps.saveConfig({ ...c, prewarm: val === "on" });
           else if (id === "verify") deps.saveConfig({ ...c, verifyCmd: val === "(autodetect)" ? "" : val });
         };
         await openSettingsPanel(ctx, "pi-lens · settings", deps.healthCompact(), items, apply);

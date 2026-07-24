@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { Diagnostic } from "./diagnostics.ts";
 import type { ExecFn } from "./exec.ts";
 
@@ -5,12 +7,21 @@ export interface LinterSpec {
   name: string;
   cmd: (file: string) => string[];
   parse: (stdout: string, stderr: string) => Diagnostic[];
+  /** Optional gate: only run when this returns true for the project cwd (omitted = always on). */
+  enabledFor?: (cwd: string) => boolean;
 }
 
-/** Run each linter spec against a file and flatten the diagnostics. A crashing linter yields []. */
-export async function runLinters(path: string, specs: LinterSpec[], exec: ExecFn): Promise<Diagnostic[]> {
+/** Run each linter spec against a file and flatten the diagnostics. Specs gated off by `enabledFor` are
+ *  skipped before spawning; a crashing linter yields []. */
+export async function runLinters(
+  path: string,
+  specs: LinterSpec[],
+  exec: ExecFn,
+  cwd: string,
+): Promise<Diagnostic[]> {
+  const active = specs.filter((spec) => !spec.enabledFor || spec.enabledFor(cwd));
   const groups = await Promise.all(
-    specs.map(async (spec) => {
+    active.map(async (spec) => {
       const argv = spec.cmd(path);
       const [cmd, ...args] = argv;
       if (!cmd) return [];
@@ -52,10 +63,35 @@ export const RUFF: LinterSpec = {
   },
 };
 
-/** ESLint JSON output → Diagnostic[]. Config-only: with no eslint config it reports nothing. */
+const ESLINT_CONFIG_FILES = [
+  "eslint.config.js",
+  "eslint.config.mjs",
+  "eslint.config.cjs",
+  "eslint.config.ts",
+  ".eslintrc.js",
+  ".eslintrc.cjs",
+  ".eslintrc.yaml",
+  ".eslintrc.yml",
+  ".eslintrc.json",
+  ".eslintrc",
+];
+
+/** True when the project has an eslint config (flat, legacy, or a package.json `eslintConfig` key). */
+export function hasEslintConfig(cwd: string): boolean {
+  if (ESLINT_CONFIG_FILES.some((f) => existsSync(join(cwd, f)))) return true;
+  try {
+    const pkg = JSON.parse(readFileSync(join(cwd, "package.json"), "utf8")) as { eslintConfig?: unknown };
+    return pkg.eslintConfig != null;
+  } catch {
+    return false;
+  }
+}
+
+/** ESLint JSON output → Diagnostic[]. Gated on an eslint config — it no-ops/errors without one. */
 export const ESLINT: LinterSpec = {
   name: "eslint",
   cmd: (file) => ["eslint", "--format", "json", file],
+  enabledFor: hasEslintConfig,
   parse: (stdout) => {
     try {
       const files = JSON.parse(stdout) as Array<{
