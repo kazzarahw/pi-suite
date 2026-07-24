@@ -1,6 +1,9 @@
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import {
+  configPath as sharedConfigPath,
+  loadConfig as sharedLoad,
+  saveConfig as sharedSave,
+  type ConfigSpec,
+} from "../../shared/config.ts";
 
 /** pi-consult configuration, persisted as JSON and read per call. */
 export interface ConsultConfig {
@@ -16,31 +19,34 @@ export const DEFAULTS: ConsultConfig = {
   allowedModels: ["opus", "sonnet", "haiku"],
 };
 
-/** `~/.pi/agent/pi-consult.json` — the config's canonical location. */
-export function configPath(): string {
-  return join(homedir(), ".pi", "agent", "pi-consult.json");
-}
-
-/** Read the config, falling back to {@link DEFAULTS} on any missing/invalid field. */
-export function loadConfig(path: string = configPath()): ConsultConfig {
-  try {
-    const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<ConsultConfig>;
+export const SPEC: ConfigSpec<ConsultConfig> = {
+  name: "consult",
+  defaults: DEFAULTS,
+  parse(raw, defaults) {
+    const parsed = raw as Partial<ConsultConfig>;
     return {
       defaultModel:
         typeof parsed.defaultModel === "string" && parsed.defaultModel.length > 0
           ? parsed.defaultModel
-          : DEFAULTS.defaultModel,
+          : defaults.defaultModel,
       allowedModels: Array.isArray(parsed.allowedModels)
         ? parsed.allowedModels.filter((m): m is string => typeof m === "string")
-        : DEFAULTS.allowedModels,
+        : defaults.allowedModels,
     };
-  } catch {
-    return { ...DEFAULTS };
-  }
+  },
+};
+
+/** `<agentDir>/pi-consult.json` — the config's canonical location. */
+export function configPath(): string {
+  return sharedConfigPath(SPEC.name);
+}
+
+/** Read the config, falling back to {@link DEFAULTS} on any missing/invalid field. */
+export function loadConfig(path?: string): ConsultConfig {
+  return sharedLoad(SPEC, path);
 }
 
 /** Write the config, creating the parent directory if needed. */
-export function saveConfig(cfg: ConsultConfig, path: string = configPath()): void {
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(cfg, null, 2)}\n`, "utf8");
+export function saveConfig(cfg: ConsultConfig, path?: string): void {
+  sharedSave(SPEC, cfg, path);
 }

@@ -1,6 +1,10 @@
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { homedir, cpus } from "node:os";
-import { dirname, join } from "node:path";
+import { cpus } from "node:os";
+import {
+  configPath as sharedConfigPath,
+  loadConfig as sharedLoad,
+  saveConfig as sharedSave,
+  type ConfigSpec,
+} from "../../shared/config.ts";
 
 export interface SpawnConfig {
   /** Model for subagents whose def doesn't pin one. "" = let pi choose its default. */
@@ -14,26 +18,29 @@ export const DEFAULTS: SpawnConfig = {
   concurrency: Math.min(4, Math.max(1, cpus().length)),
 };
 
-export function configPath(): string {
-  return join(homedir(), ".pi", "agent", "pi-spawn.json");
-}
-
-export function loadConfig(path: string = configPath()): SpawnConfig {
-  try {
-    const p = JSON.parse(readFileSync(path, "utf8")) as Partial<SpawnConfig>;
+export const SPEC: ConfigSpec<SpawnConfig> = {
+  name: "spawn",
+  defaults: DEFAULTS,
+  parse(raw, defaults) {
+    const p = raw as Partial<SpawnConfig>;
     return {
-      defaultModel: typeof p.defaultModel === "string" ? p.defaultModel : DEFAULTS.defaultModel,
+      defaultModel: typeof p.defaultModel === "string" ? p.defaultModel : defaults.defaultModel,
       concurrency:
         typeof p.concurrency === "number" && p.concurrency >= 1
           ? Math.floor(p.concurrency)
-          : DEFAULTS.concurrency,
+          : defaults.concurrency,
     };
-  } catch {
-    return { ...DEFAULTS };
-  }
+  },
+};
+
+export function configPath(): string {
+  return sharedConfigPath(SPEC.name);
 }
 
-export function saveConfig(cfg: SpawnConfig, path: string = configPath()): void {
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(cfg, null, 2)}\n`, "utf8");
+export function loadConfig(path?: string): SpawnConfig {
+  return sharedLoad(SPEC, path);
+}
+
+export function saveConfig(cfg: SpawnConfig, path?: string): void {
+  sharedSave(SPEC, cfg, path);
 }

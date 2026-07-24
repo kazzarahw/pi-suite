@@ -1,7 +1,10 @@
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join } from "node:path";
 import { DEFAULT_MODE, MODES, type Mode } from "../../shared/index.ts";
+import {
+  configPath as sharedConfigPath,
+  loadConfig as sharedLoad,
+  saveConfig as sharedSave,
+  type ConfigSpec,
+} from "../../shared/config.ts";
 
 /** pi-git configuration. `checkpoint.include` is always "all" in v1 (kept for forward-compat). */
 export interface GitConfig {
@@ -20,27 +23,30 @@ export const DEFAULTS: GitConfig = {
   worktrees: { auto: false, baseDir: ".pi/worktrees" },
 };
 
-export function configPath(): string {
-  return join(homedir(), ".pi", "agent", "pi-git.json");
-}
-
-export function loadConfig(path: string = configPath()): GitConfig {
-  try {
-    const p = JSON.parse(readFileSync(path, "utf8")) as Partial<GitConfig>;
+export const SPEC: ConfigSpec<GitConfig> = {
+  name: "git",
+  defaults: DEFAULTS,
+  parse(raw, defaults) {
+    const p = raw as Partial<GitConfig>;
     return {
       mode: (MODES as readonly string[]).includes(p.mode as string) ? (p.mode as Mode) : DEFAULT_MODE,
       worktrees: {
-        auto: typeof p.worktrees?.auto === "boolean" ? p.worktrees.auto : DEFAULTS.worktrees.auto,
+        auto: typeof p.worktrees?.auto === "boolean" ? p.worktrees.auto : defaults.worktrees.auto,
         baseDir:
-          typeof p.worktrees?.baseDir === "string" ? p.worktrees.baseDir : DEFAULTS.worktrees.baseDir,
+          typeof p.worktrees?.baseDir === "string" ? p.worktrees.baseDir : defaults.worktrees.baseDir,
       },
     };
-  } catch {
-    return { mode: DEFAULTS.mode, worktrees: { ...DEFAULTS.worktrees } };
-  }
+  },
+};
+
+export function configPath(): string {
+  return sharedConfigPath(SPEC.name);
 }
 
-export function saveConfig(cfg: GitConfig, path: string = configPath()): void {
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(cfg, null, 2)}\n`, "utf8");
+export function loadConfig(path?: string): GitConfig {
+  return sharedLoad(SPEC, path);
+}
+
+export function saveConfig(cfg: GitConfig, path?: string): void {
+  sharedSave(SPEC, cfg, path);
 }

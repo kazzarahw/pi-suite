@@ -1,7 +1,12 @@
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { readFileSync, existsSync } from "node:fs";
+import { join } from "node:path";
 import { DEFAULT_MODE, MODES, type Mode } from "../../shared/index.ts";
+import {
+  configPath as sharedConfigPath,
+  loadConfig as sharedLoad,
+  saveConfig as sharedSave,
+  type ConfigSpec,
+} from "../../shared/config.ts";
 
 export interface LensConfig {
   /** off = manual `lens` tool only; notify (default) = inject diagnostics + auto-verify; block = notify in v1 (hard gating deferred). */
@@ -16,28 +21,30 @@ export interface LensConfig {
 
 export const DEFAULTS: LensConfig = { mode: DEFAULT_MODE, verifyCmd: "", autoFormat: false, prewarm: true };
 
-export function configPath(): string {
-  const agentDir = process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent");
-  return join(agentDir, "pi-lens.json");
-}
-
-export function loadConfig(path: string = configPath()): LensConfig {
-  try {
-    const p = JSON.parse(readFileSync(path, "utf8")) as Partial<LensConfig>;
+export const SPEC: ConfigSpec<LensConfig> = {
+  name: "lens",
+  defaults: DEFAULTS,
+  parse(raw, defaults) {
+    const p = raw as Partial<LensConfig>;
     return {
       mode: (MODES as readonly string[]).includes(p.mode as string) ? (p.mode as Mode) : DEFAULT_MODE,
-      verifyCmd: typeof p.verifyCmd === "string" ? p.verifyCmd : DEFAULTS.verifyCmd,
-      autoFormat: typeof p.autoFormat === "boolean" ? p.autoFormat : DEFAULTS.autoFormat,
-      prewarm: typeof p.prewarm === "boolean" ? p.prewarm : DEFAULTS.prewarm,
+      verifyCmd: typeof p.verifyCmd === "string" ? p.verifyCmd : defaults.verifyCmd,
+      autoFormat: typeof p.autoFormat === "boolean" ? p.autoFormat : defaults.autoFormat,
+      prewarm: typeof p.prewarm === "boolean" ? p.prewarm : defaults.prewarm,
     };
-  } catch {
-    return { ...DEFAULTS };
-  }
+  },
+};
+
+export function configPath(): string {
+  return sharedConfigPath(SPEC.name);
 }
 
-export function saveConfig(cfg: LensConfig, path: string = configPath()): void {
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(cfg, null, 2)}\n`, "utf8");
+export function loadConfig(path?: string): LensConfig {
+  return sharedLoad(SPEC, path);
+}
+
+export function saveConfig(cfg: LensConfig, path?: string): void {
+  sharedSave(SPEC, cfg, path);
 }
 
 /** Best-effort verify command for a project, or null. Pure-ish (reads the fs). */

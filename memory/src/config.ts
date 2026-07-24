@@ -1,7 +1,10 @@
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join } from "node:path";
 import { DEFAULT_MODE, MODES, type Mode } from "../../shared/index.ts";
+import {
+  configPath as sharedConfigPath,
+  loadConfig as sharedLoad,
+  saveConfig as sharedSave,
+  type ConfigSpec,
+} from "../../shared/config.ts";
 
 export interface MemoryConfig {
   /** off = no index injection / no auto-capture; notify (default) = both. block collapses to notify. */
@@ -14,27 +17,30 @@ export interface MemoryConfig {
 
 export const DEFAULTS: MemoryConfig = { mode: DEFAULT_MODE, autoCapture: false, recallLimit: 3 };
 
-const agentDir = (): string => process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent");
-
-export function configPath(): string {
-  return join(agentDir(), "pi-memory.json");
-}
-
-export function loadConfig(path: string = configPath()): MemoryConfig {
-  try {
-    const p = JSON.parse(readFileSync(path, "utf8")) as Partial<MemoryConfig>;
+export const SPEC: ConfigSpec<MemoryConfig> = {
+  name: "memory",
+  defaults: DEFAULTS,
+  parse(raw, defaults) {
+    const p = raw as Partial<MemoryConfig>;
     return {
       mode: (MODES as readonly string[]).includes(p.mode as string) ? (p.mode as Mode) : DEFAULT_MODE,
-      autoCapture: typeof p.autoCapture === "boolean" ? p.autoCapture : DEFAULTS.autoCapture,
+      autoCapture: typeof p.autoCapture === "boolean" ? p.autoCapture : defaults.autoCapture,
       recallLimit:
-        typeof p.recallLimit === "number" && p.recallLimit >= 1 ? Math.floor(p.recallLimit) : DEFAULTS.recallLimit,
+        typeof p.recallLimit === "number" && p.recallLimit >= 1
+          ? Math.floor(p.recallLimit)
+          : defaults.recallLimit,
     };
-  } catch {
-    return { ...DEFAULTS };
-  }
+  },
+};
+
+export function configPath(): string {
+  return sharedConfigPath(SPEC.name);
 }
 
-export function saveConfig(cfg: MemoryConfig, path: string = configPath()): void {
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(cfg, null, 2)}\n`, "utf8");
+export function loadConfig(path?: string): MemoryConfig {
+  return sharedLoad(SPEC, path);
+}
+
+export function saveConfig(cfg: MemoryConfig, path?: string): void {
+  sharedSave(SPEC, cfg, path);
 }
