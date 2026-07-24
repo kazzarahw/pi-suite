@@ -1,7 +1,7 @@
 import type { AutocompleteItem } from "@earendil-works/pi-tui";
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { getSettingsListTheme } from "@earendil-works/pi-coding-agent";
-import { Container, type SettingItem, SettingsList } from "@earendil-works/pi-tui";
+import type { SettingItem } from "@earendil-works/pi-tui";
+import { openSettingsPanel } from "../../shared/settings-panel.ts";
 import type { ConsultConfig } from "./config.ts";
 
 export interface CommandDeps {
@@ -9,50 +9,6 @@ export interface CommandDeps {
   saveConfig: (c: ConsultConfig) => void;
 }
 
-/**
- * Open a `/settings`-style toggle panel: an arrow-navigable list of `items`, each cycling through its
- * `values`. `apply(id, value)` persists a single change (fires on every toggle). Requires TUI mode.
- */
-async function openSettingsPanel(
-  ctx: ExtensionCommandContext,
-  title: string,
-  subtitle: string,
-  items: SettingItem[],
-  apply: (id: string, value: string) => void,
-): Promise<void> {
-  await ctx.ui.custom((tui, theme, _kb, done) => {
-    const container = new Container();
-    container.addChild(
-      new (class {
-        render(width: number): string[] {
-          const clip = (s: string): string => (s.length > width ? s.slice(0, Math.max(0, width - 1)) : s);
-          return [theme.fg("accent", theme.bold(clip(title))), theme.fg("muted", clip(subtitle)), ""];
-        }
-        invalidate(): void {}
-      })(),
-    );
-    const list = new SettingsList(
-      items,
-      Math.min(items.length + 4, 15),
-      getSettingsListTheme(),
-      (id, value) => apply(id, value),
-      () => done(undefined),
-    );
-    container.addChild(list);
-    return {
-      render(width: number) {
-        return container.render(width);
-      },
-      invalidate() {
-        container.invalidate();
-      },
-      handleInput(data: string) {
-        list.handleInput?.(data);
-        tui.requestRender();
-      },
-    };
-  });
-}
 
 /** `/pi-consult` — no arg opens the settings panel; `/pi-consult <model>` sets the default model directly. */
 export function buildConsultCommand(deps: CommandDeps) {
