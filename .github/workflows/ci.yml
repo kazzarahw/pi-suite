@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The smoke test clones the repo at HEAD; a shallow checkout is enough,
+          # but it needs the git directory present.
+          fetch-depth: 1
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      # The smoke test runs `npm install --omit=dev` directly, reproducing what pi
+      # does on install — so Node/npm are required alongside Bun.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bunx tsc --noEmit
+
+      - name: Test
+        run: bun test
+
+      # Guards the bug that made the consolidation necessary: anything imported at
+      # runtime from devDependencies is absent on a real `pi install`.
+      - name: Install smoke test
+        run: ./scripts/smoke-install.sh
