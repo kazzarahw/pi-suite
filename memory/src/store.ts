@@ -57,9 +57,16 @@ export function readMemory(name: string, cwd: string): Memory | null {
   return listMemories(cwd).find((m) => m.name === name) ?? null;
 }
 
-/** Write a memory, deduping by name across scopes (removes any existing, writes to the target scope). */
+/**
+ * Write a memory, replacing any existing one of the same name **within its own scope**.
+ *
+ * Scope-limited deliberately: this previously deduped across both scopes, so writing a
+ * project memory silently destroyed a same-named global one. Names are scoped — a
+ * project note called "build-cmd" is a different fact from a global one, and keeping
+ * both is the point of having scopes at all.
+ */
 export function writeMemory(m: Memory, cwd: string): void {
-  deleteMemory(m.name, cwd);
+  deleteMemory(m.name, cwd, m.scope);
   const { global, project } = memoryDirs(cwd);
   const dir = m.scope === "project" ? project : global;
   mkdirSync(dir, { recursive: true });
@@ -67,16 +74,27 @@ export function writeMemory(m: Memory, cwd: string): void {
   rewriteIndex(dir, m.scope);
 }
 
-export function deleteMemory(name: string, cwd: string): void {
+/**
+ * Delete a memory by name.
+ *
+ * Omitting `scope` removes it from both — what a user naming a memory to delete
+ * should get. `writeMemory` always passes a scope, so an update can never reach
+ * across into the other one.
+ */
+export function deleteMemory(name: string, cwd: string, scope?: Scope): void {
   const { global, project } = memoryDirs(cwd);
-  for (const [dir, scope] of [
-    [global, "global"],
-    [project, "project"],
-  ] as const) {
+  const targets = (
+    [
+      [global, "global"],
+      [project, "project"],
+    ] as const
+  ).filter(([, s]) => scope === undefined || s === scope);
+
+  for (const [dir, s] of targets) {
     const f = fileFor(dir, name);
     if (existsSync(f)) {
       rmSync(f, { force: true });
-      rewriteIndex(dir, scope);
+      rewriteIndex(dir, s);
     }
   }
 }

@@ -45,13 +45,10 @@ test("writeMemory dedups by name (updates in place, single entry)", () => {
   expect(matches[0]!.body).toBe("new");
 });
 
-test("writeMemory across scopes stays a single entry (dedup by name)", () => {
-  writeMemory(mem({ scope: "global", body: "g" }), cwd);
-  writeMemory(mem({ scope: "project", body: "p" }), cwd);
-  const matches = listMemories(cwd).filter((m) => m.name === "n1");
-  expect(matches).toHaveLength(1);
-  expect(matches[0]!.scope).toBe("project");
-});
+// A test asserting cross-scope dedup ("stays a single entry") was removed here: it
+// encoded the data-loss defect as intended behavior, which is why the defect survived
+// a green suite. Its replacement — that both scopes' copies survive — is in the
+// "Scope isolation" section below.
 
 test("listMemories merges global + project and tags scope", () => {
   writeMemory(mem({ name: "g", scope: "global" }), cwd);
@@ -64,4 +61,51 @@ test("deleteMemory removes it", () => {
   writeMemory(mem(), cwd);
   deleteMemory("n1", cwd);
   expect(readMemory("n1", cwd)).toBeNull();
+});
+
+// --- Scope isolation -------------------------------------------------------
+// writeMemory documented itself as "deduping by name across scopes" and called
+// deleteMemory, which swept BOTH directories. Writing a project memory therefore
+// destroyed a same-named global one with no warning. Names are scoped; a project
+// note called "build-cmd" is a different fact from a global one.
+
+test("writing a project memory leaves a same-named global memory intact", () => {
+  writeMemory(mem({ name: "build-cmd", scope: "global", body: "global body" }), cwd);
+  writeMemory(mem({ name: "build-cmd", scope: "project", body: "project body" }), cwd);
+
+  const both = listMemories(cwd).filter((m) => m.name === "build-cmd");
+  expect(both).toHaveLength(2);
+  expect(both.find((m) => m.scope === "global")?.body).toBe("global body");
+  expect(both.find((m) => m.scope === "project")?.body).toBe("project body");
+});
+
+test("writing a global memory leaves a same-named project memory intact", () => {
+  writeMemory(mem({ name: "notes", scope: "project", body: "project body" }), cwd);
+  writeMemory(mem({ name: "notes", scope: "global", body: "global body" }), cwd);
+  expect(listMemories(cwd).filter((m) => m.name === "notes")).toHaveLength(2);
+});
+
+test("rewriting within one scope still replaces in place", () => {
+  writeMemory(mem({ name: "x", scope: "project", body: "old" }), cwd);
+  writeMemory(mem({ name: "x", scope: "project", body: "new" }), cwd);
+  const matches = listMemories(cwd).filter((m) => m.name === "x");
+  expect(matches).toHaveLength(1);
+  expect(matches[0]!.body).toBe("new");
+});
+
+test("deleteMemory without a scope removes the name from both scopes", () => {
+  // An explicit user deletion naming a memory should mean exactly that.
+  writeMemory(mem({ name: "gone", scope: "global" }), cwd);
+  writeMemory(mem({ name: "gone", scope: "project" }), cwd);
+  deleteMemory("gone", cwd);
+  expect(listMemories(cwd).filter((m) => m.name === "gone")).toHaveLength(0);
+});
+
+test("deleteMemory with a scope removes only that scope's copy", () => {
+  writeMemory(mem({ name: "keep", scope: "global", body: "g" }), cwd);
+  writeMemory(mem({ name: "keep", scope: "project", body: "p" }), cwd);
+  deleteMemory("keep", cwd, "project");
+  const left = listMemories(cwd).filter((m) => m.name === "keep");
+  expect(left).toHaveLength(1);
+  expect(left[0]!.scope).toBe("global");
 });
