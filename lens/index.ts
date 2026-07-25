@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { defaultExec } from "../shared/exec.ts";
+import { cwdOf } from "../shared/index.ts";
 import { loadConfig, saveConfig, autodetectVerify } from "./src/config.ts";
 import { createManager } from "./src/lsp/manager.ts";
 import { runLinters } from "./src/linters.ts";
@@ -8,7 +9,7 @@ import { toolchainFor, DEFAULT_TOOLCHAINS, runFormatter } from "./src/toolchains
 import { discoverWarmTargets, listWorkspaceFiles } from "./src/prewarm.ts";
 import { formatHealth, formatHealthCompact, probeAvailability, whichOnPath } from "./src/health.ts";
 import { mergeDiagnostics, formatDiagnostics, formatFormatted, type Diagnostic } from "./src/diagnostics.ts";
-import { runVerify, formatVerify } from "./src/verify.ts";
+import { runVerify, formatVerify, chooseVerifyCommand } from "./src/verify.ts";
 import { buildLensTool } from "./src/tools.ts";
 import { buildLensCommand } from "./src/command.ts";
 
@@ -31,10 +32,15 @@ function pathFromInput(input: unknown): string | null {
  * Build spec: docs/superpowers/plans/2026-07-20-pi-lens.md
  */
 export default function piLens(pi: ExtensionAPI): void {
-  const cwd = process.cwd();
+  // No cwd is captured here. It used to be `process.cwd()` read at extension-load time
+  // and passed to createManager, autodetectVerify, and runVerify — so where Pi's session
+  // cwd differed, the language server was rooted in the wrong project and the verify
+  // command ran in the wrong directory, for the entire session. Every site now resolves
+  // `cwdOf(ctx)` from the hook that is actually firing.
   const manager = createManager();
   let dirty = false; // an edit landed since the last verify
   let hasErrors = false; // last diagnostics had unresolved errors → don't verify yet
+  let warnedUntrusted = false; // the trust skip is reported once per session, not per settle
 
   pi.registerTool(buildLensTool({ manager: () => manager }));
 
@@ -45,7 +51,7 @@ export default function piLens(pi: ExtensionAPI): void {
     if (!FILE_TOOLS.has(event.toolName)) return;
     const rel = pathFromInput(event.input);
     if (!rel) return;
-    const projectCwd = ctx?.sessionManager?.getCwd?.() ?? cwd;
+    const projectCwd = cwdOf(ctx);
     const file = resolve(projectCwd, rel);
     const tc = toolchainFor(file);
     const isEdit = EDIT_TOOLS.has(event.toolName);
@@ -95,12 +101,32 @@ export default function piLens(pi: ExtensionAPI): void {
   pi.on("agent_settled", async (_event, ctx) => {
     const cfg = loadConfig();
     if (cfg.mode === "off" || !dirty || hasErrors) return;
-    const cmd = cfg.verifyCmd || autodetectVerify(cwd);
-    if (!cmd) return;
+    const projectCwd = cwdOf(ctx);
+
+    // Trust gate: an autodetected command comes out of the repository, so running it in
+    // an untrusted project executes whatever that repository chose. A configured command
+    // is the user's own and still runs. See chooseVerifyCommand.
+    const choice = chooseVerifyCommand({
+      configured: cfg.verifyCmd,
+      detected: autodetectVerify(projectCwd),
+      trusted: ctx?.isProjectTrusted?.() ?? true,
+    });
+    if (choice.run === null) {
+      // Say so once. A safety gate that is invisible reads as a broken feature.
+      if (choice.reason === "untrusted-autodetect" && !warnedUntrusted && ctx?.hasUI) {
+        warnedUntrusted = true;
+        ctx.ui?.notify?.(
+          "[pi-lens] project is not trusted — skipping the autodetected verify command. Trust the project, or set one explicitly with /pi-lens.",
+          "warning",
+        );
+      }
+      return;
+    }
+    const cmd = choice.run;
     dirty = false;
     let result;
     try {
-      result = await runVerify(cmd, defaultExec, cwd);
+      result = await runVerify(cmd, defaultExec, projectCwd, ctx?.signal, cfg.verifyTimeoutMs);
     } catch {
       return;
     }
@@ -118,7 +144,7 @@ export default function piLens(pi: ExtensionAPI): void {
   pi.on("session_start", async (_event, ctx) => {
     const cfg = loadConfig();
     if (!ctx?.hasUI || cfg.mode === "off" || !cfg.prewarm) return;
-    const dir = ctx?.sessionManager?.getCwd?.() ?? cwd;
+    const dir = cwdOf(ctx);
     try {
       const targets = discoverWarmTargets(DEFAULT_TOOLCHAINS, whichOnPath, listWorkspaceFiles(dir));
       for (const target of targets) void manager.ready(target, dir).catch(() => {});
@@ -134,7 +160,7 @@ export default function piLens(pi: ExtensionAPI): void {
   const command = buildLensCommand({
     loadConfig: () => loadConfig(),
     saveConfig: (c) => saveConfig(c),
-    detectVerify: () => autodetectVerify(cwd),
+    detectVerify: (cwd: string) => autodetectVerify(cwd),
     health: () => formatHealth(probeAvailability(DEFAULT_TOOLCHAINS, whichOnPath)),
     healthCompact: () => formatHealthCompact(probeAvailability(DEFAULT_TOOLCHAINS, whichOnPath)),
   });

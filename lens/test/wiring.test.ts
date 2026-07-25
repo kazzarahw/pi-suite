@@ -97,3 +97,68 @@ test("the lens tool rejects an unsupported file type rather than hanging", async
     api.tools.get("lens")!.execute("1", { action: "hover", path: file, line: 1, col: 1 } as never, undefined, undefined, fakeCtx()),
   ).rejects.toThrow(/no language server/);
 });
+
+// --- Session cwd and project trust -----------------------------------------
+
+test("lens resolves the session cwd, not process.cwd(), for diagnostics", async () => {
+  // The old code read process.cwd() once in the extension factory. A tool_result for a
+  // relative path must resolve against the session's directory instead.
+  const dir = mkdtempSync(join(tmpdir(), "pi-lens-cwd-"));
+  writeFileSync(join(dir, "a.ts"), "const x: number = 1;\n");
+  await withConfig({ mode: "notify" }, async () => {
+    const api = await loadExtension("lens");
+    const result = (await api.fire(
+      "tool_result",
+      { toolName: "read", input: { path: "a.ts" }, content: [], details: {}, isError: false },
+      fakeCtx({ cwd: dir }),
+    )) as { content?: unknown[] } | undefined;
+    // Either it injected a block or it emitted lens:clean — both prove it resolved the
+    // file under `dir`. What it must not do is act on the repo's own directory.
+    const events = api.emitted.filter((e) => e.event.startsWith("lens:"));
+    expect(events.length).toBeGreaterThan(0);
+    const file = (events[0]!.data as { file: string }).file;
+    expect(file.startsWith(dir)).toBe(true);
+    void result;
+  });
+});
+
+// The trust gate, end to end through the hook. An untrusted project must not run a
+// command that the repository itself supplied.
+test("agent_settled runs no autodetected verify in an untrusted project", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "pi-lens-untrusted-"));
+  writeFileSync(join(dir, "a.ts"), "const x = 1;\n");
+  // bun.lock makes autodetectVerify return "bun test" — a command from the repo.
+  writeFileSync(join(dir, "bun.lock"), "");
+  await withConfig({ mode: "notify", verifyCmd: "" }, async () => {
+    const api = await loadExtension("lens");
+    const ctx = fakeCtx({ cwd: dir, isProjectTrusted: false });
+    // Mark the session dirty so verify would otherwise be eligible.
+    await api.fire(
+      "tool_result",
+      { toolName: "write", input: { path: "a.ts" }, content: [], details: {}, isError: false },
+      ctx,
+    );
+    await api.fire("agent_settled", {}, ctx);
+    expect(api.emitted.filter((e) => e.event.startsWith("verify:"))).toEqual([]);
+    // And it says so, rather than failing silently.
+    expect(ctx.uiCalls.notices.some((n) => /not trusted/i.test(n.msg))).toBe(true);
+  });
+}, 20_000);
+
+test("the untrusted notice is shown once per session, not once per settle", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "pi-lens-untrusted2-"));
+  writeFileSync(join(dir, "a.ts"), "const x = 1;\n");
+  writeFileSync(join(dir, "bun.lock"), "");
+  await withConfig({ mode: "notify", verifyCmd: "" }, async () => {
+    const api = await loadExtension("lens");
+    const ctx = fakeCtx({ cwd: dir, isProjectTrusted: false });
+    await api.fire(
+      "tool_result",
+      { toolName: "write", input: { path: "a.ts" }, content: [], details: {}, isError: false },
+      ctx,
+    );
+    await api.fire("agent_settled", {}, ctx);
+    await api.fire("agent_settled", {}, ctx);
+    expect(ctx.uiCalls.notices.filter((n) => /not trusted/i.test(n.msg))).toHaveLength(1);
+  });
+}, 20_000);

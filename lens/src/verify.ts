@@ -33,13 +33,48 @@ export function formatVerify(r: VerifyResult): string {
   return injectionBlock("lens", header, body);
 }
 
+/** What the trust gate decided, and why. */
+export type VerifyChoice =
+  | { run: string; source: "configured" | "detected" }
+  | { run: null; reason: "none" | "untrusted-autodetect" };
+
+/**
+ * Choose the verify command for this settle, honoring project trust.
+ *
+ * An **autodetected** command is read out of the repository — `bun.lock` implies
+ * `bun test`, a `scripts.test` implies `npm test` — so running it in an untrusted
+ * project executes whatever that repository decided, from nothing more than opening
+ * it and letting the agent make one edit. That path is gated.
+ *
+ * An **explicitly configured** command still runs. The user typed it; it did not come
+ * from the repository, and it is theirs to decide. Gating it too would silently break
+ * a deliberate setting in every project not yet trusted.
+ *
+ * Pure, so the policy is testable without spawning anything.
+ */
+export function chooseVerifyCommand(opts: {
+  configured: string;
+  detected: string | null;
+  trusted: boolean;
+}): VerifyChoice {
+  if (opts.configured) return { run: opts.configured, source: "configured" };
+  if (!opts.detected) return { run: null, reason: "none" };
+  if (!opts.trusted) return { run: null, reason: "untrusted-autodetect" };
+  return { run: opts.detected, source: "detected" };
+}
+
 /** Run a verify command (via `sh -c`) and parse the result. */
 export async function runVerify(
   cmd: string,
   exec: ExecFn,
   cwd: string,
   signal?: AbortSignal,
+  timeout?: number,
 ): Promise<VerifyResult> {
-  const { stdout, stderr, code } = await exec("sh", ["-c", cmd], { cwd, signal });
+  const { stdout, stderr, code, killed } = await exec("sh", ["-c", cmd], { cwd, signal, timeout });
+  // A command killed at its deadline has not "failed" — it never finished. Reporting
+  // a partial transcript as a verdict would tell the agent tests failed when they may
+  // not have run at all.
+  if (killed) return { passed: false, failures: [`verify timed out after ${timeout ?? "the default"}ms`], raw: `${stdout}\n${stderr}`.trim() };
   return parseVerify(stdout, stderr, code);
 }

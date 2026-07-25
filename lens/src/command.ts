@@ -1,13 +1,14 @@
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type { SettingItem } from "@earendil-works/pi-tui";
 import { openSettingsPanel } from "../../shared/settings-panel.ts";
-import { MODES, type Mode } from "../../shared/index.ts";
+import { MODES, cwdOf, type Mode } from "../../shared/index.ts";
 import type { LensConfig } from "./config.ts";
 
 export interface CommandDeps {
   loadConfig: () => LensConfig;
   saveConfig: (c: LensConfig) => void;
-  detectVerify: () => string | null;
+  /** Resolved at invoke time from the command's own context, not at extension load. */
+  detectVerify: (cwd: string) => string | null;
   health: () => string;
   healthCompact: () => string;
 }
@@ -68,7 +69,7 @@ export function buildLensCommand(deps: CommandDeps) {
 
         // No args: interactive settings panel (TUI), else a text readout.
         if (ctx.mode !== "tui") {
-          const verify = cfg.verifyCmd || `${deps.detectVerify() ?? "(none)"} (auto)`;
+          const verify = cfg.verifyCmd || `${deps.detectVerify(cwdOf(ctx)) ?? "(none)"} (auto)`;
           ctx?.ui?.notify?.(`[pi-lens] mode: ${cfg.mode} · autoFormat: ${cfg.autoFormat ? "on" : "off"} · verify: ${verify}`, "info");
           ctx?.ui?.notify?.(`[pi-lens] ${deps.health()}`, "info");
           return;

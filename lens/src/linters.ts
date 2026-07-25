@@ -3,6 +3,9 @@ import { join } from "node:path";
 import type { Diagnostic } from "./diagnostics.ts";
 import type { ExecFn } from "../../shared/exec.ts";
 
+/** A linter that has not answered in this long is not going to. */
+export const LINTER_TIMEOUT_MS = 30_000;
+
 export interface LinterSpec {
   name: string;
   cmd: (file: string) => string[];
@@ -26,7 +29,9 @@ export async function runLinters(
       const [cmd, ...args] = argv;
       if (!cmd) return [];
       try {
-        const { stdout, stderr } = await exec(cmd, args);
+        // cwd was known here all along — used to gate `enabledFor` above — but never
+        // forwarded, so every linter ran in the extension host's directory.
+        const { stdout, stderr } = await exec(cmd, args, { cwd, timeout: LINTER_TIMEOUT_MS });
         return spec.parse(stdout, stderr);
       } catch {
         return [];

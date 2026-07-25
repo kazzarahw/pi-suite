@@ -138,6 +138,9 @@ export interface FakeUiCalls {
 
 export interface FakeCtx {
   hasUI: boolean;
+  /** Pi's project-trust decision. Extensions must consult this before running
+   *  anything the repository itself supplied. */
+  isProjectTrusted(): boolean;
   mode: "tui" | "print" | "json" | "rpc";
   cwd: string;
   signal?: AbortSignal;
@@ -158,6 +161,8 @@ export interface FakeCtx {
 
 export interface FakeCtxOverrides {
   hasUI?: boolean;
+  /** Defaults to true so existing tests keep their behaviour. */
+  isProjectTrusted?: boolean;
   mode?: FakeCtx["mode"];
   cwd?: string;
   signal?: AbortSignal;
@@ -171,6 +176,7 @@ export function fakeCtx(overrides: FakeCtxOverrides = {}): FakeCtx {
   const uiCalls: FakeUiCalls = { status: [], widgets: [], notices: [], customOpened: 0 };
   return {
     hasUI: overrides.hasUI ?? true,
+    isProjectTrusted: () => overrides.isProjectTrusted ?? true,
     mode: overrides.mode ?? "tui",
     cwd,
     signal: overrides.signal,

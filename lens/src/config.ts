@@ -17,9 +17,17 @@ export interface LensConfig {
   autoFormat: boolean;
   /** Warm the language servers on session start so the first read/query is fast (default on). */
   prewarm: boolean;
+  /** Deadline for the verify command. Test suites vary hugely, so it is configurable. */
+  verifyTimeoutMs: number;
 }
 
-export const DEFAULTS: LensConfig = { mode: DEFAULT_MODE, verifyCmd: "", autoFormat: false, prewarm: true };
+export const DEFAULTS: LensConfig = {
+  mode: DEFAULT_MODE,
+  verifyCmd: "",
+  autoFormat: false,
+  prewarm: true,
+  verifyTimeoutMs: 600_000,
+};
 
 export const SPEC: ConfigSpec<LensConfig> = {
   name: "lens",
@@ -31,6 +39,8 @@ export const SPEC: ConfigSpec<LensConfig> = {
       verifyCmd: typeof p.verifyCmd === "string" ? p.verifyCmd : defaults.verifyCmd,
       autoFormat: typeof p.autoFormat === "boolean" ? p.autoFormat : defaults.autoFormat,
       prewarm: typeof p.prewarm === "boolean" ? p.prewarm : defaults.prewarm,
+      verifyTimeoutMs:
+        typeof p.verifyTimeoutMs === "number" && p.verifyTimeoutMs > 0 ? p.verifyTimeoutMs : defaults.verifyTimeoutMs,
     };
   },
 };
