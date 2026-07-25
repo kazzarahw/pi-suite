@@ -37,7 +37,7 @@ export function buildGitCommand(deps: CommandDeps) {
 
         if (ctx.mode !== "tui") {
           ctx?.ui?.notify?.(
-            `[pi-git] mode: ${cfg.mode} · worktrees.auto: ${cfg.worktrees.auto} · baseDir: ${cfg.worktrees.baseDir}`,
+            `[pi-git] mode: ${cfg.mode} · detect bash changes: ${cfg.detectDirty} · keep checkpoints: ${cfg.checkpointTtlDays}d · worktrees.auto: ${cfg.worktrees.auto}`,
             "info",
           );
           return;
@@ -45,6 +45,18 @@ export function buildGitCommand(deps: CommandDeps) {
 
         const items: SettingItem[] = [
           { id: "mode", label: "Mode", currentValue: cfg.mode, values: [...MODES] },
+          {
+            id: "detect",
+            label: "Detect bash changes",
+            currentValue: cfg.detectDirty ? "on" : "off",
+            values: ["on", "off"],
+          },
+          {
+            id: "ttl",
+            label: "Keep checkpoints for",
+            currentValue: String(cfg.checkpointTtlDays),
+            values: [...new Set([String(cfg.checkpointTtlDays), "7", "30", "90"])],
+          },
           {
             id: "auto",
             label: "Worktree isolation",
@@ -61,10 +73,12 @@ export function buildGitCommand(deps: CommandDeps) {
         const apply = (id: string, val: string): void => {
           const c = deps.loadConfig();
           if (id === "mode") deps.saveConfig({ ...c, mode: val as Mode });
+          else if (id === "detect") deps.saveConfig({ ...c, detectDirty: val === "on" });
+          else if (id === "ttl") deps.saveConfig({ ...c, checkpointTtlDays: Number(val) || c.checkpointTtlDays });
           else if (id === "auto") deps.saveConfig({ ...c, worktrees: { ...c.worktrees, auto: val === "on" } });
           else if (id === "basedir") deps.saveConfig({ ...c, worktrees: { ...c.worktrees, baseDir: val } });
         };
-        await openSettingsPanel(ctx, "pi-git · settings", "auto-checkpoint each turn; worktrees for pi-spawn", items, apply);
+        await openSettingsPanel(ctx, "pi-git · settings", "undo/redo files as you move through the session; worktrees for pi-spawn", items, apply);
       },
     },
   };

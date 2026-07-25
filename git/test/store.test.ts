@@ -462,3 +462,55 @@ test("a restore whose blob was collected leaves the file alone rather than trunc
   expect(read(f)).toBe("v2");
   expect(result.written).toEqual([]);
 });
+
+// --- Forks -----------------------------------------------------------------
+// A fork starts a new session directory but inherits the parent's entries, ids and
+// all. The ref-based storage this replaced lived in the repository and survived a
+// fork for free; a per-session directory does not, so the lookup falls back across
+// sessions. Without it, rewinding in a forked session to anything from before the
+// fork would find no checkpoint and silently do nothing.
+
+test("a forked session can restore an entry its parent checkpointed", async () => {
+  const parent = store("parent-session");
+  const f = write("a.txt", "before the fork");
+  await parent.checkpoint("shared-entry", [f]);
+
+  const child = store("child-session");
+  expect(await child.has("shared-entry")).toBe(true);
+
+  writeFileSync(f, "after the fork", "utf8");
+  await child.restore("shared-entry");
+  expect(read(f)).toBe("before the fork");
+});
+
+test("a session's own manifest wins over another session's for the same id", async () => {
+  const f = write("a.txt", "mine");
+  const mine = store("mine");
+  await mine.checkpoint("e1", [f]);
+
+  writeFileSync(f, "theirs", "utf8");
+  const theirs = store("theirs");
+  await theirs.checkpoint("e1", [f]);
+
+  writeFileSync(f, "current", "utf8");
+  await mine.restore("e1");
+  expect(read(f)).toBe("mine");
+});
+
+// Regression: a `(mtime, size)` shortcut around the read is unsound. Linux filesystem
+// timestamps are granular to a timer tick, so two same-size writes inside one tick
+// share an mtime — and a cache keyed on that pair hands back the first write's hash,
+// checkpointing content that was never on disk at that entry.
+test("two same-size writes in quick succession are checkpointed distinctly", async () => {
+  const s = store();
+  const f = write("a.txt", "v1");
+  await s.checkpoint("e1", [f]);
+  writeFileSync(f, "v2", "utf8");
+  await s.checkpoint("e2", [f]);
+
+  writeFileSync(f, "v3", "utf8");
+  await s.restore("e1");
+  expect(read(f)).toBe("v1");
+  await s.restore("e2");
+  expect(read(f)).toBe("v2");
+});

@@ -146,8 +146,13 @@ export interface FakeCtx {
   signal?: AbortSignal;
   sessionManager: {
     getCwd(): string;
+    /** Pi keys per-session state on this; pi-git's checkpoint store is scoped by it. */
+    getSessionId(): string;
+    getLeafId(): string | null;
     getBranch(): unknown[];
     getLeafEntry(): unknown;
+    /** Entry lookup for ancestor walks (pi-git resolves a restore target this way). */
+    getEntry(id: string): unknown;
   };
   ui: {
     setStatus(id: string, text?: string): void;
@@ -168,6 +173,11 @@ export interface FakeCtxOverrides {
   signal?: AbortSignal;
   branch?: unknown[];
   leafEntry?: unknown;
+  sessionId?: string;
+  /** Defaults to the leaf entry's own id. */
+  leafId?: string | null;
+  /** The session tree, by id, for `getEntry`. Entries carry `parentId`. */
+  entries?: Record<string, unknown>;
 }
 
 /** A default interactive TUI context; override per test to exercise guards. */
@@ -182,8 +192,12 @@ export function fakeCtx(overrides: FakeCtxOverrides = {}): FakeCtx {
     signal: overrides.signal,
     sessionManager: {
       getCwd: () => cwd,
+      getSessionId: () => overrides.sessionId ?? "test-session",
+      getLeafId: () =>
+        overrides.leafId ?? (overrides.leafEntry as { id?: string } | undefined)?.id ?? null,
       getBranch: () => overrides.branch ?? [],
       getLeafEntry: () => overrides.leafEntry,
+      getEntry: (id: string) => overrides.entries?.[id],
     },
     ui: {
       setStatus: (id, text) => uiCalls.status.push({ id, text }),

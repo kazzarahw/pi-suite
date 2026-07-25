@@ -145,9 +145,6 @@ export function createStore(sessionId: string, opts: StoreOptions = {}): Checkpo
   // session directory. The file is small and this runs a handful of times per turn.
   const loadOrigin = (): Manifest => readJson<Manifest>(originFile) ?? {};
 
-  /** path → hash, avoiding a re-read of every tracked file on every turn. */
-  const hashCache = new Map<string, { mtimeMs: number; size: number; hash: string }>();
-
   /**
    * The state of one file, or `null` for "not this store's business" — a directory,
    * a dangling symlink, a socket, or a file past the size cap. `null` is deliberately
@@ -167,15 +164,16 @@ export function createStore(sessionId: string, opts: StoreOptions = {}): Checkpo
       return null;
     }
 
+    // Every capture reads the file. A `(mtime, size)` cache to skip unchanged files
+    // was tried and removed: Linux filesystem timestamps are granular to a timer tick,
+    // so two same-size writes inside one tick share an mtime and the cache serves the
+    // first one's hash — silently checkpointing content that was never on disk. Git
+    // calls this the "racy index" problem and resolves it by re-reading. A hook that
+    // records the wrong bytes is the exact failure this store exists to prevent, and
+    // the read is cheap next to the `git status` already running beside it.
     const mode = st.mode & 0o777;
-    const cached = hashCache.get(key);
-    if (cached && cached.mtimeMs === st.mtimeMs && cached.size === st.size) {
-      return { hash: cached.hash, mode };
-    }
-
     const bytes = readFileSync(key);
     const hash = createHash("sha256").update(bytes).digest("hex");
-    hashCache.set(key, { mtimeMs: st.mtimeMs, size: st.size, hash });
 
     const blob = join(blobsDir, hash);
     if (!existsSync(blob)) {
@@ -198,6 +196,33 @@ export function createStore(sessionId: string, opts: StoreOptions = {}): Checkpo
       if (parent === d) return;
       d = parent;
     }
+  }
+
+  /**
+   * The manifest for an entry, preferring this session's own.
+   *
+   * A fork starts a new session directory but inherits its parent's entries, ids
+   * included — so without this lookup, rewinding in a forked session to anything
+   * that happened before the fork would find no checkpoint and silently do nothing.
+   * The old ref-based storage lived in the repository and survived a fork for free;
+   * this is what replaces that property. Entry ids are unique, so a manifest found
+   * under another session is unambiguously the right one.
+   */
+  function findManifest(entryId: string): Manifest | null {
+    const own = readJson<Manifest>(manifestFile(entryId));
+    if (own) return own;
+    let names: string[];
+    try {
+      names = readdirSync(root);
+    } catch {
+      return null;
+    }
+    for (const name of names) {
+      if (name === BLOBS_DIR || name === session) continue;
+      const found = readJson<Manifest>(join(root, name, `${safeName(entryId)}.json`));
+      if (found) return found;
+    }
+    return null;
   }
 
   return {
@@ -238,7 +263,7 @@ export function createStore(sessionId: string, opts: StoreOptions = {}): Checkpo
     },
 
     async has(entryId) {
-      return existsSync(manifestFile(entryId));
+      return findManifest(entryId) !== null;
     },
 
     tracked() {
@@ -246,7 +271,7 @@ export function createStore(sessionId: string, opts: StoreOptions = {}): Checkpo
     },
 
     async restore(entryId) {
-      const manifest = readJson<Manifest>(manifestFile(entryId));
+      const manifest = findManifest(entryId);
       if (!manifest) return { written: [], removed: [] };
 
       const origin = loadOrigin();

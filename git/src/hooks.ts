@@ -1,5 +1,4 @@
-import type { Git } from "./git.ts";
-import { checkpoint, findCheckpoint, restoreTo, type Checkpoint } from "./checkpoints.ts";
+import type { CheckpointStore } from "./store.ts";
 
 export type Emit = (event: string, data: unknown) => void;
 
@@ -9,20 +8,50 @@ export interface PendingFork {
   position: string;
 }
 
+export interface CheckpointSummary {
+  entryId: string;
+  files: number;
+}
+
+export interface RestoreSummary {
+  entryId: string;
+  written: number;
+  removed: number;
+}
+
 /**
- * Checkpoint the working tree for the current turn, keyed to its user-message entry id.
- * The caller resolves the entry id (via `currentUserEntryId`) and dedups per turn.
+ * Record the state of `paths` against a session entry.
+ * The caller resolves the entry id and decides which paths are in scope.
  */
 export async function checkpointTurn(
-  git: Git,
+  store: CheckpointStore,
   entryId: string,
+  paths: readonly string[],
   reason: string,
-  nowIso: string,
   emit: Emit,
-): Promise<Checkpoint> {
-  const cp = await checkpoint(git, entryId, reason, nowIso);
-  emit("git:checkpoint", { ref: cp.ref, reason });
-  return cp;
+): Promise<CheckpointSummary> {
+  const manifest = await store.checkpoint(entryId, paths);
+  const summary = { entryId, files: Object.keys(manifest).length };
+  emit("git:checkpoint", { ...summary, reason });
+  return summary;
+}
+
+/**
+ * Put the files back to their state at `entryId`. `null` when nothing was ever
+ * checkpointed there — reported rather than swallowed, so a rewind that cannot
+ * restore anything does not look like one that restored nothing.
+ */
+export async function restoreEntry(
+  store: CheckpointStore,
+  entryId: string | null,
+  reason: string,
+  emit: Emit,
+): Promise<RestoreSummary | null> {
+  if (!entryId || !(await store.has(entryId))) return null;
+  const { written, removed } = await store.restore(entryId);
+  const summary = { entryId, written: written.length, removed: removed.length };
+  emit("git:rollback", { ...summary, reason });
+  return summary;
 }
 
 /**
@@ -31,15 +60,11 @@ export async function checkpointTurn(
  * A `"at"` (clone) fork, a cancelled fork (no shutdown), or a missing checkpoint → no-op.
  */
 export async function restoreOnForkShutdown(
-  git: Git,
+  store: CheckpointStore,
   pending: PendingFork | null,
   shutdownReason: string,
   emit: Emit,
-): Promise<Checkpoint | null> {
+): Promise<RestoreSummary | null> {
   if (shutdownReason !== "fork" || !pending || pending.position !== "before") return null;
-  const cp = await findCheckpoint(git, pending.entryId);
-  if (!cp) return null;
-  await restoreTo(git, cp);
-  emit("git:rollback", { ref: cp.ref, reason: "rewind" });
-  return cp;
+  return restoreEntry(store, pending.entryId, "rewind", emit);
 }

@@ -1,29 +1,31 @@
 import { test, expect } from "bun:test";
-import type { Git } from "../src/git.ts";
-import { checkpointTurn, restoreOnForkShutdown } from "../src/hooks.ts";
-import { checkpointRef } from "../src/checkpoints.ts";
+import type { CheckpointStore, Manifest } from "../src/store.ts";
+import { checkpointTurn, restoreEntry, restoreOnForkShutdown } from "../src/hooks.ts";
 
-function fakeGit(seed: Record<string, string> = {}) {
-  const refs = new Map<string, string>(Object.entries(seed));
+/** An in-memory CheckpointStore: the hooks' contract with storage, nothing else. */
+function fakeStore(seeded: string[] = []) {
+  const manifests = new Map<string, Manifest>(seeded.map((id) => [id, { "/p/a.txt": { hash: "h" } }]));
   const restored: string[] = [];
-  let n = 0;
-  const git: Git = {
-    isRepo: async () => true,
-    snapshotTree: async () => `sha${++n}`.padEnd(40, "0"),
-    restoreTree: async (sha) => {
-      restored.push(sha);
+  const store: CheckpointStore = {
+    async checkpoint(entryId, paths) {
+      const manifest: Manifest = Object.fromEntries(paths.map((p) => [p, { hash: `h:${p}` }]));
+      manifests.set(entryId, manifest);
+      return manifest;
     },
-    isDirty: async () => false,
-    updateRef: async (ref, sha) => {
-      refs.set(ref, sha);
+    async rememberOrigin() {},
+    async restore(entryId) {
+      restored.push(entryId);
+      return { written: Object.keys(manifests.get(entryId) ?? {}), removed: [] };
     },
-    readRef: async (ref) => refs.get(ref) ?? null,
-    listRefs: async () => [],
-    worktreeAdd: async () => "",
-    worktreeList: async () => [],
-    worktreeRemove: async () => {},
+    async has(entryId) {
+      return manifests.has(entryId);
+    },
+    tracked: () => [],
+    async gc() {
+      return { sessions: 0, blobs: 0 };
+    },
   };
-  return { git, refs, restored };
+  return { store, manifests, restored };
 }
 
 function collectEmits() {
@@ -31,31 +33,64 @@ function collectEmits() {
   return { emit: (event: string, data: unknown) => events.push({ event, data }), events };
 }
 
-test("checkpointTurn snapshots, stores the entry ref, and emits git:checkpoint", async () => {
-  const { git, refs } = fakeGit();
+test("checkpointTurn records the paths under the entry and emits git:checkpoint", async () => {
+  const { store, manifests } = fakeStore();
   const { emit, events } = collectEmits();
-  const cp = await checkpointTurn(git, "u1", "turn", "2026-07-23T00:00:00Z", emit);
-  expect(refs.get(checkpointRef("u1"))).toBe(cp.sha);
-  expect(events).toEqual([{ event: "git:checkpoint", data: { ref: checkpointRef("u1"), reason: "turn" } }]);
+
+  const summary = await checkpointTurn(store, "u1", ["/p/a.txt", "/p/b.txt"], "turn", emit);
+
+  expect(summary).toEqual({ entryId: "u1", files: 2 });
+  expect(Object.keys(manifests.get("u1")!).sort()).toEqual(["/p/a.txt", "/p/b.txt"]);
+  expect(events).toEqual([{ event: "git:checkpoint", data: { entryId: "u1", files: 2, reason: "turn" } }]);
+});
+
+test("restoreEntry restores and emits git:rollback", async () => {
+  const { store, restored } = fakeStore(["u5"]);
+  const { emit, events } = collectEmits();
+
+  const summary = await restoreEntry(store, "u5", "tree", emit);
+
+  expect(summary).toEqual({ entryId: "u5", written: 1, removed: 0 });
+  expect(restored).toEqual(["u5"]);
+  expect(events).toEqual([
+    { event: "git:rollback", data: { entryId: "u5", written: 1, removed: 0, reason: "tree" } },
+  ]);
+});
+
+// A restore that has no checkpoint to work from must say so by returning null, not by
+// returning a zero-file success. The caller turns that into a visible notice; treating
+// the two the same is how "nothing happened" gets mistaken for "nothing to undo".
+test("restoreEntry does nothing, and emits nothing, for an unknown or null entry", async () => {
+  const { store, restored } = fakeStore(["u5"]);
+  const { emit, events } = collectEmits();
+
+  expect(await restoreEntry(store, "missing", "tree", emit)).toBeNull();
+  expect(await restoreEntry(store, null, "tree", emit)).toBeNull();
+  expect(restored).toEqual([]);
+  expect(events).toEqual([]);
 });
 
 test("restoreOnForkShutdown restores a 'before' fork and emits git:rollback", async () => {
-  const { git, restored } = fakeGit({ [checkpointRef("u5")]: "deadbeef".padEnd(40, "0") });
+  const { store, restored } = fakeStore(["u5"]);
   const { emit, events } = collectEmits();
-  const cp = await restoreOnForkShutdown(git, { entryId: "u5", position: "before" }, "fork", emit);
-  expect(cp).not.toBeNull();
-  expect(restored).toEqual(["deadbeef".padEnd(40, "0")]);
-  expect(events).toEqual([{ event: "git:rollback", data: { ref: checkpointRef("u5"), reason: "rewind" } }]);
+
+  const summary = await restoreOnForkShutdown(store, { entryId: "u5", position: "before" }, "fork", emit);
+
+  expect(summary).not.toBeNull();
+  expect(restored).toEqual(["u5"]);
+  expect(events).toEqual([
+    { event: "git:rollback", data: { entryId: "u5", written: 1, removed: 0, reason: "rewind" } },
+  ]);
 });
 
-test("restoreOnForkShutdown does nothing for clone / non-fork / no-pending / missing-ref", async () => {
-  const { git, restored } = fakeGit({ [checkpointRef("u5")]: "x".padEnd(40, "0") });
+test("restoreOnForkShutdown does nothing for clone / non-fork / no-pending / missing entry", async () => {
+  const { store, restored } = fakeStore(["u5"]);
   const { emit, events } = collectEmits();
 
-  expect(await restoreOnForkShutdown(git, { entryId: "u5", position: "at" }, "fork", emit)).toBeNull();
-  expect(await restoreOnForkShutdown(git, { entryId: "u5", position: "before" }, "quit", emit)).toBeNull();
-  expect(await restoreOnForkShutdown(git, null, "fork", emit)).toBeNull();
-  expect(await restoreOnForkShutdown(git, { entryId: "missing", position: "before" }, "fork", emit)).toBeNull();
+  expect(await restoreOnForkShutdown(store, { entryId: "u5", position: "at" }, "fork", emit)).toBeNull();
+  expect(await restoreOnForkShutdown(store, { entryId: "u5", position: "before" }, "quit", emit)).toBeNull();
+  expect(await restoreOnForkShutdown(store, null, "fork", emit)).toBeNull();
+  expect(await restoreOnForkShutdown(store, { entryId: "gone", position: "before" }, "fork", emit)).toBeNull();
 
   expect(restored).toEqual([]);
   expect(events).toEqual([]);

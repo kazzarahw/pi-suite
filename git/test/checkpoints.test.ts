@@ -1,15 +1,9 @@
 import { test, expect } from "bun:test";
-import { mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { createGit } from "../src/git.ts";
-import { defaultExec } from "../../shared/exec.ts";
 import {
-  checkpoint,
-  checkpointRef,
+  currentLeafId,
   currentUserEntryId,
-  findCheckpoint,
-  restoreTo,
+  resolveRestoreTarget,
+  type SessionManagerLike,
 } from "../src/checkpoints.ts";
 
 test("currentUserEntryId returns the leaf when it is a user message", () => {
@@ -36,34 +30,50 @@ test("currentUserEntryId is null when there is no user message", () => {
   expect(currentUserEntryId({ getLeafEntry: () => undefined, getBranch: () => [] })).toBeNull();
 });
 
-async function setupRepo(): Promise<string> {
-  const dir = mkdtempSync(join(tmpdir(), "pi-git-cp-"));
-  const g = (args: string[]) => defaultExec("git", args, { cwd: dir });
-  await g(["init", "-q"]);
-  await g(["config", "user.email", "t@t.co"]);
-  await g(["config", "user.name", "t"]);
-  writeFileSync(join(dir, "f.txt"), "base\n");
-  await g(["add", "-A"]);
-  await g(["commit", "-q", "-m", "init"]);
-  return dir;
+test("currentLeafId prefers getLeafId and falls back to the leaf entry's id", () => {
+  expect(currentLeafId({ getLeafId: () => "leaf-7" })).toBe("leaf-7");
+  expect(currentLeafId({ getLeafEntry: () => ({ type: "message", id: "a3" }) })).toBe("a3");
+  expect(currentLeafId({})).toBeNull();
+});
+
+// --- resolveRestoreTarget --------------------------------------------------
+//
+// Navigation reports a *leaf* id, and only some entries carry a checkpoint: a user
+// message (checkpointed at message_start) and whatever leaf the session left from
+// (checkpointed at session_before_tree). Walking up the ancestor chain finds
+// whichever applies, so forward and backward navigation each restore the right
+// state without either overwriting the other's record.
+
+function tree(entries: Record<string, string | null>): SessionManagerLike {
+  return { getEntry: (id) => (id in entries ? { id, parentId: entries[id]! } : undefined) };
 }
 
-test("checkpoint stores under the entry ref; findCheckpoint + restoreTo round-trip", async () => {
-  const dir = await setupRepo();
-  const git = createGit(defaultExec, dir);
+const hasAny = (ids: string[]) => async (id: string) => ids.includes(id);
 
-  writeFileSync(join(dir, "f.txt"), "at checkpoint\n");
-  const cp = await checkpoint(git, "u123", "turn", "2026-07-23T00:00:00Z");
-  expect(cp.ref).toBe(checkpointRef("u123"));
-  expect(cp.sha).toMatch(/^[0-9a-f]{40}$/);
+test("resolveRestoreTarget returns the destination itself when it has a checkpoint", async () => {
+  const sm = tree({ a2: "u2", u2: "a1", a1: "u1", u1: null });
+  expect(await resolveRestoreTarget(sm, "u2", hasAny(["u1", "u2"]))).toBe("u2");
+});
 
-  const found = await findCheckpoint(git, "u123");
-  expect(found?.sha).toBe(cp.sha);
-  expect(await findCheckpoint(git, "nope")).toBeNull();
+test("resolveRestoreTarget walks up to the nearest checkpointed ancestor", async () => {
+  const sm = tree({ a2: "u2", u2: "a1", a1: "u1", u1: null });
+  // Navigating to an assistant entry: the state to restore is the one recorded for
+  // the user message that started its turn.
+  expect(await resolveRestoreTarget(sm, "a2", hasAny(["u1", "u2"]))).toBe("u2");
+});
 
-  writeFileSync(join(dir, "f.txt"), "changed later\n");
-  await restoreTo(git, found!);
-  expect(readFileSync(join(dir, "f.txt"), "utf8")).toBe("at checkpoint\n");
+test("resolveRestoreTarget returns null when nothing on the chain was checkpointed", async () => {
+  const sm = tree({ a1: "u1", u1: null });
+  expect(await resolveRestoreTarget(sm, "a1", hasAny([]))).toBeNull();
+});
 
-  rmSync(dir, { recursive: true, force: true });
+test("resolveRestoreTarget handles a null start and an unknown id", async () => {
+  const sm = tree({ u1: null });
+  expect(await resolveRestoreTarget(sm, null, hasAny(["u1"]))).toBeNull();
+  expect(await resolveRestoreTarget(sm, "ghost", hasAny(["u1"]))).toBeNull();
+});
+
+test("resolveRestoreTarget does not spin on a malformed cycle", async () => {
+  const sm = tree({ a: "b", b: "a" });
+  expect(await resolveRestoreTarget(sm, "a", hasAny(["nowhere"]))).toBeNull();
 });

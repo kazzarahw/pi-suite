@@ -97,6 +97,7 @@ test("[git] loadConfig backfills nested worktree fields and rejects an invalid m
   const path = tmp("git");
   writeFileSync(path, JSON.stringify({ mode: "nope", worktrees: { auto: true } }));
   expect(loadConfig(GIT, path)).toEqual({
+    ...GIT_DEFAULTS,
     mode: GIT_DEFAULTS.mode,
     worktrees: { auto: true, baseDir: GIT_DEFAULTS.worktrees.baseDir },
   });
@@ -144,4 +145,10 @@ test("[lens] a non-positive verifyTimeoutMs falls back to the default", () => {
   const path = tmp("lens");
   writeFileSync(path, JSON.stringify({ verifyTimeoutMs: -1 }));
   expect(loadConfig(LENS, path).verifyTimeoutMs).toBe(LENS.defaults.verifyTimeoutMs);
+});
+
+test("[git] loadConfig rejects a zero or negative checkpoint TTL and size cap", () => {
+  const path = tmp("git");
+  writeFileSync(path, JSON.stringify({ checkpointTtlDays: 0, maxFileBytes: -1, detectDirty: "yes" }));
+  expect(loadConfig(GIT, path)).toEqual(GIT_DEFAULTS);
 });
