@@ -3,6 +3,8 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import { pathToFileURL } from "node:url";
 import type { AgentToolResult, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { LspManager } from "./lsp/manager.ts";
+import { REQUEST_TIMEOUT_MS } from "./lsp/client.ts";
+import { cwdOf, deadline } from "../../shared/index.ts";
 import type { Location } from "./diagnostics.ts";
 
 const parameters = Type.Object({
@@ -18,6 +20,8 @@ type LensParams = Static<typeof parameters>;
 
 export interface LensToolDeps {
   manager: () => LspManager;
+  /** Per-request deadline. Injected in tests; production uses REQUEST_TIMEOUT_MS. */
+  requestTimeoutMs?: number;
 }
 
 const fmtLocations = (locs: Location[]): string =>
@@ -34,33 +38,41 @@ export function buildLensTool(deps: LensToolDeps) {
     async execute(
       _toolCallId: string,
       params: LensParams,
-      _signal: AbortSignal | undefined,
+      signal: AbortSignal | undefined,
       _onUpdate: unknown,
-      _ctx: ExtensionContext,
+      ctx: ExtensionContext,
     ): Promise<AgentToolResult<{ action: string }>> {
-      const client = await deps.manager().ready(params.path, process.cwd());
+      // Two reasons to stop waiting — the user pressed Esc, or the server is wedged —
+      // carried in one signal. This parameter was previously named `_signal` and
+      // discarded, so neither worked and the only recovery was killing Pi.
+      const bound = deadline(deps.requestTimeoutMs ?? REQUEST_TIMEOUT_MS, signal);
+      const cwd = cwdOf(ctx);
+      const client = await deps.manager().ready(params.path, cwd, bound);
       if (!client) {
         throw new Error(`[pi-lens] no language server configured for ${params.path}`);
       }
       const uri = pathToFileURL(params.path).toString();
       const pos = { line: params.line, col: params.col };
 
+      // An LspUnavailableError from any of these propagates deliberately: throwing is
+      // Pi's only way to set isError, and the agent must learn the server did not
+      // answer rather than being handed "(none found)" as though it were a result.
       let text: string;
       switch (params.action) {
         case "hover":
-          text = (await client.hover(uri, pos)) ?? "(no hover info at this position)";
+          text = (await client.hover(uri, pos, bound)) ?? "(no hover info at this position)";
           break;
         case "references":
-          text = fmtLocations(await client.references(uri, pos));
+          text = fmtLocations(await client.references(uri, pos, bound));
           break;
         case "definition":
-          text = fmtLocations(await client.definition(uri, pos));
+          text = fmtLocations(await client.definition(uri, pos, bound));
           break;
         case "rename": {
           if (!params.new_name) {
             throw new Error(`[pi-lens] "new_name" is required for action "rename"`);
           }
-          const edits = await client.rename(uri, pos, params.new_name);
+          const edits = await client.rename(uri, pos, params.new_name, bound);
           text =
             edits.length > 0
               ? `Rename touches:\n${edits.map((e) => `  ${e.file} (${(e.edits as unknown[]).length} edit(s))`).join("\n")}`
