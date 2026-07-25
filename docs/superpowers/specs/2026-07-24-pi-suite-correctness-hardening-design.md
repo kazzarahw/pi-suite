@@ -63,7 +63,23 @@ autodetected command comes from the repository's own files. Opening a hostile
 repository and letting the agent make one edit is sufficient to execute it. There
 is no `ctx.isProjectTrusted()` call anywhere in the suite.
 
-**5. The LSP project root is captured at load time.** `lens/index.ts:34` runs
+**5. `pi-git` inherits git's environment and can act on the wrong repository.**
+`defaultExec` merges over `process.env` (`shared/exec.ts:40`). `withTempIndex`
+sets `GIT_INDEX_FILE` explicitly, so `snapshotTree` is protected — but every other
+git invocation is not: `isRepo`, `isDirty`, `updateRef`, `readRef`, `listRefs`, and
+the two `ls-files` calls that run **outside** `withTempIndex` in `restoreTree`
+(`git/src/git.ts:70-76`). Where `GIT_DIR` or `GIT_WORK_TREE` is present in the
+environment — git sets these before invoking hooks — those commands resolve to a
+different repository than `cwd`, and a restore can write into it.
+
+This was found from [OpenCode issue #22477](https://github.com/anomalyco/opencode/issues/22477),
+where the same inheritance corrupted the working repo's index: `GIT_INDEX_FILE`
+took precedence over `--git-dir`, so index entries landed in the real repo while
+blobs went to the shadow object store. Verified locally that OpenCode's snapshot
+directories each carry their own `index` file, which is exactly the file that got
+written to the wrong side.
+
+**6. The LSP project root is captured at load time.** `lens/index.ts:34` runs
 `const cwd = process.cwd()` in the extension factory and passes it to
 `createManager(cwd)` on the next line. That value becomes the child process `cwd`
 and the `initialize` `rootUri`. When Pi's session cwd differs from the process
@@ -105,6 +121,13 @@ whole session, unrecoverably.
 - **Checkpoint refs are never collected.** `listRefs` (`git/src/git.ts:22,93`) has
   zero production callers — only tests. `refs/pi-git/checkpoints/` grows without
   bound for the life of the repository.
+- **Non-git projects get nothing.** `isRepo()` false → every hook silently no-ops,
+  so the extension's entire value is unavailable outside a git repository. Every
+  comparable harness works there (see D15).
+- **`restoreTree` leaves empty directories behind.** It removes extra files with
+  `rmSync(join(cwd, file))` (`git/src/git.ts:76`) but never prunes their parents,
+  so restoring past a `mkdir -p a/b/c` leaves the directory skeleton. Cosmetic,
+  but it means the restored tree is not byte-for-byte the snapshot.
 
 ---
 
@@ -229,9 +252,19 @@ existing mapper falls through to `1`; non-zero, as required.
 
 One additional change is required. Line 53 currently prefers non-empty `stderr`
 over `error.message`, so a command killed at its deadline returns only its partial
-output and the caller cannot tell a timeout from an ordinary failure. When
-`killed` is true, the result must state that the deadline was hit. This is the
-same class of error as D2: never report a bounded wait as a normal empty result.
+output and the caller cannot tell a timeout from an ordinary failure — the same
+class of error as D2: never report a bounded wait as a normal result.
+
+Rather than annotate the stderr string, `ExecResult` gains **`killed: boolean`**.
+This is deliberately copied from Pi's own runner, `pi.exec(cmd, args, {signal,
+timeout, cwd})` → `{stdout, stderr, code, killed}`. Callers then branch on a field
+instead of parsing a message, and `ExecFn` becomes a superset of Pi's signature.
+
+`pi.exec` is not adopted outright because its `ExecOptions` has no `env`, and
+`pi-git`'s `withTempIndex` depends on setting `GIT_INDEX_FILE` to keep the user's
+index untouched. Running two subprocess runners with different semantics would be
+worse than one; matching Pi's result shape gets the compatibility without the
+split.
 
 ### D8 — `writeMemory` dedups within the target scope only
 
@@ -314,7 +347,68 @@ yet. The alternative — putting `cwd` in the event payload — is the better lo
 design but changes the event vocabulary, which is sub-project 3's subject. Noted
 there rather than pre-empted here.
 
-### D13 — Testing: injected deadlines, not real waiting
+### D14 — Scrub git's environment on every invocation
+
+`createGit` passes an explicit environment to every `git` call with
+`GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY`,
+`GIT_ALTERNATE_OBJECT_DIRECTORIES`, `GIT_COMMON_DIR`, and `GIT_NAMESPACE`
+**unset**, then sets only what it needs (the temp index, or the shadow backend's
+dir and worktree). Repository identity comes from `cwd` or explicit arguments —
+never from ambient state.
+
+`ExecOptions.env` therefore becomes `Record<string, string | undefined>`, where
+`undefined` **removes** the variable rather than merging it. Today `env` can only
+add, so unsetting is impossible.
+
+Scrubbing is applied at the `createGit` boundary rather than per call site: a
+single forgotten call is exactly how this class of bug survives, and the guarantee
+is worth stating once for the whole module.
+
+### D15 — Non-git projects get a shadow-repo backend
+
+`pi-git` no-ops entirely outside a git repository today. That is the largest gap
+in the extension, and every comparable harness covers it. Verified locally:
+
+| Harness | Mechanism | Location |
+|---|---|---|
+| Claude Code | plain full file copies, versioned per file | `~/.claude/file-history/<session>/<hash>@vN` |
+| OpenCode | shadow git dir, own objects **and own index** | `~/.local/share/opencode/snapshot/<hash>/<hash>/` |
+| Gemini CLI | shadow git repo (per docs) | `~/.gemini/history/<project_hash>` |
+| Codex | none — no file history of any kind on disk | — |
+
+None requires the project to be a git repository; Codex, which has no file
+checkpointing at all, is also the one whose users report that rewinding the
+conversation leaves edits on disk.
+
+**Two backends behind the existing `Git` interface**, resolved once at
+construction:
+
+- **git project** → today's behavior: dangling commits in the real object
+  database under `refs/pi-git/`. Near-zero cost, because an unchanged tree's blobs
+  and trees already exist; a checkpoint adds one commit object.
+- **non-git project** → `git --git-dir=<agentDir>/checkpoints/<hash-of-cwd>.git
+  --work-tree=<cwd>`, `init` on first use.
+
+The two differ only in the argument prefix passed to `git`; `snapshotTree`,
+`restoreTree`, the ref layout, and every hook are shared. The shadow repo costs one
+full copy of the tree on first checkpoint, then only changed blobs — which is why
+it is *not* used for git projects, where that copy is pure waste.
+
+**Home directory, not in-project.** Gemini and OpenCode both store outside the
+project tree, and an in-project store would need gitignoring, would be swept by
+`rm -rf` of build directories, and could be committed by accident. `agentDir()`
+already honors `PI_CODING_AGENT_DIR`.
+
+**Bounding what a non-git snapshot captures.** A git project's `.gitignore` bounds
+`add -A`; a non-git project may have none, and `node_modules/` or `.venv/` would be
+swept in. Three mitigations: a default exclude list written to the shadow repo's
+`info/exclude` (`node_modules`, `.venv`, `venv`, `target`, `dist`, `build`,
+`__pycache__`, `.cache`, `*.log`); any `.gitignore` present is still honored,
+since git respects those regardless of repository root; and if the candidate set
+still exceeds `maxSnapshotBytes` (default 256 MB) the checkpoint is skipped with a
+one-time notice naming the largest offenders, rather than silently writing gigabytes.
+
+### D16 — Testing: injected deadlines, not real waiting
 
 Every new bound is tested through an injected timeout of a few milliseconds
 against a fake that never replies, using a `within()` hang-detector. No test may
@@ -375,17 +469,26 @@ export function truncateForAgent(text: string, opts?: TruncateOptions): string;
 ```ts
 export interface ExecOptions {
   cwd?: string;
-  env?: Record<string, string>;
+  /** Merged over `process.env`. An `undefined` value **removes** the variable (D14). */
+  env?: Record<string, string | undefined>;
   signal?: AbortSignal;
   timeout?: number;   // NEW — ms; defaults to DEFAULT_EXEC_TIMEOUT_MS
+}
+
+export interface ExecResult {
+  stdout: string;
+  stderr: string;
+  code: number;
+  /** True when the command was killed at its deadline. Matches `pi.exec` (D7). */
+  killed: boolean;
 }
 
 /** Backstop deadline for any command that does not specify one. */
 export const DEFAULT_EXEC_TIMEOUT_MS = 600_000;
 ```
 
-`ExecResult` is unchanged. A timeout yields a non-zero `code` and a `stderr` that
-states the deadline was exceeded (D7).
+A timeout still resolves — never rejects — with a non-zero `code` and
+`killed: true`.
 
 ### `shared/deadline.ts` (new)
 
@@ -475,11 +578,36 @@ export function listMemories(cwd: string): Memory[];
 export function invalidateIndexCache(cwd?: string): void;
 ```
 
+### `git/src/backend.ts` (new)
+
+```ts
+export type GitBackend =
+  | { kind: "repo" }                                    // the project's own repo
+  | { kind: "shadow"; gitDir: string; workTree: string };  // non-git project
+
+/** Choose a backend for `cwd`: the project repo when it is one, else a shadow repo. */
+export function resolveBackend(exec: ExecFn, cwd: string): Promise<GitBackend>;
+
+/** Shadow location: `<agentDir()>/checkpoints/<sha256(realpath(cwd)).slice(0,16)>.git`. */
+export function shadowGitDir(cwd: string): string;
+
+/** Written to the shadow repo's `info/exclude` on init (D15). */
+export const DEFAULT_EXCLUDES: readonly string[];
+
+/** Bytes of candidate content above which a shadow snapshot is skipped. */
+export const DEFAULT_MAX_SNAPSHOT_BYTES = 268_435_456;   // 256 MB
+```
+
 ### `git/src/git.ts` and `git/src/checkpoints.ts` (modified)
 
 ```ts
-// git.ts — Git interface gains:
+// git.ts
+export function createGit(exec: ExecFn, cwd: string, backend?: GitBackend): Git;
+
+// Git interface gains:
 deleteRef(ref: string): Promise<void>;
+/** Which backend is in use — so hooks can report "not a repo" vs "shadowed". */
+readonly backend: GitBackend;
 
 // checkpoints.ts
 
@@ -517,7 +645,9 @@ export function within<T>(ms: number, p: Promise<T>): Promise<T>;
 
 ```ts
 // git
-checkpointTtlDays: number;   // default 30 — age-based; a count cap is unsafe (D10)
+checkpointTtlDays: number;    // default 30 — age-based; a count cap is unsafe (D10)
+shadowNonGit: boolean;        // default true — checkpoint outside git repos (D15)
+maxSnapshotBytes: number;     // default 268_435_456 — skip oversized shadow snapshots
 
 // spawn
 jobTimeoutMs: number;      // default 900_000 (15 min)
@@ -528,22 +658,28 @@ jobTimeoutMs: number;      // default 900_000 (15 min)
 ## Build sequence
 
 **Wave 1 — primitives.** `shared/cwd.ts`, `shared/deadline.ts`,
-`shared/truncate.ts`, the `exec` timeout (D7), and the `writeMemory` scope fix
-(D8). Each lands with its own tests and is independently useful. Nothing else
-changes yet, so the suite stays green throughout.
+`shared/truncate.ts`, the `exec` timeout with `killed` and env-unset support
+(D7, D14), and the `writeMemory` scope fix (D8). Each lands with its own tests and
+is independently useful. Nothing else changes yet, so the suite stays green
+throughout.
 
-**Wave 2 — apply.** The LSP bound and `dispose` (D1, D2); signal threading through
-the lens tool; the manager's cwd re-keying (D4); the trust gate (D5); linter
-cwd + timeout; the remaining eight `cwdOf` sites plus the memory cwd cache (D12);
-the spawn job deadline; truncation at the agent-facing boundaries (lens
-diagnostics and verify output, consult advice, browser content, spawn output,
-memory recall bodies); and the D3 CI guard, added last so it lands green.
+**Wave 2 — apply.** The git environment scrub (D14) goes **first** — it is a P0 and
+it depends only on wave 1's env-unset support. Then the LSP bound and `dispose`
+(D1, D2); signal threading through the lens tool; the manager's cwd re-keying (D4);
+the trust gate (D5); linter cwd + timeout; the remaining eight `cwdOf` sites plus
+the memory cwd cache (D12); the spawn job deadline; truncation at the agent-facing
+boundaries (lens diagnostics and verify output, consult advice, browser content,
+spawn output, memory recall bodies); and the D3 CI guard, added last so it lands
+green.
 
-**Wave 3 — repair.** The memory index cache (D9), git's snapshot-before-restore
-plus the two tree-navigation hooks, and age-based checkpoint GC (D10).
+**Wave 3 — repair.** The memory index cache (D9); git's snapshot-before-restore
+plus the two tree-navigation hooks (D10); the shadow-repo backend for non-git
+projects (D15); the empty-directory prune in `restoreTree`; and age-based
+checkpoint GC last, since it is the only step a revert cannot undo.
 
 Checkpoints between waves. Wave 1 and wave 3 are independent of each other; wave 2
-depends on wave 1.
+depends on wave 1. Within wave 3, the backend split (D15) lands before GC so the
+pruning logic is written against both backends rather than retrofitted to one.
 
 ---
 
@@ -571,16 +707,26 @@ Behavioral, each one a test:
 11. Checkpoints older than `checkpointTtlDays` are pruned; newer ones survive.
 12. The LSP root, linters, verify, and spawn all act on the session cwd when it
     differs from the process cwd.
+13. With `GIT_DIR` and `GIT_INDEX_FILE` set in the environment to a *different*
+    repository, every `pi-git` operation still acts on `cwd`'s repository and
+    leaves the decoy's index untouched. This is the OpenCode failure, reproduced
+    as a test.
+14. In a directory that is not a git repository, a checkpoint is taken in the
+    shadow repo and a restore returns the tree; the project gains no `.git`.
+15. A non-git snapshot excludes `node_modules/` by default, and one exceeding
+    `maxSnapshotBytes` is skipped with a notice rather than written.
+16. Restoring past a `mkdir -p a/b/c` leaves no empty directories behind.
 
 Structural:
 
-13. No bare `process.cwd()` outside `shared/cwd.ts` and test files (D3).
-14. All 247 pre-existing tests still pass; `SURFACE` and `test/contract.test.ts`
+17. No bare `process.cwd()` outside `shared/cwd.ts` and test files (D3).
+18. All 247 pre-existing tests still pass; `SURFACE` and `test/contract.test.ts`
     are unmodified.
-15. `bunx tsc --noEmit` clean; `./scripts/smoke-install.sh` passes.
-16. Each extension still registers exactly one command, and it opens settings (D11).
-17. A live tmux dogfood covering the trust gate, an LSP timeout, and a `/tree`
-    navigation in both directions with file changes following it.
+19. `bunx tsc --noEmit` clean; `./scripts/smoke-install.sh` passes.
+20. Each extension still registers exactly one command, and it opens settings (D11).
+21. A live tmux dogfood covering the trust gate, an LSP timeout, a `/tree`
+    navigation in both directions with file changes following it, and a session
+    in a non-git directory.
 
 ---
 
@@ -596,6 +742,11 @@ Structural:
   contract work that advertises it.
 - **Retry or reconnect for a dead LSP server.** This sub-project makes failure
   fast, bounded, and honest; automatic recovery is a feature.
+- **Tracking only the files Pi itself edited** (Claude Code's model, D15). It
+  bounds cost by construction and needs no exclude list, but it cannot revert what
+  Pi did not do — a stray `rm` in a bash call, a build artifact — which breaks the
+  "the tree matches the session position" guarantee the snapshot model provides.
+  Worth revisiting only if the size cap proves to bite in practice.
 
 ---
 
@@ -607,6 +758,11 @@ footprint is checkpoint GC, which *deletes* refs — so it is the one step that
 cannot be undone by reverting the commit. It ships last, behind a TTL that
 defaults to 30 days, and is verified against a throwaway repository before being
 pointed at anything real.
+
+The shadow repos (D15) are the other new footprint, but a benign one: they live
+entirely under `<agentDir()>/checkpoints/`, touch nothing in the project, and are
+removable with `rm -rf`. Reverting the code simply strands them; nothing reads them
+and nothing breaks.
 
 Everything else is confined to `refs/pi-git/`, invisible to normal git operation
 and removable with `git update-ref -d`. No user data format changes: memory files,
