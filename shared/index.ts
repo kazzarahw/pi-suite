@@ -26,3 +26,8 @@ export { SURFACE, ALL_TOOLS } from "./surface.ts";
 
 export type { CwdSource } from "./cwd.ts";
 export { cwdOf } from "./cwd.ts";
+
+export { deadline } from "./deadline.ts";
+
+export type { TruncateOptions } from "./truncate.ts";
+export { truncateForAgent } from "./truncate.ts";
