@@ -4,7 +4,7 @@ import type { AgentDef } from "./agents.ts";
 import { runAgent, type SpawnEvent, type SpawnResult } from "./runner.ts";
 import { runParallel, type Job } from "./pool.ts";
 import { eventToLine } from "./render.ts";
-import { cwdOf } from "../../shared/index.ts";
+import { cwdOf, truncateForAgent } from "../../shared/index.ts";
 
 const parameters = Type.Object({
   tasks: Type.Array(
@@ -129,7 +129,10 @@ export function buildSpawnTool(deps: SpawnDeps) {
       const text = results
         .map((r) => `## ${r.agent} ${r.ok ? "✓" : "✗ (failed)"}\n${r.output || "(no output)"}`)
         .join("\n\n");
-      return { content: [{ type: "text", text }], details: { results } };
+      return {
+        content: [{ type: "text", text: truncateForAgent(text, { label: "spawn output", keep: "tail" }) }],
+        details: { results },
+      };
     },
   };
 }

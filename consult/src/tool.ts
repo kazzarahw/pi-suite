@@ -1,6 +1,7 @@
 import { Type, type Static } from "typebox";
 import type { AgentToolResult, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { ConsultConfig } from "./config.ts";
+import { truncateForAgent } from "../../shared/index.ts";
 
 const parameters = Type.Object({
   prompt: Type.String({
@@ -44,7 +45,10 @@ export function buildConsultTool(deps: ToolDeps) {
       try {
         const advice = await deps.runConsult({ model, prompt: params.prompt, signal });
         deps.emit("consult:answered", { model, topic: params.prompt.slice(0, 80) });
-        return { content: [{ type: "text", text: advice }], details: { model } };
+        return {
+          content: [{ type: "text", text: truncateForAgent(advice, { label: "consult advice" }) }],
+          details: { model },
+        };
       } finally {
         ctx?.ui?.setStatus?.("consult", undefined);
       }

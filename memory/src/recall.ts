@@ -1,5 +1,6 @@
 import { injectionBlock, injectionHeader } from "../../shared/index.ts";
 import type { Memory } from "./frontmatter.ts";
+import { truncateForAgent } from "../../shared/index.ts";
 
 /** Rank memories by how many query terms appear in name/description/body; cap at `limit`. Pure. */
 export function selectByQuery(mems: Memory[], query: string, limit: number): Memory[] {
@@ -30,5 +31,5 @@ export function formatRecall(mems: Memory[]): string {
   if (mems.length === 0) return "";
   const header = injectionHeader("memory", "recalled");
   const body = mems.map((m) => `## ${m.name}\n${m.body}`).join("\n\n");
-  return injectionBlock("memory", header, body);
+  return injectionBlock("memory", header, truncateForAgent(body, { label: "recalled memories" }));
 }

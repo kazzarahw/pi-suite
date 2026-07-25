@@ -30,3 +30,24 @@ test("formatFormatted builds a <pi-lens> reformat note", () => {
     "<pi-lens>\nlens · formatted src/a.ts\n  ✓ reformatted with prettier\n</pi-lens>",
   );
 });
+
+// Pi's docs say tools MUST truncate; the suite truncated nowhere. A single bulk edit
+// can emit thousands of diagnostics, all of which went into context.
+test("a large diagnostics block is truncated, and a small one is byte-identical", () => {
+  const many: Diagnostic[] = Array.from({ length: 4000 }, (_, i) => ({
+    file: "/a.ts",
+    line: i + 1,
+    col: 1,
+    severity: "warning" as const,
+    message: `issue ${i}`,
+    source: "ts",
+  }));
+  const big = formatDiagnostics("a.ts", many);
+  expect(big).toMatch(/truncated/i);
+  expect(big.split("\n").length).toBeLessThan(2100);
+  // The header still reports the true total, so the count is never misleading.
+  expect(big).toContain("4000 warning(s)");
+
+  const few = formatDiagnostics("a.ts", many.slice(0, 3));
+  expect(few).not.toMatch(/truncated/i);
+});

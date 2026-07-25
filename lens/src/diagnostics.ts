@@ -1,4 +1,5 @@
 import { injectionBlock, injectionHeader, type Diagnostic } from "../../shared/index.ts";
+import { truncateForAgent } from "../../shared/index.ts";
 
 export type { Diagnostic };
 
@@ -41,7 +42,9 @@ export function formatDiagnostics(path: string, ds: Diagnostic[]): string {
   const body = ds
     .map((d) => `  ${d.line}:${d.col}  ${label(d.severity)}  ${d.message}  (${d.source}${d.code ? ` ${d.code}` : ""})`)
     .join("\n");
-  return injectionBlock("lens", header, body);
+  // Head, not tail: the count is already in the header, and the first diagnostics are
+  // the ones worth acting on. A single bulk edit can emit thousands.
+  return injectionBlock("lens", header, truncateForAgent(body, { label: "diagnostics" }));
 }
 
 /** A `<pi-lens>` note that a file was auto-formatted (on-disk content changed after the edit). Pure. */

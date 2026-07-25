@@ -3,6 +3,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import type { AgentToolResult, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { BrowserConfig } from "./config.ts";
 import { runBrowser, type BrowserAction, type ExecFn } from "./browser.ts";
+import { truncateForAgent } from "../../shared/index.ts";
 
 const ACTIONS = [
   "open", "snapshot", "read", "search", "click", "type", "fill", "press", "hover",
@@ -55,7 +56,12 @@ export function buildBrowserTool(deps: BrowserToolDeps) {
       _ctx: ExtensionContext,
     ): Promise<AgentToolResult<{ action: BrowserAction }>> {
       const output = await runBrowser(params.action, params, deps.loadConfig(), deps.exec, signal);
-      return { content: [{ type: "text", text: output || "(no output)" }], details: { action: params.action } };
+      return {
+        content: [
+          { type: "text", text: truncateForAgent(output || "(no output)", { label: `browser ${params.action}` }) },
+        ],
+        details: { action: params.action },
+      };
     },
   };
 }
