@@ -1,4 +1,5 @@
 import type { ExecFn } from "../../shared/exec.ts";
+import { SCRUBBED_GIT_ENV } from "./detect.ts";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -27,10 +28,21 @@ export interface Git {
 
 const lines = (s: string): string[] => s.split("\n").map((l) => l.trim()).filter(Boolean);
 
-/** Build a Git facade over an injected exec, bound to a working directory. */
+/**
+ * Build a Git facade over an injected exec, bound to a working directory.
+ *
+ * Every invocation goes out with {@link SCRUBBED_GIT_ENV} applied, so an inherited
+ * `GIT_DIR` or `GIT_INDEX_FILE` — which git exports to hooks and to anything it
+ * spawns — cannot redirect a call at a different repository. Identity comes from
+ * `cwd` alone. Applied here rather than per call site: one forgotten site is how
+ * this bug class survives.
+ */
 export function createGit(exec: ExecFn, cwd: string): Git {
   const run = async (args: string[], env?: Record<string, string>): Promise<string> => {
-    const { stdout, stderr, code } = await exec("git", args, { cwd, env });
+    const { stdout, stderr, code } = await exec("git", args, {
+      cwd,
+      env: { ...SCRUBBED_GIT_ENV, ...env },
+    });
     if (code !== 0) throw new Error(`[pi-git] git ${args[0]} failed (${code}): ${stderr.trim()}`);
     return stdout;
   };
@@ -46,7 +58,7 @@ export function createGit(exec: ExecFn, cwd: string): Git {
 
   return {
     async isRepo() {
-      const r = await exec("git", ["rev-parse", "--is-inside-work-tree"], { cwd });
+      const r = await exec("git", ["rev-parse", "--is-inside-work-tree"], { cwd, env: SCRUBBED_GIT_ENV });
       return r.code === 0 && r.stdout.trim() === "true";
     },
 
@@ -54,7 +66,7 @@ export function createGit(exec: ExecFn, cwd: string): Git {
       return withTempIndex(async (env) => {
         await run(["add", "-A"], env);
         const tree = (await run(["write-tree"], env)).trim();
-        const head = await exec("git", ["rev-parse", "HEAD"], { cwd });
+        const head = await exec("git", ["rev-parse", "HEAD"], { cwd, env: SCRUBBED_GIT_ENV });
         const parent = head.code === 0 ? ["-p", head.stdout.trim()] : [];
         return (await run(["commit-tree", tree, ...parent, "-m", `pi-git checkpoint: ${reason}`])).trim();
       });
@@ -85,7 +97,7 @@ export function createGit(exec: ExecFn, cwd: string): Git {
     },
 
     async readRef(ref) {
-      const r = await exec("git", ["rev-parse", "--verify", "--quiet", ref], { cwd });
+      const r = await exec("git", ["rev-parse", "--verify", "--quiet", ref], { cwd, env: SCRUBBED_GIT_ENV });
       const sha = r.stdout.trim();
       return r.code === 0 && sha.length > 0 ? sha : null;
     },
