@@ -23,6 +23,7 @@ test("runLinters runs each spec via exec and flattens", async () => {
     stdout: JSON.stringify([{ filename: "a.py", location: { row: 1, column: 1 }, message: "x", code: "E1" }]),
     stderr: "",
     code: 1,
+    killed: false,
   });
   const ds = await runLinters("a.py", [RUFF], exec, "/tmp");
   expect(ds).toHaveLength(1);
@@ -47,7 +48,7 @@ test("runLinters skips a spec whose enabledFor is false (no spawn), runs it once
   let spawned = 0;
   const exec: ExecFn = async () => {
     spawned++;
-    return { stdout: "[]", stderr: "", code: 0 };
+    return { stdout: "[]", stderr: "", code: 0, killed: false };
   };
   // ESLINT.enabledFor = hasEslintConfig → false in an empty dir, so it must not spawn.
   expect(await runLinters(join(dir, "a.ts"), [ESLINT], exec, dir)).toEqual([]);

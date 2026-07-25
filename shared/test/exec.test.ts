@@ -64,3 +64,77 @@ test("defaultExec settles when the signal aborts mid-flight", async () => {
 test("MAX_BUFFER is 64MB", () => {
   expect(MAX_BUFFER).toBe(64 * 1024 * 1024);
 });
+
+// --- Deadlines -------------------------------------------------------------
+// Nothing in the suite bounded a subprocess before this. A verify command, a
+// linter, or a subagent could run forever. The contract stays "always resolves":
+// a deadline is reported through the result, never by rejecting.
+
+test("a command exceeding its timeout resolves, non-zero, with killed set", async () => {
+  const r = await within(3000, defaultExec("sh", ["-c", "sleep 5"], { timeout: 100 }));
+  expect(r.code).not.toBe(0);
+  expect(r.killed).toBe(true);
+});
+
+// The case that makes `killed` a field rather than a string annotation. execFile
+// hands back whatever the child wrote before it was killed, so a deadline is
+// otherwise indistinguishable from an ordinary failure — the same class of lie as
+// reporting a wedged language server as "(none found)".
+test("a command that writes to stderr and THEN times out still reports killed", async () => {
+  const r = await within(3000, defaultExec("sh", ["-c", "printf partial >&2; sleep 5"], { timeout: 150 }));
+  expect(r.stderr).toContain("partial");
+  expect(r.killed).toBe(true);
+  expect(r.code).not.toBe(0);
+});
+
+test("an ordinary non-zero exit is not reported as killed", async () => {
+  const r = await defaultExec("sh", ["-c", "printf boom >&2; exit 3"]);
+  expect(r.code).toBe(3);
+  expect(r.killed).toBe(false);
+});
+
+test("a successful command is not reported as killed", async () => {
+  expect((await defaultExec("sh", ["-c", "printf ok"])).killed).toBe(false);
+});
+
+test("omitting timeout still completes a fast command under the backstop", async () => {
+  const r = await within(3000, defaultExec("sh", ["-c", "printf fast"]));
+  expect(r.stdout).toBe("fast");
+  expect(r.killed).toBe(false);
+});
+
+// --- Env unset -------------------------------------------------------------
+// pi-git must strip GIT_DIR / GIT_INDEX_FILE and friends so an inherited
+// environment cannot redirect it at another repository. Merging cannot express
+// that, so an explicit `undefined` removes the variable.
+
+test("an undefined env value removes the variable from the child", async () => {
+  process.env.PI_SUITE_UNSET_ME = "inherited";
+  try {
+    const r = await defaultExec("sh", ["-c", "printf '[%s]' \"$PI_SUITE_UNSET_ME\""], {
+      env: { PI_SUITE_UNSET_ME: undefined },
+    });
+    expect(r.stdout).toBe("[]");
+  } finally {
+    delete process.env.PI_SUITE_UNSET_ME;
+  }
+});
+
+test("removing one variable leaves the rest of the environment intact", async () => {
+  process.env.PI_SUITE_UNSET_ME = "inherited";
+  try {
+    const r = await defaultExec("sh", ["-c", "printf '%s' \"$HOME\""], {
+      env: { PI_SUITE_UNSET_ME: undefined },
+    });
+    expect(r.stdout).toBe(process.env.HOME ?? "");
+  } finally {
+    delete process.env.PI_SUITE_UNSET_ME;
+  }
+});
+
+test("a defined env value still sets the variable", async () => {
+  const r = await defaultExec("sh", ["-c", "printf '%s' \"$PI_SUITE_SET_ME\""], {
+    env: { PI_SUITE_SET_ME: "value" },
+  });
+  expect(r.stdout).toBe("value");
+});

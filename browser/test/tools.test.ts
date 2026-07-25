@@ -9,7 +9,7 @@ test("execute runs the action via runBrowser and wraps its stdout", async () => 
   let seenArgs: string[] | undefined;
   const exec: ExecFn = async (_cmd, args) => {
     seenArgs = args;
-    return { stdout: "PAGE TEXT", stderr: "", code: 0 };
+    return { stdout: "PAGE TEXT", stderr: "", code: 0, killed: false };
   };
   const tool = buildBrowserTool({ loadConfig: () => ({ binPath: "agent-browser" }), exec });
   const r = await tool.execute("id", { action: "open", url: "https://x.com" }, undefined, undefined, ctx);
@@ -19,7 +19,7 @@ test("execute runs the action via runBrowser and wraps its stdout", async () => 
 });
 
 test("execute shows (no output) when the command returns nothing", async () => {
-  const exec: ExecFn = async () => ({ stdout: "", stderr: "", code: 0 });
+  const exec: ExecFn = async () => ({ stdout: "", stderr: "", code: 0, killed: false });
   const tool = buildBrowserTool({ loadConfig: () => ({ binPath: "agent-browser" }), exec });
   const r = await tool.execute("id", { action: "reload" }, undefined, undefined, ctx);
   expect((r.content[0] as { text: string }).text).toBe("(no output)");

@@ -58,7 +58,7 @@ test("runFormatter reports changed=true when the formatter rewrites the file", a
   writeFileSync(file, "const x=1\n");
   const exec: ExecFn = async () => {
     writeFileSync(file, "const x = 1;\n"); // simulate prettier's in-place rewrite
-    return { stdout: "", stderr: "", code: 0 };
+    return { stdout: "", stderr: "", code: 0, killed: false };
   };
   expect(await runFormatter(file, PRETTIER, exec)).toEqual({ changed: true });
   expect(readFileSync(file, "utf8")).toBe("const x = 1;\n");
@@ -69,7 +69,7 @@ test("runFormatter reports changed=false on a no-op format", async () => {
   const dir = mkdtempSync(join(tmpdir(), "lens-fmt-"));
   const file = join(dir, "a.ts");
   writeFileSync(file, "const x = 1;\n");
-  const exec: ExecFn = async () => ({ stdout: "", stderr: "", code: 0 });
+  const exec: ExecFn = async () => ({ stdout: "", stderr: "", code: 0, killed: false });
   expect(await runFormatter(file, PRETTIER, exec)).toEqual({ changed: false });
   rmSync(dir, { recursive: true, force: true });
 });
@@ -80,7 +80,7 @@ test("runFormatter reports changed=false when the formatter exits non-zero", asy
   writeFileSync(file, "oops(\n");
   const exec: ExecFn = async () => {
     writeFileSync(file, "SHOULD BE IGNORED\n");
-    return { stdout: "", stderr: "parse error", code: 2 };
+    return { stdout: "", stderr: "parse error", code: 2, killed: false };
   };
   expect(await runFormatter(file, PRETTIER, exec)).toEqual({ changed: false });
   rmSync(dir, { recursive: true, force: true });

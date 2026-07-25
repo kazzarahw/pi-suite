@@ -36,7 +36,7 @@ test("runBrowser runs binPath + argv, returns trimmed stdout, prepends session",
   let captured: { cmd: string; args: string[] } | undefined;
   const exec: ExecFn = async (cmd, args) => {
     captured = { cmd, args };
-    return { stdout: "  page text \n", stderr: "", code: 0 };
+    return { stdout: "  page text \n", stderr: "", code: 0, killed: false };
   };
   const cfg: BrowserConfig = { binPath: "agent-browser", session: "s1" };
   const out = await runBrowser("open", { url: "https://x.com" }, cfg, exec);
@@ -45,7 +45,7 @@ test("runBrowser runs binPath + argv, returns trimmed stdout, prepends session",
 });
 
 test("runBrowser throws with stderr text on a non-zero exit", async () => {
-  const exec: ExecFn = async () => ({ stdout: "", stderr: "boom", code: 3 });
+  const exec: ExecFn = async () => ({ stdout: "", stderr: "boom", code: 3, killed: false });
   await expect(runBrowser("snapshot", {}, { binPath: "agent-browser" }, exec)).rejects.toThrow("boom");
 });
 
@@ -63,8 +63,8 @@ test("runBrowser search falls back to the next engine when the first is blocked"
   const exec: ExecFn = async (_cmd, args) => {
     const url = args[args.length - 1]!;
     seen.push(url);
-    if (url.includes("duckduckgo")) return { stdout: "unusual traffic detected, wait a moment", stderr: "", code: 0 };
-    return { stdout: "1. Result title\nexample.com\nA real snippet for the query goes here.", stderr: "", code: 0 };
+    if (url.includes("duckduckgo")) return { stdout: "unusual traffic detected, wait a moment", stderr: "", code: 0, killed: false };
+    return { stdout: "1. Result title\nexample.com\nA real snippet for the query goes here.", stderr: "", code: 0, killed: false };
   };
   const out = await runBrowser("search", { query: "x" }, { binPath: "agent-browser" }, exec);
   expect(out).toContain("Result title");
@@ -73,6 +73,6 @@ test("runBrowser search falls back to the next engine when the first is blocked"
 });
 
 test("runBrowser search requires a query", async () => {
-  const exec: ExecFn = async () => ({ stdout: "", stderr: "", code: 0 });
+  const exec: ExecFn = async () => ({ stdout: "", stderr: "", code: 0, killed: false });
   await expect(runBrowser("search", {}, { binPath: "agent-browser" }, exec)).rejects.toThrow('"query" is required');
 });
