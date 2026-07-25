@@ -95,8 +95,13 @@ whole session, unrecoverably.
   `memory/index.ts:29` calls `listMemories(cwd)` inside the `context` hook, which
   fires once per call and hits the disk for every file each time.
 - **`git.restoreTree` is destructive with no undo.** It is `checkout-index -a -f`
-  plus removal of extras (`git/src/git.ts:63-78`). Once a fork restores, the
+  plus removal of extras (`git/src/git.ts:63-78`), and `restoreOnForkShutdown`
+  (`hooks.ts:42`) calls it without snapshotting first. Once a fork restores, the
   discarded state is unrecoverable.
+- **File state follows session position in only one direction.** `pi-git` hooks
+  the fork path alone, so rewinding a message reverts files, but navigating the
+  session tree forward or across branches leaves the working tree behind. The
+  automatic tracking the extension exists to provide is half-wired.
 - **Checkpoint refs are never collected.** `listRefs` (`git/src/git.ts:22,93`) has
   zero production callers — only tests. `refs/pi-git/checkpoints/` grows without
   bound for the life of the repository.
@@ -144,7 +149,7 @@ Distinguishing "slow" from "empty" is the entire point of the fix.
 ### D3 — One `cwdOf`, and bare `process.cwd()` becomes a CI failure
 
 `shared/cwd.ts` gets the single implementation. Eight of the nine sites call it
-directly; the ninth is the ctx-less bus callback handled by D11. Because
+directly; the ninth is the ctx-less bus callback handled by D12. Because
 the root cause of the five broken sites was duplication rather than ignorance,
 deduplication alone does not prevent recurrence — so `test/boundaries.test.ts`
 gains a source scan asserting that `process.cwd()` appears nowhere outside
@@ -249,18 +254,55 @@ Injection stays at `messages[0]` (per the approved answer). The prompt cache is
 still invalidated when a memory actually changes, which is correct and rare — the
 defect was re-reading the disk on every call, not the placement.
 
-### D10 — Git: an undo ref before every restore, and bounded checkpoints
+### D10 — Git follows the session tree in both directions; no manual command
 
-`restoreOnForkShutdown` snapshots the current tree to `refs/pi-git/undo/latest`
-before calling `restoreTree`, and `/pi-git undo` restores from it. A destructive
-operation with no recovery path is the defect; writing the ref without exposing a
-way to use it would only fix half of it.
+The defect is that a restore discards the current working tree unrecoverably. The
+fix is **not** an undo command. `pi-git` exists to make file state follow session
+position automatically — the same model as other harnesses, where the harness's
+own navigation *is* the undo/redo interface and files simply move with you. A
+`/pi-git undo` would be an admission that the automatic behavior is incomplete.
 
-Checkpoint GC prunes `refs/pi-git/checkpoints/` to the newest `keepCheckpoints`
-(default 100) after each successful checkpoint, which gives `listRefs` its first
-production caller. `Git` gains `deleteRef`.
+Two changes:
 
-### D11 — Memory's bus callback caches the session cwd locally
+**Snapshot before restoring.** Every restore first checkpoints the current working
+tree against the entry being left. Since checkpoints are keyed by entry id in a ref
+namespace, the abandoned state becomes an ordinary checkpoint, reachable by
+navigating back to it. This dissolves "destructive with no undo" without inventing
+an undo concept, a second ref namespace, or a command.
+
+**Hook tree navigation.** `pi-git` currently hooks only the fork path
+(`session_before_fork` + `session_shutdown`), so rewinding a message reverts files
+but navigating forward or across branches does not. Pi fires
+`session_before_tree` (before, cancellable) and `session_tree` (after) on `/tree`
+navigation. Checkpointing on the former and restoring on the latter makes forward
+navigation behave exactly like backward navigation — redo, for free, by symmetry.
+
+Taking the checkpoint in `session_before_tree` rather than deriving it from
+`session_tree`'s `oldLeafId` is deliberate. Checkpoints are keyed by *user-message*
+entry ids, while the event carries *leaf* ids, which may be assistant entries. Both
+hooks can therefore reuse `currentUserEntryId(sm)` unchanged — it reads the branch,
+which is correct before navigation and correct again after it — and no leaf-to-turn
+resolution is needed on either side.
+
+**GC by age, not by count.** A "newest N" cap is unsafe once navigation can reach
+arbitrarily far back: pruning a checkpoint that is still reachable in the session
+tree would silently break its restore. Checkpoints are instead pruned when older
+than `checkpointTtlDays` (default 30), which bounds growth across sessions while
+leaving everything reachable in a live session intact. This gives `listRefs` its
+first production caller; `Git` gains `deleteRef`.
+
+### D11 — Slash commands are configuration surface, not action surface
+
+Every `/pi-<name>` command opens that extension's settings (optionally taking a
+mode argument). Adding verbs to them would make the same capability reachable two
+ways, and for `pi-git` specifically an action verb would paper over automatic
+behavior that should simply work. Where a capability is meant to be automatic, the
+fix goes in a hook; where it is meant to be agent-driven, it goes in a tool.
+
+`test/contract.test.ts` already pins one command per extension. HOUSE-STYLE should
+record the *reason*, which is sub-project 3's job.
+
+### D12 — Memory's bus callback caches the session cwd locally
 
 `memory/index.ts:48` sits inside `pi.events.on("verify:failed", …)`. Bus callbacks
 receive only `data` — there is no context to resolve a cwd from, so `cwdOf` cannot
@@ -272,7 +314,7 @@ yet. The alternative — putting `cwd` in the event payload — is the better lo
 design but changes the event vocabulary, which is sub-project 3's subject. Noted
 there rather than pre-empted here.
 
-### D12 — Testing: injected deadlines, not real waiting
+### D13 — Testing: injected deadlines, not real waiting
 
 Every new bound is tested through an injected timeout of a few milliseconds
 against a fake that never replies, using a `within()` hang-detector. No test may
@@ -440,21 +482,29 @@ export function invalidateIndexCache(cwd?: string): void;
 deleteRef(ref: string): Promise<void>;
 
 // checkpoints.ts
-export const UNDO_REF = "refs/pi-git/undo/latest";
 
-/** Prune checkpoint refs beyond the newest `keep`. Returns how many were removed. */
-export function pruneCheckpoints(git: Git, keep: number): Promise<number>;
+/** Prune checkpoint refs older than `ttlDays`. Returns how many were removed. */
+export function pruneCheckpoints(git: Git, ttlDays: number, nowMs: number): Promise<number>;
 ```
 
-`/pi-git` currently accepts either no argument (settings panel) or a mode name,
-validated against `MODES` with matching autocompletion. `undo` is added as a
-second recognised argument, checked before the mode validation and offered by
-`getArgumentCompletions`. `CommandDeps` gains:
+`nowMs` is injected rather than read from the clock so the TTL is testable without
+waiting or stubbing globals.
+
+### `git/index.ts` (modified)
+
+Two hooks are added, mirroring the existing fork pair:
 
 ```ts
-/** Restore the tree saved by the last fork restore. Reports what happened. */
-undo: (cwd: string) => Promise<"restored" | "nothing-to-undo" | "not-a-repo">;
+// Before navigating: preserve the tree we are leaving, so no state is discarded.
+pi.on("session_before_tree", …)   // checkpoint at currentUserEntryId(sm)
+
+// After navigating: make the working tree match the position we arrived at.
+pi.on("session_tree", …)          // restore findCheckpoint(currentUserEntryId(sm))
 ```
+
+Both reuse `currentUserEntryId` unchanged (D10). A position with no checkpoint —
+an entry that never started a turn — is a no-op, matching today's fork behavior.
+`/pi-git` gains no new arguments; `CommandDeps` is unchanged.
 
 ### `shared/test/harness.ts` (modified)
 
@@ -467,7 +517,7 @@ export function within<T>(ms: number, p: Promise<T>): Promise<T>;
 
 ```ts
 // git
-keepCheckpoints: number;   // default 100
+checkpointTtlDays: number;   // default 30 — age-based; a count cap is unsafe (D10)
 
 // spawn
 jobTimeoutMs: number;      // default 900_000 (15 min)
@@ -484,13 +534,13 @@ changes yet, so the suite stays green throughout.
 
 **Wave 2 — apply.** The LSP bound and `dispose` (D1, D2); signal threading through
 the lens tool; the manager's cwd re-keying (D4); the trust gate (D5); linter
-cwd + timeout; the remaining eight `cwdOf` sites plus the memory cwd cache (D11);
+cwd + timeout; the remaining eight `cwdOf` sites plus the memory cwd cache (D12);
 the spawn job deadline; truncation at the agent-facing boundaries (lens
 diagnostics and verify output, consult advice, browser content, spawn output,
 memory recall bodies); and the D3 CI guard, added last so it lands green.
 
-**Wave 3 — repair.** The memory index cache (D9), the git undo ref and
-`/pi-git undo`, and checkpoint GC (D10).
+**Wave 3 — repair.** The memory index cache (D9), git's snapshot-before-restore
+plus the two tree-navigation hooks, and age-based checkpoint GC (D10).
 
 Checkpoints between waves. Wave 1 and wave 3 are independent of each other; wave 2
 depends on wave 1.
@@ -514,25 +564,30 @@ Behavioral, each one a test:
 7. Writing a project memory named `x` leaves a global memory named `x` intact.
 8. `listMemories` performs no file reads on a second call when the directory is
    unchanged, and does re-read after a write.
-9. A fork restore writes `UNDO_REF`, and `/pi-git undo` returns the tree.
-10. Checkpoints beyond `keepCheckpoints` are pruned.
-11. The LSP root, linters, verify, and spawn all act on the session cwd when it
+9. A restore checkpoints the tree it is leaving, so navigating back returns to it —
+   nothing is discarded unrecoverably.
+10. Navigating the session tree forward restores that position's tree, not just
+    backward: undo and redo are symmetric.
+11. Checkpoints older than `checkpointTtlDays` are pruned; newer ones survive.
+12. The LSP root, linters, verify, and spawn all act on the session cwd when it
     differs from the process cwd.
 
 Structural:
 
-12. No bare `process.cwd()` outside `shared/cwd.ts` and test files (D3).
-13. All 247 pre-existing tests still pass; `SURFACE` and `test/contract.test.ts`
+13. No bare `process.cwd()` outside `shared/cwd.ts` and test files (D3).
+14. All 247 pre-existing tests still pass; `SURFACE` and `test/contract.test.ts`
     are unmodified.
-14. `bunx tsc --noEmit` clean; `./scripts/smoke-install.sh` passes.
-15. A live tmux dogfood covering the trust gate, an LSP timeout, and `/pi-git undo`.
+15. `bunx tsc --noEmit` clean; `./scripts/smoke-install.sh` passes.
+16. Each extension still registers exactly one command, and it opens settings (D11).
+17. A live tmux dogfood covering the trust gate, an LSP timeout, and a `/tree`
+    navigation in both directions with file changes following it.
 
 ---
 
 ## Out of scope
 
 - **`mode: "block"` semantics**, event subscribers, and the `settings.json`
-  migration — sub-project 3. Including the `cwd` event payload from D11.
+  migration — sub-project 3. Including the `cwd` event payload from D12.
 - **HOUSE-STYLE §7 and §9 corrections** — sub-project 3, where the contract is
   reconciled as a whole rather than patched twice.
 - **Spawn isolation** (worktrees, sandboxing) — a missing feature, not a defect,
