@@ -38,7 +38,7 @@ export function buildLensTool(deps: LensToolDeps) {
       _onUpdate: unknown,
       _ctx: ExtensionContext,
     ): Promise<AgentToolResult<{ action: string }>> {
-      const client = await deps.manager().ready(params.path);
+      const client = await deps.manager().ready(params.path, process.cwd());
       if (!client) {
         throw new Error(`[pi-lens] no language server configured for ${params.path}`);
       }

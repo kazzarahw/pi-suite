@@ -32,7 +32,7 @@ function pathFromInput(input: unknown): string | null {
  */
 export default function piLens(pi: ExtensionAPI): void {
   const cwd = process.cwd();
-  const manager = createManager(cwd);
+  const manager = createManager();
   let dirty = false; // an edit landed since the last verify
   let hasErrors = false; // last diagnostics had unresolved errors → don't verify yet
 
@@ -64,7 +64,7 @@ export default function piLens(pi: ExtensionAPI): void {
 
     let diags: Diagnostic[] = [];
     try {
-      const lsp = await manager.pull(file);
+      const lsp = await manager.pull(file, projectCwd);
       const lint = tc ? await runLinters(file, tc.linters, defaultExec, projectCwd) : [];
       diags = mergeDiagnostics(lsp, lint);
     } catch {
@@ -121,7 +121,7 @@ export default function piLens(pi: ExtensionAPI): void {
     const dir = ctx?.sessionManager?.getCwd?.() ?? cwd;
     try {
       const targets = discoverWarmTargets(DEFAULT_TOOLCHAINS, whichOnPath, listWorkspaceFiles(dir));
-      for (const target of targets) void manager.ready(target).catch(() => {});
+      for (const target of targets) void manager.ready(target, dir).catch(() => {});
     } catch {
       /* prewarm is best-effort */
     }

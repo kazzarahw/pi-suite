@@ -11,12 +11,20 @@ import type { Diagnostic } from "../diagnostics.ts";
 /** Max time to wait for a cold server's first project-load/publish before proceeding anyway. */
 const WARM_TIMEOUT_MS = 6000;
 const delay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+/** Resolves when `signal` aborts; never resolves when there is none. */
+const aborted = (signal?: AbortSignal): Promise<void> =>
+  signal
+    ? new Promise((r) => {
+        if (signal.aborted) r();
+        else signal.addEventListener("abort", () => r(), { once: true });
+      })
+    : new Promise(() => {});
 
 export interface LspManager {
   /** Ensure the file's server is up and the file is opened; resolves the client (null if no server). */
-  ready(path: string): Promise<LspClient | null>;
+  ready(path: string, cwd: string, signal?: AbortSignal): Promise<LspClient | null>;
   /** Open/refresh the file and wait (bounded) for the server to publish diagnostics for it. */
-  pull(path: string, timeoutMs?: number): Promise<Diagnostic[]>;
+  pull(path: string, cwd: string, timeoutMs?: number): Promise<Diagnostic[]>;
   diagnosticsFor(path: string): Diagnostic[];
   shutdownAll(): Promise<void>;
 }
@@ -29,8 +37,17 @@ interface Entry {
   warm: Promise<void>;
 }
 
+/**
+ * `cwd` is a per-call argument, not a construction parameter.
+ *
+ * pi-lens previously captured `process.cwd()` in its extension factory and passed it
+ * here once, so the server's root — the child process's cwd and the `initialize`
+ * rootUri — was fixed at extension-load time. Where Pi's session cwd differed, every
+ * diagnostic and every query was rooted in the wrong project for the whole session,
+ * unrecoverably. Clients are keyed by `(cwd, command)` so a different cwd yields a
+ * correctly-rooted second server rather than a silently wrong first one.
+ */
 export function createManager(
-  cwd: string,
   servers: Record<string, ServerSpec> = lspServers(),
   which: (bin: string) => boolean = whichOnPath,
 ): LspManager {
@@ -39,7 +56,7 @@ export function createManager(
   const opened = new Set<string>();
   const waiters = new Map<string, Array<(ds: Diagnostic[]) => void>>();
 
-  function ensure(path: string): { entry: Entry; spec: ServerSpec } | null {
+  function ensure(path: string, cwd: string): { entry: Entry; spec: ServerSpec } | null {
     const ext = extname(path).slice(1).toLowerCase();
     const spec = servers[ext];
     if (!spec) return null;
@@ -48,7 +65,8 @@ export function createManager(
     // `initialize`, and the LSP request has no timeout, so awaiting it hangs the read/edit
     // hook forever. (This is what froze `.json`/`.go` reads: those servers are commonly absent.)
     if (!which(spec.command[0]!)) return null;
-    const cmdKey = spec.command.join(" ");
+    // NUL-separated so no path or command can forge another pair's key.
+    const cmdKey = `${cwd}\0${spec.command.join(" ")}`;
     let entry = clients.get(cmdKey);
     if (!entry) {
       let proc: ChildProcess;
@@ -61,15 +79,22 @@ export function createManager(
       const warm = new Promise<void>((resolve) => {
         markWarm = resolve;
       });
+      // Declared before `onDead` so the handler cannot hit a temporal dead zone: `proc` can
+      // emit "error" synchronously, and `client?.` on a not-yet-initialised const throws
+      // rather than short-circuiting.
+      let client: LspClient | undefined;
       // If the process dies (crash, or a binary that vanished after the which-check), unblock
-      // every awaiter and drop the entry so the next call can retry — never leave a wait hanging.
+      // every awaiter and drop the entry so the next call can retry — never leave a wait
+      // hanging. `markWarm` alone was not enough: it settles the readiness race but leaves
+      // in-flight requests pending forever, which is the hole `dispose` closes.
       const onDead = (): void => {
         markWarm();
         clients.delete(cmdKey);
+        client?.dispose("language server exited");
       };
       proc.on("error", onDead);
       proc.on("exit", onDead);
-      const client = createLspClient({
+      client = createLspClient({
         write: (s) => {
           try {
             proc.stdin?.write(s);
@@ -114,16 +139,24 @@ export function createManager(
     }
   }
 
-  async function ready(path: string): Promise<LspClient | null> {
-    const r = ensure(path);
+  async function ready(path: string, cwd: string, signal?: AbortSignal): Promise<LspClient | null> {
+    const r = ensure(path, cwd);
     if (!r) return null;
-    await r.entry.ready; // didOpen must follow `initialized`
+    // ONE budget for the whole readiness sequence, not one per stage. Both waits race
+    // against the same promise, so the worst case is WARM_TIMEOUT_MS rather than the sum.
+    // Stacking them is a real hazard now that `initialize` is itself bounded: an alive
+    // but silent server would otherwise cost the request deadline *plus* the warm
+    // timeout — roughly 16s — on a hook that runs after every read and edit.
+    const budget = delay(WARM_TIMEOUT_MS);
+    const escape = aborted(signal);
+
+    await Promise.race([r.entry.ready, budget, escape]); // didOpen should follow `initialized`
     syncFile(r.entry, r.spec, path);
     // Wait for the server to finish its initial project load before trusting results.
     // Its first publishDiagnostics is an accurate "loaded" signal — measured: cross-file
     // references become complete within ~0.1s of it. Bounded so a server that never
     // publishes still proceeds (degraded, as before) instead of hanging.
-    await Promise.race([r.entry.warm, delay(WARM_TIMEOUT_MS)]);
+    await Promise.race([r.entry.warm, budget, escape]);
     return r.entry.client;
   }
 
@@ -132,8 +165,11 @@ export function createManager(
     diagnosticsFor(path) {
       return diagnostics.get(path) ?? [];
     },
-    async pull(path, timeoutMs = 1500) {
-      const client = await ready(path);
+    async pull(path, cwd, timeoutMs = 1500) {
+      // A bounded-wait rejection means the server is unavailable, not that the file is
+      // clean — but for diagnostics those are the same outcome, and the read/edit hook
+      // must never break because a language server misbehaved.
+      const client = await ready(path, cwd).catch(() => null);
       if (!client) return [];
       return new Promise((resolve) => {
         const arr = waiters.get(path) ?? [];
@@ -154,13 +190,17 @@ export function createManager(
         try {
           await Promise.race([client.shutdown(), new Promise((r) => setTimeout(r, 500))]);
         } catch {
-          /* ignore */
+          /* ignore — a server that will not shut down cleanly still gets killed below */
         }
         try {
           proc.kill();
         } catch {
           /* ignore */
         }
+        // The shutdown race abandons the request without settling it, leaving its
+        // deadline timer armed. Unsettled timers keep the event loop alive, which would
+        // stall Pi's exit by up to the request timeout. dispose clears them.
+        client.dispose("shutting down");
       }
       clients.clear();
     },
