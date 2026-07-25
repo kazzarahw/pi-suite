@@ -335,15 +335,27 @@ export function createStore(sessionId: string, opts: StoreOptions = {}): Checkpo
       for (const name of readdirSync(root)) {
         if (name === BLOBS_DIR || name === session) continue;
         const dir = join(root, name);
+        let dirMtime: number;
         try {
-          if (!statSync(dir).isDirectory()) continue;
+          const st = statSync(dir);
+          if (!st.isDirectory()) continue;
+          dirMtime = st.mtimeMs;
         } catch {
           continue;
         }
-        if (newestMtime(dir) >= cutoff) continue;
+        // A recent directory mtime is enough to keep it, without stat-ing the
+        // contents. This can only ever spare a session, never condemn one: a
+        // directory's mtime moves when an entry is added, and rewriting a manifest in
+        // place does not move it, so only the deeper scan can prove a session old.
+        if (dirMtime >= cutoff || newestMtime(dir) >= cutoff) continue;
         rmSync(dir, { recursive: true, force: true });
         sessions += 1;
       }
+
+      // Nothing expired means nothing can have become unreferenced, and this sweep
+      // reads every manifest of every surviving session — which on startup, for a
+      // heavy user, is the whole cost of gc. Skip it in the ordinary case.
+      if (sessions === 0) return { sessions: 0, blobs: 0 };
 
       // Sweep blobs no surviving manifest — or origin — still points at.
       const referenced = new Set<string>();

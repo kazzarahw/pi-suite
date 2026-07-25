@@ -199,6 +199,28 @@ export default function piGit(pi: ExtensionAPI): void {
     }
   });
 
+  /**
+   * Prune checkpoints past their TTL.
+   *
+   * The only thing pi-git does that a revert cannot undo, so it is deliberately
+   * conservative: age-based rather than a count cap (navigation can reach arbitrarily
+   * far back, and pruning all but the newest N would silently break a restore that is
+   * still reachable), never the session that is starting, and awaited rather than
+   * detached so a failure is caught here instead of surfacing as an unhandled
+   * rejection. When nothing has expired the sweep costs one directory listing.
+   */
+  pi.on("session_start", async (_event, ctx) => {
+    const cfg = loadConfig();
+    if (cfg.mode === "off") return;
+    const store = storeFor(ctx as GitCtx, cfg);
+    if (!store) return;
+    try {
+      await store.gc(cfg.checkpointTtlDays, Date.now());
+    } catch (error) {
+      console.error(`[pi-git] checkpoint sweep failed: ${(error as Error).message}`);
+    }
+  });
+
   // Record the fork target; restore only once the fork actually commits (shutdown).
   pi.on("session_before_fork", async (event) => {
     pendingFork = { entryId: event.entryId, position: event.position };

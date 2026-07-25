@@ -8,6 +8,7 @@ import {
   readdirSync,
   realpathSync,
   rmSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -411,6 +412,75 @@ test("a committing fork restores the forked-to entry", async () => {
 
       expect(read(f)).toBe("v0");
       expect(api.emitted.some((e) => e.event === "git:rollback")).toBe(true);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+});
+
+// --- Garbage collection ----------------------------------------------------
+//
+// The only step here a revert cannot undo, because it deletes data. Age-based rather
+// than a count cap: navigation can reach arbitrarily far back, so pruning all but the
+// newest N would silently break a restore that is still reachable.
+
+const DAY = 86_400_000;
+
+function age(dir: string, days: number): void {
+  const past = new Date(Date.now() - days * DAY);
+  for (const name of readdirSync(dir)) utimesSync(join(dir, name), past, past);
+  utimesSync(dir, past, past);
+}
+
+test("session_start prunes checkpoints past the TTL and keeps recent ones", async () => {
+  await withConfig({ checkpointTtlDays: 30 }, async (agentDir) => {
+    const api = await loadExtension("git");
+    const cwd = project();
+    try {
+      const f = write(cwd, "a.txt", "v0");
+      await turn(api, "u1", cwd, [{ path: f, content: "v1" }], { sessionId: "stale-session" });
+      await turn(api, "u2", cwd, [{ path: f, content: "v2" }], { sessionId: "recent-session" });
+
+      const checkpoints = join(agentDir, "checkpoints");
+      age(join(checkpoints, "stale-session"), 60);
+
+      await api.fire("session_start", {}, fakeCtx({ cwd, sessionId: "brand-new" }));
+
+      expect(existsSync(join(checkpoints, "stale-session"))).toBe(false);
+      expect(existsSync(join(checkpoints, "recent-session"))).toBe(true);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+});
+
+test("session_start never prunes the session that is starting", async () => {
+  await withConfig({ checkpointTtlDays: 30 }, async (agentDir) => {
+    const api = await loadExtension("git");
+    const cwd = project();
+    try {
+      const f = write(cwd, "a.txt", "v0");
+      await turn(api, "u1", cwd, [{ path: f, content: "v1" }], { sessionId: "resumed" });
+      const checkpoints = join(agentDir, "checkpoints");
+      age(join(checkpoints, "resumed"), 900);
+
+      // Resuming a long-dormant session must not throw away the history you resumed for.
+      await api.fire("session_start", {}, fakeCtx({ cwd, sessionId: "resumed" }));
+
+      expect(existsSync(join(checkpoints, "resumed"))).toBe(true);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+});
+
+test("mode:off skips the sweep entirely", async () => {
+  await withConfig({ mode: "off" }, async (agentDir) => {
+    const api = await loadExtension("git");
+    const cwd = project();
+    try {
+      await api.fire("session_start", {}, fakeCtx({ cwd, sessionId: "s" }));
+      expect(existsSync(join(agentDir, "checkpoints"))).toBe(false);
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }
