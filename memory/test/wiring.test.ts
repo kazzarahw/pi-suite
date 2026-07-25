@@ -136,3 +136,75 @@ test("verify:failed with no failures captures nothing", async () => {
     expect(api.emitted.filter((e) => e.event === "memory:wrote")).toEqual([]);
   });
 });
+
+/**
+ * `/pi-memory delete <name>` — the suite's one destructive command verb.
+ *
+ * `deleteMemory` itself is covered thoroughly in store.test.ts; what was untested is the
+ * wiring around it, which is where the interesting parts are: it resolves the cwd from
+ * the invoking context rather than from anything captured at load, and it refuses a bare
+ * `delete` instead of passing an empty name down to the store.
+ */
+test("/pi-memory delete removes the named memory from the invoking project", async () => {
+  await withConfig({}, async () => {
+    const api = await loadExtension("memory");
+    const project = mkdtempSync(join(tmpdir(), "pi-memory-del-"));
+    const ctx = fakeCtx({ cwd: project });
+    await api.tools.get("memory_write")!.execute(
+      "1",
+      { name: "doomed", description: "d", content: "body", type: "project", scope: "project" } as never,
+      undefined,
+      undefined,
+      ctx,
+    );
+
+    const notices: string[] = [];
+    const cmdCtx = {
+      mode: "print",
+      ui: { notify: (m: string) => notices.push(m) },
+      sessionManager: { getCwd: () => project },
+    } as never;
+    await api.commands.get("pi-memory")!.handler("delete doomed", cmdCtx);
+
+    expect(notices.join("\n")).toContain('deleted "doomed"');
+    const readout: string[] = [];
+    await api.commands.get("pi-memory")!.handler("", {
+      mode: "print",
+      ui: { notify: (m: string) => readout.push(m) },
+      sessionManager: { getCwd: () => project },
+    } as never);
+    expect(readout.join("\n")).not.toContain("doomed");
+  });
+});
+
+test("/pi-memory delete with no name reports usage rather than deleting", async () => {
+  await withConfig({}, async () => {
+    const api = await loadExtension("memory");
+    const project = mkdtempSync(join(tmpdir(), "pi-memory-del-bare-"));
+    const ctx = fakeCtx({ cwd: project });
+    await api.tools.get("memory_write")!.execute(
+      "1",
+      { name: "keeper", description: "d", content: "body", type: "project", scope: "project" } as never,
+      undefined,
+      undefined,
+      ctx,
+    );
+
+    const notices: string[] = [];
+    await api.commands.get("pi-memory")!.handler("delete", {
+      mode: "print",
+      ui: { notify: (m: string) => notices.push(m) },
+      sessionManager: { getCwd: () => project },
+    } as never);
+
+    expect(notices.join("\n")).toContain("usage: delete <name>");
+    // And the store is untouched — a bare `delete` must not sweep anything.
+    const readout: string[] = [];
+    await api.commands.get("pi-memory")!.handler("", {
+      mode: "print",
+      ui: { notify: (m: string) => readout.push(m) },
+      sessionManager: { getCwd: () => project },
+    } as never);
+    expect(readout.join("\n")).toContain("keeper");
+  });
+});

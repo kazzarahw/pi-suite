@@ -1,5 +1,5 @@
-import { test, expect } from "bun:test";
-import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import { test, expect, beforeAll } from "bun:test";
+import { initTheme, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import {
   boolField,
   defineConfigCommand,
@@ -20,6 +20,12 @@ import {
  * as seven closures at 14–28% line coverage, and each would have needed its own copy of
  * every case below.
  */
+
+// The panel calls `getSettingsListTheme()`, which throws unless Pi's global theme has
+// been initialized — see the note in settings-panel.test.ts.
+beforeAll(() => {
+  initTheme();
+});
 
 interface Cfg {
   mode: string;
@@ -110,6 +116,23 @@ test("parseValue rejects a non-integer, a fraction, and a sub-minimum count", ()
 
 test("parseValue takes a string field verbatim, spaces and all", () => {
   expect(parseValue(FIELDS[3]!, "npm  run   test")).toEqual({ value: "npm  run   test" });
+});
+
+test("parseValue rejects a blank value for a string field that cannot express blank", () => {
+  // A field with no `display` has no rendering for "", so "" is not a value it can hold.
+  // `/pi-browser binpath` with no argument used to store it anyway, leaving the config
+  // naming a binary that cannot be executed until the next load repaired it.
+  const noPlaceholder = stringField<Cfg>("cmd", "Command");
+  expect(parseValue(noPlaceholder, "")).toEqual({ error: "cmd needs a value" });
+  // The two fields in the suite without a placeholder are exactly the two whose
+  // ConfigSpec reads them with `nonEmptyStr`, so this agrees with the config layer.
+  expect(parseValue(noPlaceholder, "agent-browser")).toEqual({ value: "agent-browser" });
+});
+
+test("parseValue still accepts a blank value where blank is meaningful", () => {
+  // FIELDS[3] declares a "(auto)" placeholder, so "" is a value it can show — pi-lens's
+  // verifyCmd, where empty means autodetect from the project.
+  expect(parseValue(FIELDS[3]!, "")).toEqual({ value: "" });
 });
 
 test("parseValue maps a placeholder back to its stored form, both kinds", () => {
@@ -367,4 +390,123 @@ test("an explicit description overrides the generated one", () => {
 
 test("the command is named pi-<name>", () => {
   expect(harness().command.name).toBe("pi-demo");
+});
+
+// ---------------------------------------------------------------------------
+// The panel path — where a value is actually meant to be set.
+//
+// The argument forms above are the scriptable back door; opening `/pi-<name>` and
+// toggling a row is the intended interface, so this is the path that matters most. It
+// was also the only part of the engine no test reached: every case above stops at
+// `ctx.ui.custom`, which the harness fakes as a function that returns immediately, so
+// the callback handed to `openSettingsPanel` — the field lookup and the persist — never
+// ran. These drive the real `SettingsList` instead: a space keypress cycles the selected
+// row's value and fires exactly the callback a user's keypress would.
+// ---------------------------------------------------------------------------
+
+interface Panel {
+  render(width: number): string[];
+  invalidate(): void;
+  handleInput(data: string): void;
+}
+
+/** A harness whose `ctx.ui.custom` keeps the component, so the panel can be driven. */
+function panelHarness(start: Cfg = DEFAULTS, opts = {}) {
+  const base = harness(start, opts);
+  let panel: Panel | undefined;
+  const ctx = {
+    mode: "tui",
+    ui: {
+      notify: (msg: string, level: string) => base.notices.push({ msg, level }),
+      custom: async (build: (t: unknown, th: unknown, kb: unknown, d: (v: unknown) => void) => Panel) => {
+        panel = build(
+          { requestRender: () => {} },
+          { fg: (_c: string, s: string) => s, bold: (s: string) => s },
+          {},
+          () => {},
+        );
+        return undefined;
+      },
+    },
+    sessionManager: { getCwd: () => "/tmp" },
+  } as unknown as ExtensionCommandContext;
+
+  return {
+    ...base,
+    /** Open the panel and return it, ready for input. */
+    async open(): Promise<Panel> {
+      await base.command.options.handler("", ctx);
+      return panel!;
+    },
+    /** Move down `n` rows, then cycle the selected row's value once. */
+    cycle(p: Panel, n = 0): void {
+      for (let i = 0; i < n; i++) p.handleInput("[B"); // arrow down
+      p.handleInput(" ");
+    },
+  };
+}
+
+test("cycling a row in the panel persists the new value", async () => {
+  const h = panelHarness();
+  const panel = await h.open();
+  // Row 0 is `mode`, starting at "notify". Note the order: `panelValues` puts whatever
+  // is stored *first*, then the presets, so the list is [notify, off, block] rather than
+  // the declaration order [off, notify, block] — one cycle from the initial state lands
+  // on the first preset, not on the next mode along.
+  h.cycle(panel, 0);
+  expect(h.saved).toHaveLength(1);
+  expect(h.latest().mode).toBe("off");
+  h.cycle(panel, 0);
+  expect(h.latest().mode).toBe("block");
+});
+
+test("cycling a bool row in the panel writes a boolean, not the string 'off'", async () => {
+  const h = panelHarness();
+  const panel = await h.open();
+  h.cycle(panel, 1); // row 1 is `detect`, starting at "on"
+  expect(h.latest().detect).toBe(false);
+});
+
+test("selecting the placeholder row stores the underlying value, not the label", async () => {
+  // `cmd` starts at "" and so displays "(auto)"; its values are the placeholder followed
+  // by the presets, so one cycle moves to "a" and a full lap returns to the placeholder.
+  const h = panelHarness();
+  const panel = await h.open();
+  h.cycle(panel, 3);
+  expect(h.latest().cmd).toBe("a");
+  h.cycle(panel, 0); // already on row 3
+  h.cycle(panel, 0);
+  // Back on "(auto)" — and what lands in the config is "", never the label itself.
+  expect(h.latest().cmd).toBe("");
+});
+
+test("a placeholder declaring undefined removes the key when picked in the panel", async () => {
+  const h = panelHarness();
+  const panel = await h.open();
+  // Row 4 is `session`, starting at "work"; values are ["work", "(default)"].
+  h.cycle(panel, 4);
+  expect(h.latest().session).toBeUndefined();
+});
+
+test("each panel toggle re-reads, so one row never reverts another", async () => {
+  // The regression this guards: `apply` closing over one `loadConfig()` snapshot taken
+  // when the panel opened. Every toggle would then write that stale base back, and the
+  // second row silently undid the first.
+  const h = panelHarness();
+  const panel = await h.open();
+  h.cycle(panel, 0); // mode → off
+  h.cycle(panel, 1); // detect → false, from a config that already has mode: off
+  expect(h.latest().mode).toBe("off");
+  expect(h.latest().detect).toBe(false);
+});
+
+test("the panel opens one row per field, each showing its current value", async () => {
+  const h = panelHarness();
+  const panel = await h.open();
+  const rendered = panel.render(80).join("\n");
+  for (const label of ["Mode", "Detect changes", "Count", "Command", "Session"]) {
+    expect(rendered).toContain(label);
+  }
+  // Blank-valued fields show their placeholder rather than an empty row.
+  expect(rendered).toContain("(auto)");
 });

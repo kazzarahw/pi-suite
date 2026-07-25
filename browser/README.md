@@ -23,7 +23,7 @@ Key actions:
 
 ## Configure
 
-`/pi-browser` opens a settings panel (or `/pi-browser binPath <path>` / `session <name>`). Persisted to `~/.pi/agent/pi-browser.json`:
+`/pi-browser` opens a settings panel. Persisted to `~/.pi/agent/pi-browser.json`:
 
 | Setting | Default | Meaning |
 |---|---|---|

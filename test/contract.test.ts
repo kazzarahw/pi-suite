@@ -90,7 +90,7 @@ test("the live registry, taken together, is exactly what SURFACE declares", asyn
 });
 
 // ---------------------------------------------------------------------------
-// Every tool follows the house naming and description rules (HOUSE-STYLE §3).
+// Every tool follows the house naming and description rules (see shared/README.md).
 // ---------------------------------------------------------------------------
 
 test("every tool name is snake_case <domain>_<verb> or a bare verb", async () => {

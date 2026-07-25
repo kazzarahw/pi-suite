@@ -21,7 +21,7 @@ export default function piMemory(pi: ExtensionAPI): void {
   pi.registerTool(buildWriteTool({ recallLimit: () => loadConfig().recallLimit, emit }));
 
   // Standing context: inject the memory index into each LLM call (ephemeral — the
-  // house-style §6 channel for memory recall; no queued message, so no print-mode hang).
+  // context-injection channel for recall; no queued message, so no print-mode hang).
   pi.on("context", async (event, ctx) => {
     if (loadConfig().mode === "off") return;
     const block = formatIndexInjection(listMemories(cwdOf(ctx)));

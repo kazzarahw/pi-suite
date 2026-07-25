@@ -18,7 +18,13 @@ export const FIELDS: readonly Field<BrowserConfig>[] = [
   }),
 ];
 
-/** `/pi-browser` — no arg opens the settings panel; `binPath <path>` / `session <name>` set fields. */
+/**
+ * `/pi-browser` — opens the settings panel.
+ *
+ * The verbs are `binpath` / `session`, lowercased from the config keys like every other
+ * command in the suite. The old handler matched `binPath` with its camelCase intact, so
+ * that spelling is gone; the panel is the intended way to set these.
+ */
 export function buildBrowserCommand(deps: CommandDeps) {
   return defineConfigCommand("browser", FIELDS, deps, {
     subtitle: "agent-browser CLI wiring",

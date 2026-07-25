@@ -4,7 +4,7 @@ import { join, relative, resolve, dirname } from "node:path";
 import { SURFACE } from "../shared/index.ts";
 
 /**
- * Import-boundary enforcement (spec D7).
+ * Import-boundary enforcement.
  *
  * Consolidating seven repos into one package removed the structural barrier that
  * kept the extensions independent. This restores it: an extension may import from
@@ -178,7 +178,7 @@ test("the reachability walk actually follows imports, and would flag an orphan",
 });
 
 // ---------------------------------------------------------------------------
-// cwd resolution is centralised (spec D3).
+// cwd resolution is centralised.
 // ---------------------------------------------------------------------------
 
 /**

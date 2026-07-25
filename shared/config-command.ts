@@ -162,6 +162,16 @@ export function parseValue<T>(field: Field<T>, input: string): { value: unknown 
         : { error: `${verbOf(field)} must be an integer >= ${min} (got "${input}")` };
     }
     case "string":
+      // A field with no `display` has no rendering for a blank value, which means blank
+      // is not a value it can hold — `/pi-browser binpath` with no argument used to
+      // store `""` and leave the config naming a binary that cannot be executed. The
+      // correlation is exact and not a coincidence: the two fields in the suite without
+      // a placeholder (`browser.binPath`, `consult.defaultModel`) are precisely the two
+      // whose `ConfigSpec` reads them with `nonEmptyStr`. Fields that DO have one keep
+      // accepting `""`, because there it means something — pi-lens's autodetect.
+      if (!field.display && input === "") {
+        return { error: `${verbOf(field)} needs a value` };
+      }
       return { value: input };
   }
 }
