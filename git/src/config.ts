@@ -5,18 +5,13 @@ import {
   saveConfig as sharedSave,
   type ConfigSpec,
 } from "../../shared/config.ts";
+import { bool, oneOf, posNum } from "../../shared/fields.ts";
 import { DEFAULT_MAX_FILE_BYTES } from "./store.ts";
 
 /** pi-git configuration. */
 export interface GitConfig {
   /** off = disabled; notify (default) = checkpoint + restore on rewind. block collapses to notify. */
   mode: Mode;
-  worktrees: {
-    /** Whether pi-spawn parallel jobs get an isolated worktree by default. */
-    auto: boolean;
-    /** Where worktrees are created (relative to cwd or absolute). */
-    baseDir: string;
-  };
   /**
    * How long a session's checkpoints survive. Age-based rather than a count cap:
    * navigation can reach arbitrarily far back, so pruning all but the newest N
@@ -34,15 +29,10 @@ export interface GitConfig {
 
 export const DEFAULTS: GitConfig = {
   mode: DEFAULT_MODE,
-  worktrees: { auto: false, baseDir: ".pi/worktrees" },
   checkpointTtlDays: 30,
   detectDirty: true,
   maxFileBytes: DEFAULT_MAX_FILE_BYTES,
 };
-
-/** A finite, positive number, or the default. Guards against `0`, `-1`, and `NaN` from a hand-edited file. */
-const positive = (value: unknown, fallback: number): number =>
-  typeof value === "number" && Number.isFinite(value) && value > 0 ? value : fallback;
 
 export const SPEC: ConfigSpec<GitConfig> = {
   name: "git",
@@ -50,15 +40,10 @@ export const SPEC: ConfigSpec<GitConfig> = {
   parse(raw, defaults) {
     const p = raw as Partial<GitConfig>;
     return {
-      mode: (MODES as readonly string[]).includes(p.mode as string) ? (p.mode as Mode) : DEFAULT_MODE,
-      worktrees: {
-        auto: typeof p.worktrees?.auto === "boolean" ? p.worktrees.auto : defaults.worktrees.auto,
-        baseDir:
-          typeof p.worktrees?.baseDir === "string" ? p.worktrees.baseDir : defaults.worktrees.baseDir,
-      },
-      checkpointTtlDays: positive(p.checkpointTtlDays, defaults.checkpointTtlDays),
-      detectDirty: typeof p.detectDirty === "boolean" ? p.detectDirty : defaults.detectDirty,
-      maxFileBytes: positive(p.maxFileBytes, defaults.maxFileBytes),
+      mode: oneOf<Mode>(p.mode, MODES, DEFAULT_MODE),
+      checkpointTtlDays: posNum(p.checkpointTtlDays, defaults.checkpointTtlDays),
+      detectDirty: bool(p.detectDirty, defaults.detectDirty),
+      maxFileBytes: posNum(p.maxFileBytes, defaults.maxFileBytes),
     };
   },
 };

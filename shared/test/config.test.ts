@@ -7,8 +7,8 @@ import { agentDir, configPath, loadConfig, saveConfig, type ConfigSpec } from ".
 import { SPEC as CONSULT, DEFAULTS as CONSULT_DEFAULTS } from "../../consult/src/config.ts";
 import { SPEC as TODO, DEFAULTS as TODO_DEFAULTS } from "../../todo/src/config.ts";
 import { SPEC as GIT, DEFAULTS as GIT_DEFAULTS } from "../../git/src/config.ts";
-import { SPEC as SPAWN, DEFAULTS as SPAWN_DEFAULTS } from "../../spawn/src/config.ts";
-import { SPEC as BROWSER, DEFAULTS as BROWSER_DEFAULTS } from "../../browser/src/config.ts";
+import { SPEC as SPAWN } from "../../spawn/src/config.ts";
+import { SPEC as BROWSER } from "../../browser/src/config.ts";
 import { SPEC as MEMORY, DEFAULTS as MEMORY_DEFAULTS } from "../../memory/src/config.ts";
 import { SPEC as LENS, DEFAULTS as LENS_DEFAULTS } from "../../lens/src/config.ts";
 
@@ -93,14 +93,13 @@ test("[todo] loadConfig rejects an invalid mode", () => {
   expect(loadConfig(TODO, path)).toEqual(TODO_DEFAULTS);
 });
 
-test("[git] loadConfig backfills nested worktree fields and rejects an invalid mode", () => {
+test("[git] loadConfig rejects an invalid mode and drops keys the spec no longer knows", () => {
   const path = tmp("git");
+  // `worktrees` was a real field until the capability it configured turned out to be
+  // unreachable code. A stale key left in a user's file must be ignored, not carried
+  // through — `parse` builds the result from the fields it knows, never by spreading raw.
   writeFileSync(path, JSON.stringify({ mode: "nope", worktrees: { auto: true } }));
-  expect(loadConfig(GIT, path)).toEqual({
-    ...GIT_DEFAULTS,
-    mode: GIT_DEFAULTS.mode,
-    worktrees: { auto: true, baseDir: GIT_DEFAULTS.worktrees.baseDir },
-  });
+  expect(loadConfig(GIT, path)).toEqual(GIT_DEFAULTS);
 });
 
 test("[spawn] loadConfig floors a fractional concurrency and rejects non-string/sub-1 values", () => {
@@ -151,4 +150,43 @@ test("[git] loadConfig rejects a zero or negative checkpoint TTL and size cap", 
   const path = tmp("git");
   writeFileSync(path, JSON.stringify({ checkpointTtlDays: 0, maxFileBytes: -1, detectDirty: "yes" }));
   expect(loadConfig(GIT, path)).toEqual(GIT_DEFAULTS);
+});
+
+// ---------------------------------------------------------------------------
+// Non-finite numbers. Before `shared/fields.ts`, only pi-git rejected these: the
+// other three numeric fields tested `value > 0`, and `Infinity > 0` is true. A
+// config of `{"verifyTimeoutMs": 1e999}` therefore parsed to `Infinity` and removed
+// pi-lens's verify deadline entirely — a timeout of Infinity is not a long timeout.
+// JSON has no Infinity literal, but `1e999` overflows to it on parse, so this is
+// reachable from a hand-edited file.
+// ---------------------------------------------------------------------------
+
+test("[lens] an overflowing verifyTimeoutMs falls back to the default rather than becoming Infinity", () => {
+  const path = tmp("lens");
+  writeFileSync(path, '{"verifyTimeoutMs": 1e999}');
+  expect(loadConfig(LENS, path).verifyTimeoutMs).toBe(LENS.defaults.verifyTimeoutMs);
+});
+
+test("[spawn] an overflowing jobTimeoutMs falls back to the default", () => {
+  const path = tmp("spawn");
+  writeFileSync(path, '{"jobTimeoutMs": 1e999}');
+  expect(loadConfig(SPAWN, path).jobTimeoutMs).toBe(SPAWN.defaults.jobTimeoutMs);
+});
+
+test("[spawn] an overflowing concurrency falls back rather than uncapping the pool", () => {
+  const path = tmp("spawn");
+  writeFileSync(path, '{"concurrency": 1e999}');
+  expect(loadConfig(SPAWN, path).concurrency).toBe(SPAWN.defaults.concurrency);
+});
+
+test("[memory] an overflowing recallLimit falls back to the default", () => {
+  const path = tmp("memory");
+  writeFileSync(path, '{"recallLimit": 1e999}');
+  expect(loadConfig(MEMORY, path).recallLimit).toBe(MEMORY.defaults.recallLimit);
+});
+
+test("[git] an overflowing maxFileBytes falls back, keeping the size cap meaningful", () => {
+  const path = tmp("git");
+  writeFileSync(path, '{"maxFileBytes": 1e999}');
+  expect(loadConfig(GIT, path).maxFileBytes).toBe(GIT.defaults.maxFileBytes);
 });

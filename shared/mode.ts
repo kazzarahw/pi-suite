@@ -1,5 +1,5 @@
 /**
- * The universal enforcement dial (HOUSE-STYLE §7).
+ * The universal enforcement dial.
  *
  * Every automation-capable extension exposes this same three-level `mode`.
  * It means the same thing everywhere; extensions may add domain-specific

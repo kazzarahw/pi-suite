@@ -1,5 +1,5 @@
 /**
- * Context-injection tags (HOUSE-STYLE §6).
+ * Context-injection tags.
  *
  * Extensions that inject context wrap it in `<pi-<name>>` tags so the agent
  * recognizes the whole family as harness-injected. The first line inside the

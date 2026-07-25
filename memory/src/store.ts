@@ -1,12 +1,11 @@
 import { readdirSync, readFileSync, writeFileSync, mkdirSync, rmSync, existsSync, statSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { agentDir } from "../../shared/config.ts";
 import { parseMemory, serializeMemory, type Memory, type Scope } from "./frontmatter.ts";
 
 /** Global (agent-config) and project memory dirs. Honors PI_CODING_AGENT_DIR (also lets tests redirect global). */
 export function memoryDirs(cwd: string): { global: string; project: string } {
-  const agentDir = process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent");
-  return { global: join(agentDir, "memory"), project: join(cwd, ".pi", "memory") };
+  return { global: join(agentDir(), "memory"), project: join(cwd, ".pi", "memory") };
 }
 
 const slug = (name: string): string =>

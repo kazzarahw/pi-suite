@@ -1,4 +1,4 @@
-import type { TodoItem, TodoStatus } from "../../shared/index.ts";
+import { stableHash, type TodoItem, type TodoStatus } from "../../shared/index.ts";
 
 export type { TodoItem, TodoStatus };
 
@@ -43,9 +43,5 @@ export function applyWrite(prev: TodoItem[], incoming: TodoInput[]): ApplyResult
 
 /** Deterministic id from content + position (no clock, so tests stay reproducible). */
 function makeId(index: number, content: string): string {
-  let hash = 0;
-  for (let i = 0; i < content.length; i++) {
-    hash = (hash * 31 + content.charCodeAt(i)) | 0;
-  }
-  return `t${index}_${(hash >>> 0).toString(36)}`;
+  return `t${index}_${stableHash(content)}`;
 }

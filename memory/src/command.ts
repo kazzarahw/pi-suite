@@ -13,7 +13,6 @@ export interface CommandDeps {
   deleteMemory: (name: string, cwd: string) => void;
 }
 
-
 const RECALL_PRESETS = ["1", "2", "3", "5", "10"];
 
 /** `/pi-memory` — no arg opens the settings panel; `mode <m>` / `autocapture on|off` / `delete <name>` act directly. */

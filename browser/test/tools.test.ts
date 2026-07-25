@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { buildBrowserTool } from "../src/tools.ts";
-import type { ExecFn } from "../src/browser.ts";
+import type { ExecFn } from "../../shared/exec.ts";
 
 const ctx = {} as unknown as ExtensionContext;
 

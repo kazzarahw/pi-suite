@@ -5,6 +5,7 @@ import {
   saveConfig as sharedSave,
   type ConfigSpec,
 } from "../../shared/config.ts";
+import { bool, int, oneOf } from "../../shared/fields.ts";
 
 export interface MemoryConfig {
   /** off = no index injection / no auto-capture; notify (default) = both. block collapses to notify. */
@@ -23,12 +24,9 @@ export const SPEC: ConfigSpec<MemoryConfig> = {
   parse(raw, defaults) {
     const p = raw as Partial<MemoryConfig>;
     return {
-      mode: (MODES as readonly string[]).includes(p.mode as string) ? (p.mode as Mode) : DEFAULT_MODE,
-      autoCapture: typeof p.autoCapture === "boolean" ? p.autoCapture : defaults.autoCapture,
-      recallLimit:
-        typeof p.recallLimit === "number" && p.recallLimit >= 1
-          ? Math.floor(p.recallLimit)
-          : defaults.recallLimit,
+      mode: oneOf<Mode>(p.mode, MODES, DEFAULT_MODE),
+      autoCapture: bool(p.autoCapture, defaults.autoCapture),
+      recallLimit: int(p.recallLimit, defaults.recallLimit),
     };
   },
 };

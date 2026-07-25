@@ -13,8 +13,6 @@ import { buildTodoCommand } from "./src/command.ts";
  * Registers `todo_write` (full-list replace, echoes the list), renders a live
  * widget, re-injects the list on session start / after compaction, nudges on
  * settle per mode, and emits `todo:updated` / `todo:task-complete`.
- *
- * Build spec: docs/superpowers/plans/2026-07-20-pi-todo.md
  */
 export default function piTodo(pi: ExtensionAPI): void {
   let todos: TodoItem[] = [];

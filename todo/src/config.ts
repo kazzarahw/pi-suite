@@ -5,6 +5,7 @@ import {
   saveConfig as sharedSave,
   type ConfigSpec,
 } from "../../shared/config.ts";
+import { oneOf } from "../../shared/fields.ts";
 
 /** pi-todo configuration. */
 export interface TodoConfig {
@@ -19,8 +20,7 @@ export const SPEC: ConfigSpec<TodoConfig> = {
   defaults: DEFAULTS,
   parse(raw) {
     const p = raw as Partial<TodoConfig>;
-    const mode = (MODES as readonly string[]).includes(p.mode as string) ? (p.mode as Mode) : DEFAULT_MODE;
-    return { mode };
+    return { mode: oneOf<Mode>(p.mode, MODES, DEFAULT_MODE) };
   },
 };
 

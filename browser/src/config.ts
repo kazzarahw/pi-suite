@@ -4,6 +4,7 @@ import {
   saveConfig as sharedSave,
   type ConfigSpec,
 } from "../../shared/config.ts";
+import { nonEmptyStr, optionalStr } from "../../shared/fields.ts";
 
 export interface BrowserConfig {
   /** Path to the agent-browser binary (default: on PATH). */
@@ -20,8 +21,8 @@ export const SPEC: ConfigSpec<BrowserConfig> = {
   parse(raw, defaults) {
     const p = raw as Partial<BrowserConfig>;
     return {
-      binPath: typeof p.binPath === "string" && p.binPath.length > 0 ? p.binPath : defaults.binPath,
-      session: typeof p.session === "string" && p.session.length > 0 ? p.session : undefined,
+      binPath: nonEmptyStr(p.binPath, defaults.binPath),
+      session: optionalStr(p.session),
     };
   },
 };

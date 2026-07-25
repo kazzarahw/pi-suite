@@ -1,5 +1,4 @@
 import type { ExecFn } from "../../shared/exec.ts";
-export type { ExecFn };
 import type { BrowserConfig } from "./config.ts";
 
 export type BrowserAction =

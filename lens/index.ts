@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { defaultExec } from "../shared/exec.ts";
-import { cwdOf } from "../shared/index.ts";
+import { cwdOf, EDIT_TOOLS, FILE_TOOLS, editedPath } from "../shared/index.ts";
 import { loadConfig, saveConfig, autodetectVerify } from "./src/config.ts";
 import { createManager } from "./src/lsp/manager.ts";
 import { runLinters } from "./src/linters.ts";
@@ -13,14 +13,6 @@ import { runVerify, formatVerify, chooseVerifyCommand } from "./src/verify.ts";
 import { buildLensTool } from "./src/tools.ts";
 import { buildLensCommand } from "./src/command.ts";
 
-const FILE_TOOLS = new Set(["read", "write", "edit"]);
-const EDIT_TOOLS = new Set(["write", "edit"]);
-
-function pathFromInput(input: unknown): string | null {
-  const p = (input as { path?: string; file_path?: string } | undefined)?.path ?? (input as { file_path?: string })?.file_path;
-  return typeof p === "string" ? p : null;
-}
-
 /**
  * pi-lens — real-time code feedback.
  *
@@ -28,8 +20,6 @@ function pathFromInput(input: unknown): string | null {
  * `<pi-lens>` block (or emit `lens:clean`). `agent_settled` → run the verify
  * (test/build) command once edits have landed and parse cleanly, emit
  * `verify:passed`/`verify:failed`. One `lens` tool for manual LSP queries.
- *
- * Build spec: docs/superpowers/plans/2026-07-20-pi-lens.md
  */
 export default function piLens(pi: ExtensionAPI): void {
   // No cwd is captured here. It used to be `process.cwd()` read at extension-load time
@@ -49,7 +39,7 @@ export default function piLens(pi: ExtensionAPI): void {
     const cfg = loadConfig();
     if (cfg.mode === "off") return;
     if (!FILE_TOOLS.has(event.toolName)) return;
-    const rel = pathFromInput(event.input);
+    const rel = editedPath(event.input);
     if (!rel) return;
     const projectCwd = cwdOf(ctx);
     const file = resolve(projectCwd, rel);

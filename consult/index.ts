@@ -10,8 +10,6 @@ import { buildConsultCommand } from "./src/command.ts";
  * Registers a `consult` tool that shells out to `claude -p <prompt> --model <m>`
  * for read-only advice and returns it as tool output, emitting `consult:answered`.
  * `/pi-consult [model]` views or sets the default model.
- *
- * Build spec: docs/superpowers/plans/2026-07-20-pi-consult.md
  */
 export default function piConsult(pi: ExtensionAPI): void {
   pi.registerTool(

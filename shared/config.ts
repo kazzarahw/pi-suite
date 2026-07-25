@@ -1,5 +1,5 @@
 /**
- * The suite's config mechanism (HOUSE-STYLE §7).
+ * The suite's config mechanism.
  *
  * Splits what were seven near-identical modules along a **mechanism / policy**
  * seam: path resolution, reading, writing, and the corrupt-file fallback live

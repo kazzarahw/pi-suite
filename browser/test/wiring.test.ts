@@ -12,7 +12,7 @@ test("browser registers no hooks — it is a pure tool extension", async () => {
   expect([...api.hooks.keys()]).toEqual([]);
 });
 
-// HOUSE-STYLE §3: many variant actions collapse behind ONE action-enum tool rather
+// House rule: many variant actions collapse behind ONE action-enum tool rather
 // than one tool per verb. Pinned so the surface cannot quietly fan back out.
 test("browser exposes its verbs through a single action enum, not many tools", async () => {
   const api = await loadExtension("browser");

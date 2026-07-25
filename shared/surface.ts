@@ -1,10 +1,11 @@
 /**
- * The suite's agent- and user-facing surface, as data (HOUSE-STYLE §3, appendix).
+ * The suite's agent- and user-facing surface, as data (see ./README.md).
  *
  * This is the **single source of truth**, and `test/contract.test.ts` asserts the
- * live registry matches it. HOUSE-STYLE.md is checked *against* this — never the
- * other way round. The appendix table in that document drifted from the code twice
- * before this existed.
+ * live registry matches it. It exists because the surface used to be described in
+ * prose, and that description drifted from the code twice — claiming a tool count
+ * that was wrong and a capability that was unreachable. Prose cannot be a contract;
+ * this can.
  *
  * Seven tools total, deliberately. The rules that keep it small: automatic behavior
  * is a hook, not a tool (pi-git registers none); many variant actions collapse behind

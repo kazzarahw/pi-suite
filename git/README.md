@@ -31,8 +31,6 @@ Git still has a job, read-only: `git status` tells pi-git which files changed, s
 | `detectDirty` | `true` | also checkpoint what `git status` reports, catching changes made by `bash` |
 | `checkpointTtlDays` | `30` | how long a session's checkpoints survive; swept on session start |
 | `maxFileBytes` | `10485760` | files larger than this are reported and left out rather than stored |
-| `worktrees.auto` | `false` | give parallel [spawn](../spawn) jobs an isolated worktree *(integration deferred)* |
-| `worktrees.baseDir` | `.pi/worktrees` | where worktrees are created |
 
 Does **not** require a git repository.
 

@@ -1,6 +1,5 @@
-import type { AutocompleteItem } from "@earendil-works/pi-tui";
+import type { AutocompleteItem, SettingItem } from "@earendil-works/pi-tui";
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import type { SettingItem } from "@earendil-works/pi-tui";
 import { openSettingsPanel } from "../../shared/settings-panel.ts";
 import { MODES, type Mode } from "../../shared/index.ts";
 import type { GitConfig } from "./config.ts";
@@ -9,7 +8,6 @@ export interface CommandDeps {
   loadConfig: () => GitConfig;
   saveConfig: (c: GitConfig) => void;
 }
-
 
 /** `/pi-git` — no arg opens the settings panel; `/pi-git <off|notify|block>` sets the mode directly. */
 export function buildGitCommand(deps: CommandDeps) {
@@ -37,7 +35,7 @@ export function buildGitCommand(deps: CommandDeps) {
 
         if (ctx.mode !== "tui") {
           ctx?.ui?.notify?.(
-            `[pi-git] mode: ${cfg.mode} · detect bash changes: ${cfg.detectDirty} · keep checkpoints: ${cfg.checkpointTtlDays}d · worktrees.auto: ${cfg.worktrees.auto}`,
+            `[pi-git] mode: ${cfg.mode} · detect bash changes: ${cfg.detectDirty} · keep checkpoints: ${cfg.checkpointTtlDays}d`,
             "info",
           );
           return;
@@ -57,28 +55,14 @@ export function buildGitCommand(deps: CommandDeps) {
             currentValue: String(cfg.checkpointTtlDays),
             values: [...new Set([String(cfg.checkpointTtlDays), "7", "30", "90"])],
           },
-          {
-            id: "auto",
-            label: "Worktree isolation",
-            currentValue: cfg.worktrees.auto ? "on" : "off",
-            values: ["on", "off"],
-          },
-          {
-            id: "basedir",
-            label: "Worktree dir",
-            currentValue: cfg.worktrees.baseDir,
-            values: [...new Set([cfg.worktrees.baseDir, ".pi/worktrees"])],
-          },
         ];
         const apply = (id: string, val: string): void => {
           const c = deps.loadConfig();
           if (id === "mode") deps.saveConfig({ ...c, mode: val as Mode });
           else if (id === "detect") deps.saveConfig({ ...c, detectDirty: val === "on" });
           else if (id === "ttl") deps.saveConfig({ ...c, checkpointTtlDays: Number(val) || c.checkpointTtlDays });
-          else if (id === "auto") deps.saveConfig({ ...c, worktrees: { ...c.worktrees, auto: val === "on" } });
-          else if (id === "basedir") deps.saveConfig({ ...c, worktrees: { ...c.worktrees, baseDir: val } });
         };
-        await openSettingsPanel(ctx, "pi-git · settings", "undo/redo files as you move through the session; worktrees for pi-spawn", items, apply);
+        await openSettingsPanel(ctx, "pi-git · settings", "undo/redo files as you move through the session", items, apply);
       },
     },
   };

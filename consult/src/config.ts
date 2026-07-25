@@ -4,6 +4,7 @@ import {
   saveConfig as sharedSave,
   type ConfigSpec,
 } from "../../shared/config.ts";
+import { nonEmptyStr, strList } from "../../shared/fields.ts";
 
 /** pi-consult configuration, persisted as JSON and read per call. */
 export interface ConsultConfig {
@@ -23,15 +24,10 @@ export const SPEC: ConfigSpec<ConsultConfig> = {
   name: "consult",
   defaults: DEFAULTS,
   parse(raw, defaults) {
-    const parsed = raw as Partial<ConsultConfig>;
+    const p = raw as Partial<ConsultConfig>;
     return {
-      defaultModel:
-        typeof parsed.defaultModel === "string" && parsed.defaultModel.length > 0
-          ? parsed.defaultModel
-          : defaults.defaultModel,
-      allowedModels: Array.isArray(parsed.allowedModels)
-        ? parsed.allowedModels.filter((m): m is string => typeof m === "string")
-        : defaults.allowedModels,
+      defaultModel: nonEmptyStr(p.defaultModel, defaults.defaultModel),
+      allowedModels: strList(p.allowedModels, defaults.allowedModels),
     };
   },
 };

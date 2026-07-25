@@ -11,8 +11,6 @@ import { buildSpawnCommand } from "./src/command.ts";
  * `pi --mode json` subprocess (streaming progress to a widget, one job or many in
  * parallel under a concurrency cap), and emits `spawn:started` / `spawn:finished`.
  * A depth guard (PI_SPAWN_DEPTH) prevents runaway nesting.
- *
- * Build spec: docs/superpowers/plans/2026-07-20-pi-spawn.md
  */
 export default function piSpawn(pi: ExtensionAPI): void {
   const depth = Number(process.env.PI_SPAWN_DEPTH ?? "0") || 0;

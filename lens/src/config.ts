@@ -7,6 +7,7 @@ import {
   saveConfig as sharedSave,
   type ConfigSpec,
 } from "../../shared/config.ts";
+import { bool, oneOf, posNum, str } from "../../shared/fields.ts";
 
 export interface LensConfig {
   /** off = manual `lens` tool only; notify (default) = inject diagnostics + auto-verify; block = notify in v1 (hard gating deferred). */
@@ -35,12 +36,11 @@ export const SPEC: ConfigSpec<LensConfig> = {
   parse(raw, defaults) {
     const p = raw as Partial<LensConfig>;
     return {
-      mode: (MODES as readonly string[]).includes(p.mode as string) ? (p.mode as Mode) : DEFAULT_MODE,
-      verifyCmd: typeof p.verifyCmd === "string" ? p.verifyCmd : defaults.verifyCmd,
-      autoFormat: typeof p.autoFormat === "boolean" ? p.autoFormat : defaults.autoFormat,
-      prewarm: typeof p.prewarm === "boolean" ? p.prewarm : defaults.prewarm,
-      verifyTimeoutMs:
-        typeof p.verifyTimeoutMs === "number" && p.verifyTimeoutMs > 0 ? p.verifyTimeoutMs : defaults.verifyTimeoutMs,
+      mode: oneOf<Mode>(p.mode, MODES, DEFAULT_MODE),
+      verifyCmd: str(p.verifyCmd, defaults.verifyCmd),
+      autoFormat: bool(p.autoFormat, defaults.autoFormat),
+      prewarm: bool(p.prewarm, defaults.prewarm),
+      verifyTimeoutMs: posNum(p.verifyTimeoutMs, defaults.verifyTimeoutMs),
     };
   },
 };

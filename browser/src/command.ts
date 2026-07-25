@@ -8,7 +8,6 @@ export interface CommandDeps {
   saveConfig: (c: BrowserConfig) => void;
 }
 
-
 const DEFAULT_SESSION = "(default)";
 
 /** `/pi-browser` — no arg opens the settings panel; `binPath <path>` / `session <name>` set fields directly. */

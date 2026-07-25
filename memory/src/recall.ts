@@ -1,6 +1,5 @@
-import { injectionBlock, injectionHeader } from "../../shared/index.ts";
+import { injectionBlock, injectionHeader, truncateForAgent } from "../../shared/index.ts";
 import type { Memory } from "./frontmatter.ts";
-import { truncateForAgent } from "../../shared/index.ts";
 
 /** Rank memories by how many query terms appear in name/description/body; cap at `limit`. Pure. */
 export function selectByQuery(mems: readonly Memory[], query: string, limit: number): Memory[] {

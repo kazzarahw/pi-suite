@@ -1,13 +1,12 @@
 /**
- * The suite's `/pi-<name>` settings panel (HOUSE-STYLE §5, §8).
+ * The suite's `/pi-<name>` settings panel.
  *
  * One implementation, previously copy-pasted into all seven `command.ts` files.
  * Every `/pi-<name>` with no arguments opens this: a `/settings`-style,
  * arrow-navigable list whose values cycle with Space/Enter and save on each
  * toggle, closing on Esc.
  */
-import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { getSettingsListTheme } from "@earendil-works/pi-coding-agent";
+import { getSettingsListTheme, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { Container, type SettingItem, SettingsList } from "@earendil-works/pi-tui";
 
 /**

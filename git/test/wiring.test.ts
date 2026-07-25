@@ -69,7 +69,7 @@ async function turn(
 
 // --- Surface ---------------------------------------------------------------
 
-// HOUSE-STYLE §3: automatic behavior is a hook, not a tool. pi-git is the purest
+// House rule: automatic behavior is a hook, not a tool. pi-git is the purest
 // case — it exposes NO agent tools at all. Pinned so a future change has to be deliberate.
 test("git registers ZERO agent tools and exactly one command", async () => {
   const api = await loadExtension("git");

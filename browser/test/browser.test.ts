@@ -1,5 +1,6 @@
 import { test, expect } from "bun:test";
-import { browserArgv, runBrowser, looksBlocked, type ExecFn } from "../src/browser.ts";
+import { browserArgv, runBrowser, looksBlocked } from "../src/browser.ts";
+import type { ExecFn } from "../../shared/exec.ts";
 import type { BrowserConfig } from "../src/config.ts";
 
 test("browserArgv builds the right agent-browser argv per action", () => {

@@ -2,7 +2,7 @@ import { test, expect } from "bun:test";
 import { TAG_PREFIX, tagName, injectionHeader, injectionBlock } from "../tags.ts";
 
 // pi-shared shipped four exported runtime functions and zero tests. These pin the
-// injection format that pi-lens and pi-memory both depend on (HOUSE-STYLE §6).
+// injection format that pi-lens and pi-memory both depend on (shared/README.md).
 
 test("tagName prefixes the short name", () => {
   expect(tagName("lens")).toBe("pi-lens");

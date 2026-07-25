@@ -10,8 +10,6 @@ import { buildBrowserCommand } from "./src/command.ts";
  * Registers a single `browser` tool: an `action` enum wrapping the agent-browser
  * CLI (open / snapshot / read / search / click / type / … over a persistent
  * session). `search` and `read` fold in what would have been web_search / web_fetch.
- *
- * Build spec: docs/superpowers/plans/2026-07-20-pi-browser.md
  */
 export default function piBrowser(pi: ExtensionAPI): void {
   pi.registerTool(

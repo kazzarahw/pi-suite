@@ -1,6 +1,5 @@
-import type { AutocompleteItem } from "@earendil-works/pi-tui";
+import type { AutocompleteItem, SettingItem } from "@earendil-works/pi-tui";
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import type { SettingItem } from "@earendil-works/pi-tui";
 import { openSettingsPanel } from "../../shared/settings-panel.ts";
 import type { AgentDef } from "./agents.ts";
 import type { SpawnConfig } from "./config.ts";
@@ -12,7 +11,6 @@ export interface CommandDeps {
   /** Resolved at invoke time from the command's own context, not at extension load. */
   listAgents: (cwd: string) => AgentDef[];
 }
-
 
 const CONCURRENCY_PRESETS = ["1", "2", "3", "4", "6", "8"];
 const MODEL_PRESETS = ["(pi default)", "opus", "sonnet", "haiku"];

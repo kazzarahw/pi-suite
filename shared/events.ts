@@ -1,5 +1,5 @@
 /**
- * The cross-extension event vocabulary (HOUSE-STYLE §4).
+ * The cross-extension event vocabulary.
  *
  * Event names are namespaced `domain:event`. Payloads are documented here so a
  * type mismatch between an emitter and a subscriber is caught by the compiler

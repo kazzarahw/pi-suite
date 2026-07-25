@@ -1,6 +1,5 @@
-import type { AutocompleteItem } from "@earendil-works/pi-tui";
+import type { AutocompleteItem, SettingItem } from "@earendil-works/pi-tui";
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import type { SettingItem } from "@earendil-works/pi-tui";
 import { openSettingsPanel } from "../../shared/settings-panel.ts";
 import type { ConsultConfig } from "./config.ts";
 
@@ -8,7 +7,6 @@ export interface CommandDeps {
   loadConfig: () => ConsultConfig;
   saveConfig: (c: ConsultConfig) => void;
 }
-
 
 /** `/pi-consult` — no arg opens the settings panel; `/pi-consult <model>` sets the default model directly. */
 export function buildConsultCommand(deps: CommandDeps) {

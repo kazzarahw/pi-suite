@@ -13,7 +13,6 @@ export interface CommandDeps {
   healthCompact: () => string;
 }
 
-
 /** `/pi-lens` — no arg opens the settings panel; `mode <m>` / `verify <cmd>` / `autoformat on|off` set fields directly. */
 export function buildLensCommand(deps: CommandDeps) {
   const verifyPresets = (cfg: LensConfig): string[] => {

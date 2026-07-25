@@ -1,8 +1,9 @@
 import { Type, type Static } from "typebox";
 import { StringEnum } from "@earendil-works/pi-ai";
 import type { AgentToolResult, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExecFn } from "../../shared/exec.ts";
 import type { BrowserConfig } from "./config.ts";
-import { runBrowser, type BrowserAction, type ExecFn } from "./browser.ts";
+import { runBrowser, type BrowserAction } from "./browser.ts";
 import { truncateForAgent } from "../../shared/index.ts";
 
 const ACTIONS = [

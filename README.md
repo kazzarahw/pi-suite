@@ -14,7 +14,9 @@ A small, self-consistent, **agent-facing** extension suite for [Pi](https://pi.d
 | [`todo/`](./todo) | The agent's task list, rendered as a live widget | `todo_write` |
 | [`browser/`](./browser) | The web in one tool (wrapping `agent-browser`): search, fetch/read, snapshot with `@ref`s, click/type | `browser` *(action enum)* |
 
-**Seven tools total** — a deliberately tight agent surface. The rules that keep it small are in [`docs/HOUSE-STYLE.md`](./docs/HOUSE-STYLE.md): automatic behavior is a hook rather than a tool; many variant actions collapse behind one `action`-enum tool; and read paths are covered by tool-result echoes and context injection instead of extra read tools.
+**Seven tools total** — a deliberately tight agent surface. The rules that keep it small are in [`shared/README.md`](./shared/README.md): automatic behavior is a hook rather than a tool; many variant actions collapse behind one `action`-enum tool; and read paths are covered by tool-result echoes and context injection instead of extra read tools.
+
+Each extension is a **peer**, not a component: any one can be disabled, replaced, or prototyped against without touching the others. The only coupling permitted is `shared/` and the `pi.events` bus — never a direct import between extensions.
 
 ## Install
 
@@ -29,12 +31,16 @@ That installs all seven. Use `pi config` to enable or disable individual extensi
 ```
 pi-suite/
 ├── package.json          # ONE pi manifest listing all 7 entry points
-├── docs/HOUSE-STYLE.md   # the design contract
-├── shared/               # internal module (see below)
+├── shared/               # the internal library (see below) + its README
 ├── <name>/               # one dir per extension: index.ts, src/, test/, README.md
 ├── test/                 # repo-wide guards: contract + boundaries
 └── scripts/              # smoke-install.sh
 ```
+
+Documentation lives with what it documents: [`shared/README.md`](./shared/README.md) is
+the contract you write an extension against, and each `<name>/README.md` describes that
+one extension. There is no suite-wide design document — the previous one drifted from the
+code three times, and the rules worth keeping are the ones a test can enforce.
 
 ### `shared/`
 
@@ -45,11 +51,20 @@ An **internal module**, imported by relative path — not a package and not a de
 | `mode.ts` | the universal `off \| notify \| block` enforcement dial |
 | `events.ts` | the `domain:event` vocabulary and payload types |
 | `tags.ts` | the `<pi-*>` context-injection format |
-| `surface.ts` | the agent-surface SSOT — the docs are checked against this |
+| `surface.ts` | the agent-surface SSOT — one entry per extension |
 | `config.ts` | config mechanism; each extension keeps its own validation |
+| `fields.ts` | config field validators, so seven `parse`s agree on what's valid |
 | `settings-panel.ts` | the shared `/pi-<name>` settings panel |
 | `exec.ts` | the subprocess runner — always resolves, never rejects |
+| `cwd.ts` | `cwdOf(ctx)` — the only permitted working-directory resolution |
+| `deadline.ts` | a timeout composed with the caller's abort signal, distinguishably |
+| `truncate.ts` | agent-facing truncation, over Pi's own utilities |
+| `frontmatter.ts` | `---`-delimited markdown (memories, agent definitions) |
+| `hash.ts` | `stableHash` — short, stable, non-cryptographic string hash |
+| `tool-input.ts` | `editedPath(input)` + the `EDIT_TOOLS` / `FILE_TOOLS` sets |
 | `test/harness.ts` | a fake `ExtensionAPI` for testing extension wiring |
+
+Full contract and the rules for writing an extension: [`shared/README.md`](./shared/README.md).
 
 `shared/` is a leaf: it never imports from an extension, and extensions never import from each other. Enforced by `test/boundaries.test.ts`.
 
@@ -73,7 +88,7 @@ CI runs all four on every push.
 Three test layers exist because of specific failures, not as ceremony:
 
 - **Wiring tests** (`<name>/test/wiring.test.ts`) exercise each `index.ts` — hooks, guards, cwd resolution. This layer had no coverage originally, and it is where several defects lived. It pins the `!ctx.hasUI` guard in particular: injecting a message with no interactive UI makes Pi wait forever for a prompt that never arrives.
-- **Contract tests** (`test/contract.test.ts`) assert the live registry matches `shared/surface.ts`, that every emitted event exists in `EVENTS`, and that `HOUSE-STYLE.md` mentions every registered tool. The doc is checked against the code, never the reverse — earlier versions claimed a wrong tool count and a capability that was dead code.
+- **Contract tests** (`test/contract.test.ts`) assert the live registry matches `shared/surface.ts`, that every emitted event exists in `EVENTS`, and that each extension's own README documents the tools it registers. Docs are checked against the code, never the reverse — earlier versions claimed a wrong tool count and a capability that was dead code.
 - **Install smoke test** (`scripts/smoke-install.sh`) reproduces a real install and asserts all seven load. This is the test that would have caught the packaging break that prompted the consolidation.
 
 AGPL-3.0.

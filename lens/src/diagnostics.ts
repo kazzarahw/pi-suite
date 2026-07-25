@@ -1,5 +1,4 @@
-import { injectionBlock, injectionHeader, type Diagnostic } from "../../shared/index.ts";
-import { truncateForAgent } from "../../shared/index.ts";
+import { injectionBlock, injectionHeader, truncateForAgent, type Diagnostic } from "../../shared/index.ts";
 
 export type { Diagnostic };
 

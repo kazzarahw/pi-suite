@@ -1,6 +1,5 @@
-import type { AutocompleteItem } from "@earendil-works/pi-tui";
+import type { AutocompleteItem, SettingItem } from "@earendil-works/pi-tui";
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import type { SettingItem } from "@earendil-works/pi-tui";
 import { openSettingsPanel } from "../../shared/settings-panel.ts";
 import { MODES, type Mode } from "../../shared/index.ts";
 import type { TodoConfig } from "./config.ts";
@@ -9,7 +8,6 @@ export interface CommandDeps {
   loadConfig: () => TodoConfig;
   saveConfig: (c: TodoConfig) => void;
 }
-
 
 /** `/pi-todo` — no arg opens the settings panel; `/pi-todo <off|notify|block>` sets the nudge mode directly. */
 export function buildTodoCommand(deps: CommandDeps) {

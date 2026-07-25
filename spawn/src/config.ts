@@ -5,6 +5,7 @@ import {
   saveConfig as sharedSave,
   type ConfigSpec,
 } from "../../shared/config.ts";
+import { int, posNum, str } from "../../shared/fields.ts";
 
 export interface SpawnConfig {
   /** Model for subagents whose def doesn't pin one. "" = let pi choose its default. */
@@ -27,13 +28,9 @@ export const SPEC: ConfigSpec<SpawnConfig> = {
   parse(raw, defaults) {
     const p = raw as Partial<SpawnConfig>;
     return {
-      defaultModel: typeof p.defaultModel === "string" ? p.defaultModel : defaults.defaultModel,
-      jobTimeoutMs:
-        typeof p.jobTimeoutMs === "number" && p.jobTimeoutMs > 0 ? p.jobTimeoutMs : defaults.jobTimeoutMs,
-      concurrency:
-        typeof p.concurrency === "number" && p.concurrency >= 1
-          ? Math.floor(p.concurrency)
-          : defaults.concurrency,
+      defaultModel: str(p.defaultModel, defaults.defaultModel),
+      jobTimeoutMs: posNum(p.jobTimeoutMs, defaults.jobTimeoutMs),
+      concurrency: int(p.concurrency, defaults.concurrency),
     };
   },
 };

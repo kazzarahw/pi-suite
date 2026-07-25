@@ -113,19 +113,38 @@ test("EVENTS declares one event per emitting domain, and the vocabulary does not
 });
 
 // ---------------------------------------------------------------------------
-// The docs are checked AGAINST the code, never the reverse.
+// Documentation lives with what it documents.
+//
+// A prose "design contract" describing all seven at once used to sit in docs/ and
+// be checked for the presence of every tool name. It drifted from the code three
+// times anyway, and it made the suite legible only as a whole — the opposite of the
+// property that lets one extension be swapped out. It is gone. The rules that are
+// enforceable are enforced here and in test/boundaries.test.ts; the rest lives in
+// shared/README.md (how to write an extension) and each <name>/README.md (what that
+// extension does).
 // ---------------------------------------------------------------------------
 
-test("HOUSE-STYLE mentions every tool the suite actually registers", () => {
-  const doc = readFileSync(join(ROOT, "docs", "HOUSE-STYLE.md"), "utf8");
-  const missing = ALL_TOOLS.filter((t) => !doc.includes(t));
-  expect(missing).toEqual([]);
-});
-
-test("HOUSE-STYLE mentions every /pi-<name> command", () => {
-  const doc = readFileSync(join(ROOT, "docs", "HOUSE-STYLE.md"), "utf8");
-  const missing = SURFACE.map((e) => `/${e.command}`).filter((c) => !doc.includes(c));
-  expect(missing).toEqual([]);
+test("every extension documents itself, with the standard sections", () => {
+  const REQUIRED = ["## What it does", "## Configure", "## Install"];
+  const offenders: string[] = [];
+  for (const ext of SURFACE) {
+    const path = join(ROOT, ext.dir, "README.md");
+    let doc: string;
+    try {
+      doc = readFileSync(path, "utf8");
+    } catch {
+      offenders.push(`${ext.dir}: no README.md`);
+      continue;
+    }
+    for (const section of REQUIRED) {
+      if (!doc.includes(section)) offenders.push(`${ext.dir}/README.md: missing "${section}"`);
+    }
+    // A tool the agent can call must be named where a human would look for it.
+    for (const tool of ext.tools) {
+      if (!doc.includes(tool)) offenders.push(`${ext.dir}/README.md: never mentions \`${tool}\``);
+    }
+  }
+  expect(offenders).toEqual([]);
 });
 
 test("SURFACE covers every extension directory declared in package.json", () => {

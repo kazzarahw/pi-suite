@@ -1,7 +1,8 @@
 import { readdirSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { agentDir } from "../../shared/config.ts";
+import { parseFrontmatter } from "../../shared/index.ts";
 
 export interface AgentDef {
   name: string;
@@ -13,17 +14,9 @@ export interface AgentDef {
 
 /** Parse an agent markdown file (frontmatter + body). Returns null if malformed. */
 export function parseAgent(fileText: string): AgentDef | null {
-  const match = fileText.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
-  if (!match) return null;
-  const [, frontmatter, body] = match;
-
-  const meta: Record<string, string> = {};
-  for (const line of (frontmatter ?? "").split("\n")) {
-    const idx = line.indexOf(":");
-    if (idx < 0) continue;
-    const key = line.slice(0, idx).trim();
-    if (key) meta[key] = line.slice(idx + 1).trim();
-  }
+  const parsed = parseFrontmatter(fileText);
+  if (!parsed) return null;
+  const { meta, body } = parsed;
   if (!meta.name) return null;
 
   const tools = meta.tools
@@ -39,7 +32,7 @@ export function parseAgent(fileText: string): AgentDef | null {
     description: meta.description ?? "",
     model: meta.model || undefined,
     tools: tools && tools.length > 0 ? tools : undefined,
-    systemPrompt: (body ?? "").trim(),
+    systemPrompt: body,
   };
 }
 
@@ -63,7 +56,12 @@ export function readAgentsFrom(dir: string): AgentDef[] {
 // Resolve the bundled agents/ dir relative to this module. Use import.meta.url
 // (portable ESM) rather than import.meta.dir, which Pi's loader leaves undefined.
 const bundledAgentsDir = (): string => join(dirname(fileURLToPath(import.meta.url)), "..", "agents");
-const globalAgentsDir = (): string => join(homedir(), ".pi", "agent", "agents");
+
+// Resolved through the suite's one agent-directory helper. This used to hardcode
+// `~/.pi/agent`, so a custom PI_CODING_AGENT_DIR moved every other extension's state and
+// left pi-spawn reading a roster nobody was writing to — the same defect the shared
+// helper was introduced to close everywhere else.
+const globalAgentsDir = (): string => join(agentDir(), "agents");
 
 /** The bundled default roster. */
 export function defaultAgents(): AgentDef[] {

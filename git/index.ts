@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { cwdOf } from "../shared/index.ts";
+import { cwdOf, EDIT_TOOLS, editedPath } from "../shared/index.ts";
 import { defaultExec } from "../shared/exec.ts";
 import { loadConfig, saveConfig, type GitConfig } from "./src/config.ts";
 import { createStore, type CheckpointStore } from "./src/store.ts";
@@ -13,8 +13,6 @@ import {
 } from "./src/checkpoints.ts";
 import { checkpointTurn, restoreEntry, restoreOnForkShutdown, type PendingFork } from "./src/hooks.ts";
 import { buildGitCommand } from "./src/command.ts";
-
-const EDIT_TOOLS = new Set(["write", "edit"]);
 
 /** The slice of `ctx` this extension reads beyond what `cwdOf` needs. */
 interface GitCtx {
@@ -38,9 +36,6 @@ interface GitCtx {
  *
  * Plus the fork pair (`session_before_fork` / `session_shutdown`), which is how Pi
  * used to expose rewind before it had tree navigation.
- *
- * Build spec: docs/superpowers/plans/2026-07-20-pi-git.md
- * Storage rewrite: docs/superpowers/specs/2026-07-24-pi-suite-correctness-hardening-design.md (D10, D14)
  */
 export default function piGit(pi: ExtensionAPI): void {
   const emit = (event: string, data: unknown) => pi.events.emit(event, data);
@@ -118,8 +113,8 @@ export default function piGit(pi: ExtensionAPI): void {
   pi.on("tool_call", async (event, ctx) => {
     const cfg = loadConfig();
     if (cfg.mode === "off" || !EDIT_TOOLS.has(event.toolName)) return;
-    const path = (event.input as { path?: string } | undefined)?.path;
-    if (typeof path !== "string" || path.length === 0) return;
+    const path = editedPath(event.input);
+    if (!path) return;
     const store = storeFor(ctx as GitCtx, cfg);
     if (!store) return;
     try {

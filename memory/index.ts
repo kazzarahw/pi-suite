@@ -5,7 +5,7 @@ import { formatIndexInjection } from "./src/recall.ts";
 import { scanSecrets } from "./src/secrets.ts";
 import { buildRecallTool, buildWriteTool } from "./src/tools.ts";
 import { buildMemoryCommand } from "./src/command.ts";
-import { cwdOf } from "../shared/index.ts";
+import { cwdOf, stableHash } from "../shared/index.ts";
 
 /**
  * pi-memory — persistent, write-back memory.
@@ -13,8 +13,6 @@ import { cwdOf } from "../shared/index.ts";
  * Registers `memory_recall` / `memory_write`, injects the memory *index* into
  * every LLM call (progressive disclosure — bodies load on recall), and can
  * auto-capture a gotcha on `verify:failed`. Emits `memory:wrote` / `memory:recalled`.
- *
- * Build spec: docs/superpowers/plans/2026-07-20-pi-memory.md
  */
 export default function piMemory(pi: ExtensionAPI): void {
   const emit = (event: string, data: unknown) => pi.events.emit(event, data);
@@ -57,7 +55,7 @@ export default function piMemory(pi: ExtensionAPI): void {
     if (failures.length === 0) return;
     const body = `Command: ${d.cmd ?? "(unknown)"}\nFailures:\n${failures.map((f) => `- ${f}`).join("\n")}`;
     if (scanSecrets(body).length > 0) return;
-    const key = `gotcha-verify-${hash(`${d.cmd}:${failures.join("|")}`)}`;
+    const key = `gotcha-verify-${stableHash(`${d.cmd}:${failures.join("|")}`)}`;
     try {
       writeMemory(
         { name: key, description: `verify failed: ${d.cmd ?? "tests"}`, type: "project", scope: "project", body },
@@ -76,10 +74,4 @@ export default function piMemory(pi: ExtensionAPI): void {
     deleteMemory: (name: string, cwd: string) => deleteMemory(name, cwd),
   });
   pi.registerCommand(command.name, command.options);
-}
-
-function hash(s: string): string {
-  let h = 0;
-  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
-  return (h >>> 0).toString(36);
 }

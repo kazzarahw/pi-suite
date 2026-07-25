@@ -12,7 +12,6 @@ export interface MemoryToolDeps {
   emit: (event: string, data: unknown) => void;
 }
 
-
 const recallParameters = Type.Object({
   query: Type.Optional(
     Type.String({ description: "Keywords to search memories by (name/description/body). Omit if using `name`." }),
