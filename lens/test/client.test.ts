@@ -1,5 +1,6 @@
 import { test, expect } from "bun:test";
-import { createLspClient } from "../src/lsp/client.ts";
+import { createLspClient, LspUnavailableError } from "../src/lsp/client.ts";
+import { within } from "../../shared/test/harness.ts";
 import { encodeMessage, decodeMessages } from "../src/lsp/framing.ts";
 
 function fakeIo() {
@@ -55,4 +56,97 @@ test("hover resolves with the server's reply", async () => {
   const req = sent.find((m) => m.method === "textDocument/hover") as { id: number };
   feed({ jsonrpc: "2.0", id: req.id, result: { contents: { kind: "markdown", value: "const x: number" } } });
   expect(await p).toBe("const x: number");
+});
+
+// --- Bounded requests ------------------------------------------------------
+// The P0. `request()` resolved only on a matching JSON-RPC id: no timeout, no reject
+// path, no abort handling. A wedged or dead server left hover/references/definition/
+// rename pending forever, and Esc could not cancel because the tool discarded its
+// signal. An earlier fix (a `which` check plus an onDead handler) landed at the spawn
+// layer and left the request itself unbounded.
+//
+// Every test here goes through within() so a regression fails the test instead of
+// stopping the whole run.
+
+test("a request that is never answered rejects at its deadline", async () => {
+  const { io } = fakeIo();
+  const client = createLspClient(io, { requestTimeoutMs: 20 });
+  const err = await within(2000, client.hover("file:///a.ts", { line: 1, col: 1 }).catch((e: unknown) => e));
+  expect(err).toBeInstanceOf(LspUnavailableError);
+  expect((err as LspUnavailableError).reason).toBe("timeout");
+  expect((err as LspUnavailableError).method).toBe("textDocument/hover");
+});
+
+test("a timeout does not leave the pending entry behind", async () => {
+  const { io } = fakeIo();
+  const client = createLspClient(io, { requestTimeoutMs: 20 });
+  await within(2000, client.references("file:///a.ts", { line: 1, col: 1 }).catch(() => {}));
+  expect(client.pendingCount()).toBe(0);
+});
+
+// The hole the previous fix left: onDead settled `warm` but never touched `pending`,
+// so a server dying mid-query left that promise unsettled forever.
+test("dispose rejects every in-flight request", async () => {
+  const { io } = fakeIo();
+  const client = createLspClient(io, { requestTimeoutMs: 10_000 });
+  const a = client.hover("file:///a.ts", { line: 1, col: 1 }).catch((e: unknown) => e);
+  const b = client.definition("file:///b.ts", { line: 1, col: 1 }).catch((e: unknown) => e);
+  client.dispose("server exited");
+  const [ea, eb] = await within(2000, Promise.all([a, b]));
+  for (const e of [ea, eb]) {
+    expect(e).toBeInstanceOf(LspUnavailableError);
+    expect((e as LspUnavailableError).reason).toBe("disposed");
+  }
+  expect(client.pendingCount()).toBe(0);
+});
+
+test("aborting the passed signal rejects the request promptly", async () => {
+  const { io } = fakeIo();
+  const client = createLspClient(io, { requestTimeoutMs: 10_000 });
+  const ac = new AbortController();
+  const p = client.references("file:///a.ts", { line: 1, col: 1 }, ac.signal).catch((e: unknown) => e);
+  ac.abort();
+  const err = await within(2000, p);
+  expect(err).toBeInstanceOf(LspUnavailableError);
+  expect(client.pendingCount()).toBe(0);
+});
+
+test("an already-aborted signal rejects without waiting for the deadline", async () => {
+  const { io } = fakeIo();
+  const client = createLspClient(io, { requestTimeoutMs: 10_000 });
+  const err = await within(
+    2000,
+    client.definition("file:///a.ts", { line: 1, col: 1 }, AbortSignal.abort()).catch((e: unknown) => e),
+  );
+  expect(err).toBeInstanceOf(LspUnavailableError);
+});
+
+test("a normal reply still resolves and clears its pending entry", async () => {
+  const { io, sent, feed } = fakeIo();
+  const client = createLspClient(io, { requestTimeoutMs: 5000 });
+  const p = client.hover("file:///a.ts", { line: 1, col: 1 });
+  const req = sent.find((m) => m.method === "textDocument/hover") as { id: number };
+  feed({ jsonrpc: "2.0", id: req.id, result: { contents: "docs" } });
+  expect(await within(2000, p)).toBe("docs");
+  expect(client.pendingCount()).toBe(0);
+});
+
+// A JSON-RPC *error* reply is a real answer: the server responded and has nothing.
+// Only bounded waits reject — otherwise every "no symbol here" becomes an error.
+test("a JSON-RPC error reply still resolves rather than rejecting", async () => {
+  const { io, sent, feed } = fakeIo();
+  const client = createLspClient(io, { requestTimeoutMs: 5000 });
+  const p = client.references("file:///a.ts", { line: 1, col: 1 });
+  const req = sent.find((m) => m.method === "textDocument/references") as { id: number };
+  feed({ jsonrpc: "2.0", id: req.id, error: { code: -32601, message: "Unhandled method" } });
+  expect(await within(2000, p)).toEqual([]);
+});
+
+// Distinguishing "slow" from "empty" is the whole point: resolving null here would
+// render as "(none found)" and the agent would act on a confident wrong answer.
+test("a wedged server does not look like an empty result", async () => {
+  const { io } = fakeIo();
+  const client = createLspClient(io, { requestTimeoutMs: 20 });
+  const out = await within(2000, client.references("file:///a.ts", { line: 1, col: 1 }).catch((e: unknown) => e));
+  expect(Array.isArray(out)).toBe(false);
 });

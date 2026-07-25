@@ -48,7 +48,12 @@ function allTsFiles(dir: string): string[] {
 /** Every static import/export specifier in a file. */
 function importSpecifiers(src: string): string[] {
   const out: string[] = [];
-  for (const m of src.matchAll(/(?:^|\n)\s*(?:import|export)[\s\S]*?from\s+"([^"]+)"/g)) out.push(m[1]!);
+  // `[^;]*?` rather than `[\s\S]*?`: an import/export clause never contains a semicolon,
+  // so this cannot run past the end of a statement. With the looser pattern, a declaration
+  // matched forward into any later prose containing `from "..."` — a comment reading
+  // `Distinguishing "slow" from "empty"` was reported as an import of the package "empty".
+  // Multi-line clauses still match, since a braced specifier list has no semicolon either.
+  for (const m of src.matchAll(/(?:^|\n)\s*(?:import|export)[^;]*?from\s+"([^"]+)"/g)) out.push(m[1]!);
   for (const m of src.matchAll(/\bimport\(\s*[`"]([^`"]+)[`"]\s*\)/g)) out.push(m[1]!);
   return out;
 }
