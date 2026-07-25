@@ -1,9 +1,4 @@
-import {
-  configPath as sharedConfigPath,
-  loadConfig as sharedLoad,
-  saveConfig as sharedSave,
-  type ConfigSpec,
-} from "../../shared/config.ts";
+import { defineConfig, type ConfigSpec } from "../../shared/config.ts";
 import { nonEmptyStr, optionalStr } from "../../shared/fields.ts";
 
 export interface BrowserConfig {
@@ -27,14 +22,5 @@ export const SPEC: ConfigSpec<BrowserConfig> = {
   },
 };
 
-export function configPath(): string {
-  return sharedConfigPath(SPEC.name);
-}
-
-export function loadConfig(path?: string): BrowserConfig {
-  return sharedLoad(SPEC, path);
-}
-
-export function saveConfig(cfg: BrowserConfig, path?: string): void {
-  sharedSave(SPEC, cfg, path);
-}
+/** `<agentDir>/pi-browser.json`, plus the read/write pair bound to SPEC. */
+export const { configPath, loadConfig, saveConfig } = defineConfig(SPEC);

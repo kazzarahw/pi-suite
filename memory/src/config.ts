@@ -1,10 +1,5 @@
 import { DEFAULT_MODE, MODES, type Mode } from "../../shared/index.ts";
-import {
-  configPath as sharedConfigPath,
-  loadConfig as sharedLoad,
-  saveConfig as sharedSave,
-  type ConfigSpec,
-} from "../../shared/config.ts";
+import { defineConfig, type ConfigSpec } from "../../shared/config.ts";
 import { bool, int, oneOf } from "../../shared/fields.ts";
 
 export interface MemoryConfig {
@@ -31,14 +26,5 @@ export const SPEC: ConfigSpec<MemoryConfig> = {
   },
 };
 
-export function configPath(): string {
-  return sharedConfigPath(SPEC.name);
-}
-
-export function loadConfig(path?: string): MemoryConfig {
-  return sharedLoad(SPEC, path);
-}
-
-export function saveConfig(cfg: MemoryConfig, path?: string): void {
-  sharedSave(SPEC, cfg, path);
-}
+/** `<agentDir>/pi-memory.json`, plus the read/write pair bound to SPEC. */
+export const { configPath, loadConfig, saveConfig } = defineConfig(SPEC);

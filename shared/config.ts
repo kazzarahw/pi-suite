@@ -58,3 +58,26 @@ export function saveConfig<T>(
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, `${JSON.stringify(cfg, null, 2)}\n`, "utf8");
 }
+
+/** The per-extension accessors {@link defineConfig} produces. */
+export interface ConfigAccess<T> {
+  configPath(): string;
+  loadConfig(path?: string): T;
+  saveConfig(cfg: T, path?: string): void;
+}
+
+/**
+ * Bind a spec to its three accessors.
+ *
+ * Each extension wrote these out by hand — the same three one-line wrappers, seven
+ * times, differing only in the type they closed over. They exist so call sites read as
+ * `loadConfig()` rather than `sharedLoad(SPEC)`, which is worth keeping; writing them
+ * out is not.
+ */
+export function defineConfig<T>(spec: ConfigSpec<T>): ConfigAccess<T> {
+  return {
+    configPath: () => configPath(spec.name),
+    loadConfig: (path) => loadConfig(spec, path),
+    saveConfig: (cfg, path) => saveConfig(spec, cfg, path),
+  };
+}

@@ -1,10 +1,5 @@
 import { DEFAULT_MODE, MODES, type Mode } from "../../shared/index.ts";
-import {
-  configPath as sharedConfigPath,
-  loadConfig as sharedLoad,
-  saveConfig as sharedSave,
-  type ConfigSpec,
-} from "../../shared/config.ts";
+import { defineConfig, type ConfigSpec } from "../../shared/config.ts";
 import { oneOf } from "../../shared/fields.ts";
 
 /** pi-todo configuration. */
@@ -24,17 +19,5 @@ export const SPEC: ConfigSpec<TodoConfig> = {
   },
 };
 
-/** `<agentDir>/pi-todo.json`. */
-export function configPath(): string {
-  return sharedConfigPath(SPEC.name);
-}
-
-/** Read the config, falling back to {@link DEFAULTS} for any missing/invalid field. */
-export function loadConfig(path?: string): TodoConfig {
-  return sharedLoad(SPEC, path);
-}
-
-/** Write the config, creating the parent directory if needed. */
-export function saveConfig(cfg: TodoConfig, path?: string): void {
-  sharedSave(SPEC, cfg, path);
-}
+/** `<agentDir>/pi-todo.json`, plus the read/write pair bound to SPEC. */
+export const { configPath, loadConfig, saveConfig } = defineConfig(SPEC);

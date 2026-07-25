@@ -79,12 +79,25 @@ test("git registers ZERO agent tools and exactly one command", async () => {
 
 // D11: slash commands are the configuration surface, not an action surface. Rewinding
 // is something the harness does on navigation, not a verb the user (or model) invokes.
-test("/pi-git takes only a mode argument — no checkpoint or restore verbs", async () => {
+//
+// Asserted as "no action verbs" rather than "exactly the three modes", which is what this
+// used to check. That older form pinned a limitation instead of the rule: pi-git grew
+// `detect` and `ttl` verbs when the seven commands were unified, so every field became
+// settable from an argument rather than only from the TUI panel. That is a strictly wider
+// *configuration* surface and leaves the actual invariant untouched.
+test("/pi-git exposes configuration verbs only — no checkpoint, restore, or rollback", async () => {
   const api = await loadExtension("git");
   const completions = api.commands.get("pi-git")!.getArgumentCompletions?.("") as
     | Array<{ value: string }>
     | null;
-  expect((completions ?? []).map((c) => c.value).sort()).toEqual(["block", "notify", "off"]);
+  const words = (completions ?? []).map((c) => c.value);
+
+  for (const action of ["checkpoint", "restore", "rollback", "rewind", "undo", "snapshot"]) {
+    expect(words).not.toContain(action);
+  }
+  // Every offered word is a config field's verb or one of its values — nothing else.
+  const allowed = new Set(["mode", "detect", "ttl", "off", "notify", "block"]);
+  expect(words.filter((w) => !allowed.has(w))).toEqual([]);
 });
 
 test("git subscribes the four checkpoint hooks and the fork pair", async () => {

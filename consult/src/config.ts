@@ -1,9 +1,4 @@
-import {
-  configPath as sharedConfigPath,
-  loadConfig as sharedLoad,
-  saveConfig as sharedSave,
-  type ConfigSpec,
-} from "../../shared/config.ts";
+import { defineConfig, type ConfigSpec } from "../../shared/config.ts";
 import { nonEmptyStr, strList } from "../../shared/fields.ts";
 
 /** pi-consult configuration, persisted as JSON and read per call. */
@@ -32,17 +27,5 @@ export const SPEC: ConfigSpec<ConsultConfig> = {
   },
 };
 
-/** `<agentDir>/pi-consult.json` — the config's canonical location. */
-export function configPath(): string {
-  return sharedConfigPath(SPEC.name);
-}
-
-/** Read the config, falling back to {@link DEFAULTS} on any missing/invalid field. */
-export function loadConfig(path?: string): ConsultConfig {
-  return sharedLoad(SPEC, path);
-}
-
-/** Write the config, creating the parent directory if needed. */
-export function saveConfig(cfg: ConsultConfig, path?: string): void {
-  sharedSave(SPEC, cfg, path);
-}
+/** `<agentDir>/pi-consult.json`, plus the read/write pair bound to SPEC. */
+export const { configPath, loadConfig, saveConfig } = defineConfig(SPEC);

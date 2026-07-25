@@ -1,9 +1,12 @@
-import type { AutocompleteItem, SettingItem } from "@earendil-works/pi-tui";
-import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { openSettingsPanel } from "../../shared/settings-panel.ts";
+import { cwdOf } from "../../shared/index.ts";
+import {
+  defineConfigCommand,
+  intField,
+  stringField,
+  type Field,
+} from "../../shared/config-command.ts";
 import type { AgentDef } from "./agents.ts";
 import type { SpawnConfig } from "./config.ts";
-import { cwdOf } from "../../shared/index.ts";
 
 export interface CommandDeps {
   loadConfig: () => SpawnConfig;
@@ -12,67 +15,28 @@ export interface CommandDeps {
   listAgents: (cwd: string) => AgentDef[];
 }
 
-const CONCURRENCY_PRESETS = ["1", "2", "3", "4", "6", "8"];
-const MODEL_PRESETS = ["(pi default)", "opus", "sonnet", "haiku"];
+const PI_DEFAULT = "(pi default)";
 
-/** `/pi-spawn` — no arg opens the settings panel; `model <name>` / `concurrency <n>` set fields directly. */
+export const FIELDS: readonly Field<SpawnConfig>[] = [
+  // `""` means "let pi choose", which would render as a blank row; the display maps it
+  // to a label and back again so picking the label clears the setting.
+  stringField("defaultModel", "Subagent model", {
+    verb: "model",
+    presets: ["opus", "sonnet", "haiku"],
+    display: { placeholder: PI_DEFAULT },
+  }),
+  intField("concurrency", "Concurrency", { presets: [1, 2, 3, 4, 6, 8] }),
+];
+
+/** `/pi-spawn` — no arg opens the settings panel; `model <name>` / `concurrency <n>` set fields. */
 export function buildSpawnCommand(deps: CommandDeps) {
-  return {
-    name: "pi-spawn" as const,
-    options: {
-      description: "Configure pi-spawn: '/pi-spawn' opens the settings panel; or 'model <name>' / 'concurrency <n>'.",
-      handler: async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
-        const [key, ...rest] = args.trim().split(/\s+/).filter(Boolean);
-        const value = rest.join(" ");
-        const cfg = deps.loadConfig();
+  const roster = (ctx: Parameters<typeof cwdOf>[0]): string =>
+    deps.listAgents(cwdOf(ctx)).map((a) => a.name).join(", ") || "none";
 
-        if (key === "model") {
-          deps.saveConfig({ ...cfg, defaultModel: value });
-          ctx?.ui?.notify?.(`[pi-spawn] default model set to: ${value || "(pi default)"}`, "info");
-          return;
-        }
-        if (key === "concurrency") {
-          const n = Number(value);
-          if (!Number.isInteger(n) || n < 1) {
-            ctx?.ui?.notify?.(`[pi-spawn] concurrency must be a positive integer`, "error");
-            return;
-          }
-          deps.saveConfig({ ...cfg, concurrency: n });
-          ctx?.ui?.notify?.(`[pi-spawn] concurrency set to: ${n}`, "info");
-          return;
-        }
-        if (key) {
-          ctx?.ui?.notify?.(`[pi-spawn] unknown option "${key}" (use: model <name> | concurrency <n>)`, "error");
-          return;
-        }
-
-        const roster = deps.listAgents(cwdOf(ctx)).map((a) => a.name).join(", ") || "none";
-        if (ctx.mode !== "tui") {
-          const model = cfg.defaultModel || "(pi default)";
-          ctx?.ui?.notify?.(`[pi-spawn] model: ${model} · concurrency: ${cfg.concurrency} · agents: ${roster}`, "info");
-          return;
-        }
-
-        const modelDisplay = cfg.defaultModel || "(pi default)";
-        const items: SettingItem[] = [
-          { id: "model", label: "Subagent model", currentValue: modelDisplay, values: [...new Set([modelDisplay, ...MODEL_PRESETS])] },
-          {
-            id: "concurrency",
-            label: "Concurrency",
-            currentValue: String(cfg.concurrency),
-            values: [...new Set([String(cfg.concurrency), ...CONCURRENCY_PRESETS])].sort((a, b) => Number(a) - Number(b)),
-          },
-        ];
-        const apply = (id: string, val: string): void => {
-          const c = deps.loadConfig();
-          if (id === "model") deps.saveConfig({ ...c, defaultModel: val === "(pi default)" ? "" : val });
-          else if (id === "concurrency") {
-            const n = Number(val);
-            if (Number.isInteger(n) && n >= 1) deps.saveConfig({ ...c, concurrency: n });
-          }
-        };
-        await openSettingsPanel(ctx, "pi-spawn · settings", `agents: ${roster}`, items, apply);
-      },
-    },
-  };
+  return defineConfigCommand("spawn", FIELDS, deps, {
+    // The roster is discovered from disk per invocation, so it is a function of ctx
+    // rather than a constant captured when the extension loaded.
+    subtitle: (ctx) => `agents: ${roster(ctx)}`,
+    readoutExtra: (_cfg, ctx) => `agents: ${roster(ctx)}`,
+  });
 }

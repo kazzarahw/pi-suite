@@ -1,10 +1,5 @@
 import { DEFAULT_MODE, MODES, type Mode } from "../../shared/index.ts";
-import {
-  configPath as sharedConfigPath,
-  loadConfig as sharedLoad,
-  saveConfig as sharedSave,
-  type ConfigSpec,
-} from "../../shared/config.ts";
+import { defineConfig, type ConfigSpec } from "../../shared/config.ts";
 import { bool, oneOf, posNum } from "../../shared/fields.ts";
 import { DEFAULT_MAX_FILE_BYTES } from "./store.ts";
 
@@ -48,14 +43,5 @@ export const SPEC: ConfigSpec<GitConfig> = {
   },
 };
 
-export function configPath(): string {
-  return sharedConfigPath(SPEC.name);
-}
-
-export function loadConfig(path?: string): GitConfig {
-  return sharedLoad(SPEC, path);
-}
-
-export function saveConfig(cfg: GitConfig, path?: string): void {
-  sharedSave(SPEC, cfg, path);
-}
+/** `<agentDir>/pi-git.json`, plus the read/write pair bound to SPEC. */
+export const { configPath, loadConfig, saveConfig } = defineConfig(SPEC);
