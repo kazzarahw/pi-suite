@@ -103,13 +103,78 @@ test("shared/ does not import from any extension (it must stay a leaf)", () => {
 
 test("the boundary checker actually detects a cross-extension import", () => {
   // Guards the guard: a checker that can never fail is not a checker.
-  expect(violation("lens", join(ROOT, "lens/src/tools.ts"), "../../git/src/git.ts")).toContain(
+  expect(violation("lens", join(ROOT, "lens/src/tools.ts"), "../../git/src/store.ts")).toContain(
     "cross-extension",
   );
   expect(violation("lens", join(ROOT, "lens/src/tools.ts"), "../../shared/exec.ts")).toBeNull();
   expect(violation("lens", join(ROOT, "lens/src/tools.ts"), "./config.ts")).toBeNull();
   expect(violation("lens", join(ROOT, "lens/src/tools.ts"), "node:fs")).toBeNull();
   expect(violation("lens", join(ROOT, "lens/src/tools.ts"), "lodash")).toContain("non-peer package");
+});
+
+// ---------------------------------------------------------------------------
+// Every module is reachable from its extension's entry point.
+// ---------------------------------------------------------------------------
+
+/**
+ * Follow relative imports from `entry`, returning every file transitively reached.
+ *
+ * Resolution is deliberately simple — every internal specifier in this repo is an
+ * explicit `./x.ts` path (`allowImportingTsExtensions`), so there are no extensions to
+ * infer and no index resolution to emulate.
+ */
+function reachableFrom(entry: string): Set<string> {
+  const seen = new Set<string>();
+  const queue = [entry];
+  while (queue.length > 0) {
+    const file = queue.pop()!;
+    if (seen.has(file)) continue;
+    seen.add(file);
+    let src: string;
+    try {
+      src = readFileSync(file, "utf8");
+    } catch {
+      continue; // a specifier pointing at nothing is the compiler's problem, not this test's
+    }
+    for (const spec of importSpecifiers(src)) {
+      if (!spec.startsWith(".")) continue;
+      queue.push(resolve(dirname(file), spec));
+    }
+  }
+  return seen;
+}
+
+/**
+ * Unreachable code is dead code, and dead code lies.
+ *
+ * pi-git shipped `src/git.ts` and `src/worktrees.ts` — a worktree capability reachable
+ * from nothing but its own test, while a `worktrees` config block and two `/pi-git`
+ * settings rows advertised it to users as a real feature. It survived a full contract
+ * test suite because that suite checked tools, commands, and events, and this was none
+ * of those.
+ *
+ * It matters more now that extensions are meant to be replaceable: a replacement that
+ * leaves its predecessor's modules behind should fail loudly, not accumulate.
+ */
+for (const ext of EXTENSION_DIRS) {
+  test(`[${ext}] every module under src/ is reachable from index.ts`, () => {
+    const reached = reachableFrom(join(ROOT, ext, "index.ts"));
+    const orphans = allTsFiles(ext)
+      .filter((f) => !f.includes("/test/") && f !== join(ROOT, ext, "index.ts"))
+      .filter((f) => !reached.has(f))
+      .map((f) => relative(ROOT, f));
+    expect(orphans).toEqual([]);
+  });
+}
+
+test("the reachability walk actually follows imports, and would flag an orphan", () => {
+  // Guards the guard. `git/index.ts` reaches its store through `./src/store.ts`…
+  const reached = reachableFrom(join(ROOT, "git/index.ts"));
+  expect(reached.has(join(ROOT, "git/src/store.ts"))).toBe(true);
+  // …and transitively, through store.ts, the shared config module.
+  expect(reached.has(join(ROOT, "shared/config.ts"))).toBe(true);
+  // A file nothing imports is not reached — which is what makes the check above real.
+  expect(reached.has(join(ROOT, "git/src/nonexistent-orphan.ts"))).toBe(false);
 });
 
 // ---------------------------------------------------------------------------

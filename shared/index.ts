@@ -27,7 +27,7 @@ export { EVENTS, TODO_STATUSES } from "./events.ts";
 export { TAG_PREFIX, tagName, injectionHeader, injectionBlock } from "./tags.ts";
 
 export type { ExtensionSurface } from "./surface.ts";
-export { SURFACE, ALL_TOOLS } from "./surface.ts";
+export { SURFACE, ALL_TOOLS, MANIFEST, entryPoint } from "./surface.ts";
 
 export type { CwdSource } from "./cwd.ts";
 export { cwdOf } from "./cwd.ts";

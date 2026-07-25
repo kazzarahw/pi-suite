@@ -14,6 +14,8 @@ Part of the [pi-suite](../README.md).
 
 Emits `lens:clean` / `lens:issues` and `verify:passed` / `verify:failed`.
 
+Nothing here requires another extension, and nothing requires this one. [pi-memory](../memory) *optionally* listens for `verify:failed` to capture a gotcha; if it is absent the events go nowhere, and if pi-lens is absent pi-memory just never hears one. The coupling is the bus, never an import.
+
 ## Toolchain
 
 A per-language registry (`ext → { lsp?, linters[], formatter? }`); tools run only when installed (`/pi-lens` shows a health line), and each auto-layers the project's own config.

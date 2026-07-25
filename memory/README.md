@@ -23,7 +23,9 @@ Emits `memory:wrote { keys }` / `memory:recalled { keys }`.
 ## Automatic behavior (hooks)
 
 - **Index injection** on the `context` hook — the `<pi-memory>` index rides every call (when `mode ≠ off`).
-- **Auto-capture** on `verify:failed` (from [lens](../lens)) — records a gotcha memory. Off by default (naive capture is noisy).
+- **Auto-capture** on `verify:failed` — records a gotcha memory. Off by default (naive capture is noisy).
+
+  This is an *optional enhancement*, not a dependency. pi-memory subscribes to the event; it does not care who publishes it. [pi-lens](../lens) does today, but with lens disabled, replaced, or not installed, auto-capture simply never fires and everything else works unchanged. There is no import between the two — only the bus.
 
 ## Configure
 

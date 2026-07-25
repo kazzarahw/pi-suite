@@ -26,6 +26,8 @@ pi install git:github.com/kazzarahw/pi-suite
 
 That installs all seven. Use `pi config` to enable or disable individual extensions, or narrow them in `settings.json` with package filtering.
 
+To **drop or replace one in the repo**, edit `SURFACE` in [`shared/surface.ts`](./shared/surface.ts); `package.json`'s `pi.extensions` is derived from it and checked against it. Nothing else needs touching — no test asserts a particular extension count, so the suite stays green with any subset.
+
 ## Layout
 
 ```
@@ -70,7 +72,7 @@ Full contract and the rules for writing an extension: [`shared/README.md`](./sha
 
 ### Load order
 
-`package.json` fixes the order: `memory, todo, git, consult, spawn, browser, lens`. It is significant — `tool_result` handlers chain as middleware in load order, so **lens loads last** and its diagnostics injection wraps outermost.
+Fixed by `SURFACE`, which `package.json` mirrors: `memory, todo, git, consult, spawn, browser, lens`. It is significant — `tool_result` handlers chain as middleware in load order, so the extension that augments other extensions' output must come last. pi-lens declares this with `wrapsToolResult: true` rather than the ordering being folklore, and `test/contract.test.ts` enforces it for whichever extension declares it.
 
 ## Development
 

@@ -1,16 +1,22 @@
 import { test, expect } from "bun:test";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { SURFACE, ALL_TOOLS, EVENTS } from "../shared/index.ts";
+import { SURFACE, ALL_TOOLS, MANIFEST, entryPoint, EVENTS } from "../shared/index.ts";
 import { loadExtension } from "../shared/test/harness.ts";
 
 /**
  * The drift guards.
  *
- * HOUSE-STYLE.md drifted from the code repeatedly: the appendix listed a tool count
- * that was wrong, described a pi-git worktree capability that was dead code, and
- * documented event subscriptions that did not exist. Each was found by hand, weeks
+ * The suite's surface used to be described in prose, and that description drifted from
+ * the code repeatedly: a tool count that was wrong, a pi-git worktree capability that
+ * was dead code, event subscriptions that did not exist. Each was found by hand, weeks
  * later. These tests make that class of drift a CI failure instead.
+ *
+ * **Every assertion here must hold for any subset of SURFACE.** Extensions are peers:
+ * disabling one to prototype a replacement must not turn the suite red. That rules out
+ * anything keyed to a particular count — an earlier version asserted "exactly seven
+ * agent tools", which meant commenting one entry out of package.json failed a test
+ * about a completely unrelated extension. Properties, not totals.
  */
 
 const ROOT = new URL("..", import.meta.url).pathname;
@@ -51,15 +57,36 @@ for (const ext of SURFACE) {
   });
 }
 
-test("the suite exposes exactly seven agent tools, with no duplicates", async () => {
+/**
+ * No two extensions claim the same tool name.
+ *
+ * This is the property that actually matters when one is swapped out: a replacement
+ * registering a name its predecessor still holds would have one silently shadow the
+ * other, depending on load order. Unlike a total, it stays true for any subset.
+ */
+test("no two extensions register the same tool name", async () => {
+  const owners = new Map<string, string>();
+  const clashes: string[] = [];
+  for (const ext of SURFACE) {
+    const api = await loadExtension(ext.dir);
+    for (const tool of api.tools.keys()) {
+      const existing = owners.get(tool);
+      if (existing) clashes.push(`"${tool}" registered by both ${existing} and ${ext.dir}`);
+      else owners.set(tool, ext.dir);
+    }
+  }
+  expect(clashes).toEqual([]);
+});
+
+test("the live registry, taken together, is exactly what SURFACE declares", async () => {
   const registered: string[] = [];
   for (const ext of SURFACE) {
     const api = await loadExtension(ext.dir);
     registered.push(...api.tools.keys());
   }
+  // Derived from SURFACE on both sides — true for whatever set SURFACE currently holds,
+  // rather than pinned to a count that a deliberate removal would break.
   expect(registered.sort()).toEqual([...ALL_TOOLS].sort());
-  expect(new Set(registered).size).toBe(registered.length);
-  expect(registered.length).toBe(7);
 });
 
 // ---------------------------------------------------------------------------
@@ -147,17 +174,55 @@ test("every extension documents itself, with the standard sections", () => {
   expect(offenders).toEqual([]);
 });
 
-test("SURFACE covers every extension directory declared in package.json", () => {
-  const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")) as {
-    pi: { extensions: string[] };
-  };
-  const declared = pkg.pi.extensions.map((p) => p.split("/")[1]!).sort();
-  expect(SURFACE.map((e) => e.dir).sort()).toEqual(declared);
+// ---------------------------------------------------------------------------
+// The manifest is derived, not maintained twice.
+// ---------------------------------------------------------------------------
+
+const manifest = (): string[] =>
+  (JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")) as { pi: { extensions: string[] } })
+    .pi.extensions;
+
+/**
+ * `package.json` must equal `MANIFEST` — same entries, same order.
+ *
+ * These were two hand-maintained lists of one fact, reconciled by comparing sorted
+ * directory names, which let their *order* drift freely even though order is load
+ * order and load order is significant. Deriving one from the other makes adding,
+ * removing, or swapping an extension a single edit that cannot silently disagree.
+ */
+test("package.json pi.extensions matches the manifest derived from SURFACE, in order", () => {
+  expect(manifest()).toEqual([...MANIFEST]);
 });
 
-test("package.json load order puts lens last (its tool_result wraps outermost)", () => {
-  const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")) as {
-    pi: { extensions: string[] };
-  };
-  expect(pkg.pi.extensions.at(-1)).toBe("./lens/index.ts");
+/**
+ * An extension declaring `wrapsToolResult` must load last.
+ *
+ * Pi chains `tool_result` handlers as middleware in load order, so the outermost
+ * wrapper runs last. pi-lens appends diagnostics to whatever a tool returned; loading it
+ * earlier would make its injection the thing a later handler wrapped.
+ *
+ * Asserted from the declaration rather than by naming lens, and skipped when no present
+ * extension claims the property — so removing lens does not fail a claim about lens.
+ */
+test("any extension that wraps tool_result is last in load order", () => {
+  const wrappers = SURFACE.filter((e) => e.wrapsToolResult);
+  if (wrappers.length === 0) return;
+  expect(wrappers).toHaveLength(1); // two outermost wrappers is a contradiction
+  expect(SURFACE.at(-1)?.dir).toBe(wrappers[0]!.dir);
+  expect(manifest().at(-1)).toBe(entryPoint(wrappers[0]!.dir));
+});
+
+/**
+ * The bus is the only cross-extension coupling, and it is optional in both directions.
+ *
+ * pi-memory subscribes to `verify:failed`, which pi-lens emits. That is the one link in
+ * the suite, and it must degrade to nothing rather than fail when the publisher is
+ * absent — otherwise pi-lens could not be swapped out. Loading pi-memory alone and
+ * firing nothing is exactly that scenario.
+ */
+test("an extension with a bus subscription loads and works with no publisher present", async () => {
+  const api = await loadExtension("memory");
+  expect([...api.tools.keys()].sort()).toEqual(["memory_recall", "memory_write"]);
+  // Subscribed, but nothing has emitted — no throw, and nothing recorded.
+  expect(api.emitted).toEqual([]);
 });
