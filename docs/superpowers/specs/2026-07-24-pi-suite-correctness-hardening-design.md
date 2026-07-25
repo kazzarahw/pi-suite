@@ -123,7 +123,7 @@ whole session, unrecoverably.
   bound for the life of the repository.
 - **Non-git projects get nothing.** `isRepo()` false → every hook silently no-ops,
   so the extension's entire value is unavailable outside a git repository. Every
-  comparable harness works there (see D15).
+  comparable harness works there (see D14).
 - **`restoreTree` leaves empty directories behind.** It removes extra files with
   `rmSync(join(cwd, file))` (`git/src/git.ts:76`) but never prunes their parents,
   so restoring past a `mkdir -p a/b/c` leaves the directory skeleton. Cosmetic,
@@ -347,7 +347,7 @@ yet. The alternative — putting `cwd` in the event payload — is the better lo
 design but changes the event vocabulary, which is sub-project 3's subject. Noted
 there rather than pre-empted here.
 
-### D14 — Scrub git's environment on every invocation
+### D13 — Scrub git's environment on every invocation
 
 `createGit` passes an explicit environment to every `git` call with
 `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY`,
@@ -364,7 +364,7 @@ Scrubbing is applied at the `createGit` boundary rather than per call site: a
 single forgotten call is exactly how this class of bug survives, and the guarantee
 is worth stating once for the whole module.
 
-### D15 — Non-git projects get a shadow-repo backend
+### D14 — Non-git projects get a shadow-repo backend
 
 `pi-git` no-ops entirely outside a git repository today. That is the largest gap
 in the extension, and every comparable harness covers it. Verified locally:
@@ -408,7 +408,7 @@ since git respects those regardless of repository root; and if the candidate set
 still exceeds `maxSnapshotBytes` (default 256 MB) the checkpoint is skipped with a
 one-time notice naming the largest offenders, rather than silently writing gigabytes.
 
-### D16 — Testing: injected deadlines, not real waiting
+### D15 — Testing: injected deadlines, not real waiting
 
 Every new bound is tested through an injected timeout of a few milliseconds
 against a fake that never replies, using a `within()` hang-detector. No test may
@@ -469,7 +469,7 @@ export function truncateForAgent(text: string, opts?: TruncateOptions): string;
 ```ts
 export interface ExecOptions {
   cwd?: string;
-  /** Merged over `process.env`. An `undefined` value **removes** the variable (D14). */
+  /** Merged over `process.env`. An `undefined` value **removes** the variable (D13). */
   env?: Record<string, string | undefined>;
   signal?: AbortSignal;
   timeout?: number;   // NEW — ms; defaults to DEFAULT_EXEC_TIMEOUT_MS
@@ -591,7 +591,7 @@ export function resolveBackend(exec: ExecFn, cwd: string): Promise<GitBackend>;
 /** Shadow location: `<agentDir()>/checkpoints/<sha256(realpath(cwd)).slice(0,16)>.git`. */
 export function shadowGitDir(cwd: string): string;
 
-/** Written to the shadow repo's `info/exclude` on init (D15). */
+/** Written to the shadow repo's `info/exclude` on init (D14). */
 export const DEFAULT_EXCLUDES: readonly string[];
 
 /** Bytes of candidate content above which a shadow snapshot is skipped. */
@@ -646,7 +646,7 @@ export function within<T>(ms: number, p: Promise<T>): Promise<T>;
 ```ts
 // git
 checkpointTtlDays: number;    // default 30 — age-based; a count cap is unsafe (D10)
-shadowNonGit: boolean;        // default true — checkpoint outside git repos (D15)
+shadowNonGit: boolean;        // default true — checkpoint outside git repos (D14)
 maxSnapshotBytes: number;     // default 268_435_456 — skip oversized shadow snapshots
 
 // spawn
@@ -659,11 +659,11 @@ jobTimeoutMs: number;      // default 900_000 (15 min)
 
 **Wave 1 — primitives.** `shared/cwd.ts`, `shared/deadline.ts`,
 `shared/truncate.ts`, the `exec` timeout with `killed` and env-unset support
-(D7, D14), and the `writeMemory` scope fix (D8). Each lands with its own tests and
+(D7, D13), and the `writeMemory` scope fix (D8). Each lands with its own tests and
 is independently useful. Nothing else changes yet, so the suite stays green
 throughout.
 
-**Wave 2 — apply.** The git environment scrub (D14) goes **first** — it is a P0 and
+**Wave 2 — apply.** The git environment scrub (D13) goes **first** — it is a P0 and
 it depends only on wave 1's env-unset support. Then the LSP bound and `dispose`
 (D1, D2); signal threading through the lens tool; the manager's cwd re-keying (D4);
 the trust gate (D5); linter cwd + timeout; the remaining eight `cwdOf` sites plus
@@ -674,11 +674,11 @@ green.
 
 **Wave 3 — repair.** The memory index cache (D9); git's snapshot-before-restore
 plus the two tree-navigation hooks (D10); the shadow-repo backend for non-git
-projects (D15); the empty-directory prune in `restoreTree`; and age-based
+projects (D14); the empty-directory prune in `restoreTree`; and age-based
 checkpoint GC last, since it is the only step a revert cannot undo.
 
 Checkpoints between waves. Wave 1 and wave 3 are independent of each other; wave 2
-depends on wave 1. Within wave 3, the backend split (D15) lands before GC so the
+depends on wave 1. Within wave 3, the backend split (D14) lands before GC so the
 pruning logic is written against both backends rather than retrofitted to one.
 
 ---
@@ -742,7 +742,7 @@ Structural:
   contract work that advertises it.
 - **Retry or reconnect for a dead LSP server.** This sub-project makes failure
   fast, bounded, and honest; automatic recovery is a feature.
-- **Tracking only the files Pi itself edited** (Claude Code's model, D15). It
+- **Tracking only the files Pi itself edited** (Claude Code's model, D14). It
   bounds cost by construction and needs no exclude list, but it cannot revert what
   Pi did not do — a stray `rm` in a bash call, a build artifact — which breaks the
   "the tree matches the session position" guarantee the snapshot model provides.
@@ -759,7 +759,7 @@ cannot be undone by reverting the commit. It ships last, behind a TTL that
 defaults to 30 days, and is verified against a throwaway repository before being
 pointed at anything real.
 
-The shadow repos (D15) are the other new footprint, but a benign one: they live
+The shadow repos (D14) are the other new footprint, but a benign one: they live
 entirely under `<agentDir()>/checkpoints/`, touch nothing in the project, and are
 removable with `rm -rf`. Reverting the code simply strands them; nothing reads them
 and nothing breaks.
