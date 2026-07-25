@@ -602,8 +602,13 @@ Structural:
 ## Rollback
 
 Each wave is a series of small commits on `main` with CI green at every step, so
-any individual fix reverts independently. The two changes with a persistent
-footprint are the git undo ref and checkpoint GC; both live under
-`refs/pi-git/`, are invisible to normal git operation, and are removable with
-`git update-ref -d`. No user data format changes: memory files, config files, and
-checkpoint refs all keep their existing on-disk shape.
+any individual fix reverts independently. The only change with a persistent
+footprint is checkpoint GC, which *deletes* refs — so it is the one step that
+cannot be undone by reverting the commit. It ships last, behind a TTL that
+defaults to 30 days, and is verified against a throwaway repository before being
+pointed at anything real.
+
+Everything else is confined to `refs/pi-git/`, invisible to normal git operation
+and removable with `git update-ref -d`. No user data format changes: memory files,
+config files, and checkpoint refs all keep their existing on-disk shape, so a
+revert to sub-project 1's code reads them unchanged.
