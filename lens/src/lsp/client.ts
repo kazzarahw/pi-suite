@@ -203,12 +203,28 @@ export function createLspClient(io: LspIO, opts: LspClientOptions = {}): LspClie
         method,
       });
 
+      /**
+       * An abort arriving on the caller's signal has two very different causes, and
+       * saying "aborted" for both is the same defect as answering a wedged server
+       * with "(none found)": the agent reads a cancellation where the truth is a
+       * server that never replied. `AbortSignal.timeout` marks its reason as a
+       * `TimeoutError`, and `AbortSignal.any` carries that reason through, so the
+       * two are distinguishable — see `shared/deadline.ts`.
+       */
+      const fromAbort = (): LspUnavailableError =>
+        (signal?.reason as { name?: string } | undefined)?.name === "TimeoutError"
+          ? new LspUnavailableError(
+              "timeout",
+              method,
+              `[pi-lens] the language server did not respond to ${method} in time`,
+            )
+          : new LspUnavailableError("disposed", method, `[pi-lens] ${method} aborted`);
+
       if (signal?.aborted) {
-        settle(() => reject(new LspUnavailableError("disposed", method, `[pi-lens] ${method} aborted`)));
+        settle(() => reject(fromAbort()));
         return;
       }
-      onAbort = () =>
-        settle(() => reject(new LspUnavailableError("disposed", method, `[pi-lens] ${method} aborted`)));
+      onAbort = () => settle(() => reject(fromAbort()));
       signal?.addEventListener("abort", onAbort, { once: true });
 
       timer = setTimeout(

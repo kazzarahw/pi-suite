@@ -47,6 +47,7 @@ export default function piGit(pi: ExtensionAPI): void {
 
   let lastCheckpointedEntryId: string | null = null;
   let pendingFork: PendingFork | null = null;
+  let pendingTreeTarget: string | null = null;
   let cached: { sessionId: string; maxFileBytes: number; store: CheckpointStore } | null = null;
 
   // Files left out of a checkpoint for size. Collected rather than reported from
@@ -148,13 +149,26 @@ export default function piGit(pi: ExtensionAPI): void {
     }
   });
 
-  // About to navigate. Keyed to the *leaf*, not to the turn's user message: the user
-  // message already holds the state it was sent in, and overwriting that with the
-  // state being left would make "rewind to this message" a no-op. Two keys, two
-  // meanings — which is what lets forward and backward navigation both be right.
-  pi.on("session_before_tree", async (_event, ctx) => {
+  /**
+   * About to navigate. Two things happen here.
+   *
+   * The checkpoint is keyed to the *leaf*, not to the turn's user message: the user
+   * message already holds the state it was sent in, and overwriting that with the
+   * state being left would make "rewind to this message" a no-op. Two keys, two
+   * meanings — which is what lets forward and backward navigation both be right.
+   *
+   * And `preparation.targetId` — the entry the user actually selected — is stashed
+   * for `session_tree`, which does not carry it. Selecting a user message moves the
+   * leaf to that message's *parent* and puts its text back in the composer, so
+   * `newLeafId` is one entry earlier than what was chosen, and for the first message
+   * of a session it is `null`. Restoring from `newLeafId` therefore missed entirely
+   * at exactly the point a user most wants an undo: back to the very beginning.
+   * `targetId` is the right key in both directions.
+   */
+  pi.on("session_before_tree", async (event, ctx) => {
     const cfg = loadConfig();
     if (cfg.mode === "off") return;
+    pendingTreeTarget = event.preparation?.targetId ?? null;
     const store = storeFor(ctx as GitCtx, cfg);
     if (!store) return;
     const leafId = currentLeafId((ctx as GitCtx).sessionManager ?? {});
@@ -167,17 +181,20 @@ export default function piGit(pi: ExtensionAPI): void {
     }
   });
 
-  // Navigated. Walk up from the destination to the nearest entry that has a
-  // checkpoint and restore it — the destination itself is often an assistant entry
-  // that was never a checkpoint anchor.
+  // Navigated. Prefer the entry the user chose; fall back to the resulting leaf when
+  // there was no preparation (a programmatic navigation). Either way, walk up to the
+  // nearest checkpointed ancestor — the destination is often an assistant entry that
+  // was never a checkpoint anchor.
   pi.on("session_tree", async (event, ctx) => {
     const cfg = loadConfig();
+    const chosen = pendingTreeTarget;
+    pendingTreeTarget = null;
     if (cfg.mode === "off") return;
     const store = storeFor(ctx as GitCtx, cfg);
     if (!store) return;
     const sm = (ctx as GitCtx).sessionManager ?? {};
     try {
-      const start = event.newLeafId ?? currentLeafId(sm);
+      const start = chosen ?? event.newLeafId ?? currentLeafId(sm);
       let target = await resolveRestoreTarget(sm, start, (id) => store.has(id));
       if (!target) {
         const fallback = currentUserEntryId(sm);

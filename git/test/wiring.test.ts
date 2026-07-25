@@ -286,6 +286,53 @@ test("navigating somewhere with no checkpoint says so instead of silently doing 
   });
 });
 
+// The case the live dogfood exposed. Selecting a user message in /tree moves the leaf
+// to that message's *parent* and puts its text back in the composer, so `newLeafId` is
+// one entry earlier than what was chosen — and `null` for the first message of a
+// session. Restoring from `newLeafId` did nothing at exactly the point a user most
+// wants an undo: all the way back. `preparation.targetId` is the entry actually chosen.
+test("navigating to the first user message undoes the whole session", async () => {
+  await withConfig({}, async () => {
+    const api = await loadExtension("git");
+    const cwd = project();
+    try {
+      const made = join(cwd, "made.txt");
+      await turn(api, "u1", cwd, [{ path: made, content: "created in turn 1" }]);
+      await turn(api, "u2", cwd, [{ path: made, content: "changed in turn 2" }]);
+      expect(existsSync(made)).toBe(true);
+
+      // Pi reports newLeafId: null — there is no entry before the first message.
+      await api.fire("session_before_tree", { preparation: { targetId: "u1", oldLeafId: "a2" } }, fakeCtx({ cwd, leafId: "a2" }));
+      await api.fire("session_tree", { newLeafId: null, oldLeafId: "a2" }, fakeCtx({ cwd, leafId: null }));
+
+      expect(existsSync(made)).toBe(false);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+});
+
+test("the chosen entry wins over the resulting leaf", async () => {
+  await withConfig({}, async () => {
+    const api = await loadExtension("git");
+    const cwd = project();
+    try {
+      const f = write(cwd, "a.txt", "v0");
+      await turn(api, "u1", cwd, [{ path: f, content: "v1" }]);
+      await turn(api, "u2", cwd, [{ path: f, content: "v2" }]);
+
+      // newLeafId points at u1 (the parent of the chosen u2); the target is u2, whose
+      // checkpoint holds "v1" — the state u2 was sent in.
+      await api.fire("session_before_tree", { preparation: { targetId: "u2", oldLeafId: "a2" } }, fakeCtx({ cwd, leafId: "a2" }));
+      await api.fire("session_tree", { newLeafId: "u1", oldLeafId: "a2" }, fakeCtx({ cwd, leafId: "u1" }));
+
+      expect(read(f)).toBe("v1");
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+});
+
 // --- The cases the storage rewrite exists for ------------------------------
 
 test("a session rooted above a nested repository restores both sides", async () => {

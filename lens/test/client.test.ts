@@ -1,6 +1,7 @@
 import { test, expect } from "bun:test";
 import { createLspClient, LspUnavailableError } from "../src/lsp/client.ts";
 import { within } from "../../shared/test/harness.ts";
+import { deadline } from "../../shared/index.ts";
 import { encodeMessage, decodeMessages } from "../src/lsp/framing.ts";
 
 function fakeIo() {
@@ -119,6 +120,36 @@ test("an already-aborted signal rejects without waiting for the deadline", async
     client.definition("file:///a.ts", { line: 1, col: 1 }, AbortSignal.abort()).catch((e: unknown) => e),
   );
   expect(err).toBeInstanceOf(LspUnavailableError);
+});
+
+// A caller-supplied deadline and a user pressing Esc both arrive as an abort, and
+// calling both "aborted" tells the agent someone cancelled when the truth is a server
+// that never replied — the same defect as answering with "(none found)". A live run
+// against a wedged typescript-language-server reported "aborted"; this is what caught it.
+test("a deadline on the caller's signal reports a timeout, not a cancellation", async () => {
+  const { io } = fakeIo();
+  const client = createLspClient(io, { requestTimeoutMs: 10_000 });
+  const err = (await within(
+    2000,
+    client.references("file:///a.ts", { line: 1, col: 1 }, deadline(20)).catch((e: unknown) => e),
+  )) as LspUnavailableError;
+
+  expect(err).toBeInstanceOf(LspUnavailableError);
+  expect(err.reason).toBe("timeout");
+  expect(err.message).toContain("did not respond");
+  expect(client.pendingCount()).toBe(0);
+});
+
+test("a user abort still reports as a cancellation", async () => {
+  const { io } = fakeIo();
+  const client = createLspClient(io, { requestTimeoutMs: 10_000 });
+  const ac = new AbortController();
+  const p = client.references("file:///a.ts", { line: 1, col: 1 }, ac.signal).catch((e: unknown) => e);
+  ac.abort();
+  const err = (await within(2000, p)) as LspUnavailableError;
+
+  expect(err.reason).toBe("disposed");
+  expect(err.message).toContain("aborted");
 });
 
 test("a normal reply still resolves and clears its pending entry", async () => {

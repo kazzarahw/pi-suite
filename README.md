@@ -7,7 +7,7 @@ A small, self-consistent, **agent-facing** extension suite for [Pi](https://pi.d
 | Extension | What it does | Agent tools |
 |---|---|---|
 | [`consult/`](./consult) | A second opinion — runs `claude --model` for read-only advice | `consult` |
-| [`git/`](./git) | Automatic per-turn checkpoints; rewinding a message reverts the files changed since it (via Pi's fork lifecycle) | *none — pure hooks* |
+| [`git/`](./git) | Automatic file checkpoints; moving through the session tree moves your files with it, forward and back. Works outside a git repository, and across nested ones | *none — pure hooks* |
 | [`lens/`](./lens) | Real-time LSP + linter diagnostics (multi-language) injected after edits, opt-in auto-format, and an automatic test/verify pass | `lens` *(action enum)* |
 | [`memory/`](./memory) | Persistent write-back memory: record durable learnings, recall them across sessions | `memory_recall`, `memory_write` |
 | [`spawn/`](./spawn) | Delegate tasks to isolated subagents, one or many in parallel | `spawn` |

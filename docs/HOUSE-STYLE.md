@@ -98,7 +98,7 @@ defined once in `shared/events.ts`:
 |---|---|---|
 | `lens:clean` / `lens:issues` | pi-lens | `{ file, diagnostics[] }` |
 | `verify:passed` / `verify:failed` | pi-lens | `{ cmd, failures[] }` |
-| `git:checkpoint` / `git:rollback` | pi-git | `{ ref, reason }` |
+| `git:checkpoint` / `git:rollback` | pi-git | `{ entryId, reason, files }` / `{ entryId, reason, written, removed }` |
 | `todo:updated` / `todo:task-complete` | pi-todo | `{ todos[] }` / `{ task }` |
 | `memory:wrote` / `memory:recalled` | pi-memory | `{ keys[] }` |
 | `spawn:started` / `spawn:finished` | pi-spawn | `{ agent, summary? }` |
@@ -106,9 +106,9 @@ defined once in `shared/events.ts`:
 
 **Cooperation this enables — what's wired today vs. intended:**
 - **Wired:** pi-memory records a gotcha on `verify:failed` (pi-lens → pi-memory; opt-in via `autoCapture`).
-- **Wired:** pi-git hooks Pi's own **fork lifecycle** (`session_before_fork` → `session_shutdown{reason:"fork"}`) so a user message-rewind also reverts the files changed since — the harness surface at its purest: no tool, no command, the agent isn't even aware.
+- **Wired:** pi-git follows Pi's **session tree** (`session_before_tree` → `session_tree`) and its **fork lifecycle** (`session_before_fork` → `session_shutdown{reason:"fork"}`), so moving through the conversation moves the files with it, forward as well as back — the harness surface at its purest: no tool, no command, the agent isn't even aware. It also takes `tool_call` on `write`/`edit`, the one moment a file's pre-edit bytes are still on disk.
 - **By internal state, not the bus:** pi-lens gates its verify pass on "an edit landed and parses cleanly" via its own `dirty`/`hasErrors` flags rather than a `lens:clean` event — same effect, no cross-extension coupling.
-- **Intended but not wired:** pi-git checkpointing on `todo:task-complete` — pi-git instead checkpoints **every turn** (keyed to the user-message entry), which is strictly more robust; the event is available if a finer trigger is ever wanted.
+- **Intended but not wired:** pi-git checkpointing on `todo:task-complete` — pi-git instead checkpoints **every turn** (keyed to the user-message entry) and again whenever the session navigates (keyed to the leaf being left), which is strictly more robust; the event is available if a finer trigger is ever wanted.
 
 **Hook hygiene:** keep handlers fast and idempotent; never block the loop on slow
 work without honoring `ctx.signal`; reserve `{ block: true }` for the `"block"`
@@ -214,7 +214,16 @@ Contents:
 - The config mechanism (§7) — `config.ts`. Path resolution, read/write, and the
   corrupt-file fallback are shared; each extension keeps its own `parse`.
 - The settings panel (§5) — `settings-panel.ts`.
-- The subprocess runner (§9) — `exec.ts`. Always resolves, never rejects.
+- The subprocess runner (§9) — `exec.ts`. Always resolves, never rejects; every
+  result carries `killed`, true only when the child was cut off at its deadline.
+- The working directory — `cwd.ts`. `cwdOf(ctx)` is the **only** permitted way
+  to resolve one; a bare `process.cwd()` anywhere else fails
+  `test/boundaries.test.ts`. The idiom was copy-pasted into four files and missed in
+  five, and each of the five was a live defect.
+- Deadlines — `deadline.ts`. `deadline(ms, parent)` composes a timeout with the
+  caller's abort signal and keeps the two distinguishable, so a bounded wait is never
+  reported as a cancellation.
+- Agent-facing truncation — `truncate.ts`, over Pi's own utilities.
 - A fake `ExtensionAPI` for wiring tests — `test/harness.ts`.
 
 `shared/` must stay a **leaf**: it may not import from any extension. Enforced by
@@ -240,7 +249,7 @@ read tools (pi-todo).
 | Extension | Tools (agent) | Emits / subscribes · hooks (harness) | Commands (user) |
 |---|---|---|---|
 | **pi-consult** | `consult` | emits `consult:answered` | `/pi-consult` |
-| **pi-git** | **none** | emits `git:*`; hooks: checkpoint each turn (keyed to the user-message entry), **restore on Pi's fork lifecycle**; worktree capability (pi-spawn integration deferred) | `/pi-git` |
+| **pi-git** | **none** | emits `git:*`; hooks: checkpoint each turn (keyed to the user-message entry) and each navigation (keyed to the leaf), record pre-edit state on `tool_call`, **restore on session-tree navigation and on Pi's fork lifecycle**; worktree capability (pi-spawn integration deferred) | `/pi-git` |
 | **pi-lens** | `lens` *(action enum)* | emits `lens:*`/`verify:*`; hooks: inject diagnostics (LSP + linters, multi-language toolchain) + opt-in auto-format on `tool_result`, **auto-verify on `agent_settled`** (no verify tool), prewarm servers on `session_start` | `/pi-lens` |
 | **pi-memory** | `memory_recall`, `memory_write` | emits `memory:*`; subs `verify:failed` (auto-capture); hooks: inject the memory INDEX on `context` | `/pi-memory` |
 | **pi-spawn** | `spawn` *(`tasks` list — 1 or many)* | emits `spawn:*` | `/pi-spawn` |
