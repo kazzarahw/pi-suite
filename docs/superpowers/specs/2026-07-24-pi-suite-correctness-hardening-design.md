@@ -79,7 +79,38 @@ blobs went to the shadow object store. Verified locally that OpenCode's snapshot
 directories each carry their own `index` file, which is exactly the file that got
 written to the wrong side.
 
-**6. The LSP project root is captured at load time.** `lens/index.ts:34` runs
+**Severity note.** This was a P0 while git was the storage layer, because a
+misdirected `checkout-index` could write into an unrelated repository. Under D10
+and D14 git no longer writes anything, so the residual exposure is that
+`status --porcelain` enumerates the wrong repository's dirty files and pi-git
+tracks the wrong paths — wrong, but not destructive. The scrub is still specified
+(D13); it drops from P0 to P1 and no longer gates wave 2.
+
+**6. Whole-tree snapshots half-restore across a nested repository.** Reproduced
+with the exact plumbing `git.ts` uses. Given a session rooted at a directory that
+contains a nested git repository — `~/dev/pi` containing `~/dev/pi/pi-suite`, the
+author's normal layout — `git add -A` records the nested repository as a
+**gitlink** (`160000 commit <sha>`), capturing a pointer to its HEAD and none of
+its contents. Editing one file on each side and restoring produces:
+
+```
+outer/test.txt        outer v2 EDITED  →  outer v1          (restored)
+outer/inner/test.txt  inner v2 EDITED  →  inner v2 EDITED   (NOT restored)
+```
+
+A silent partial restore, which is worse than no restore: the user believes the
+state was returned. Two further faults compound it. `ls-files --others` reports
+the nested repository as `inner/` while `ls-tree` reports `inner`, so the
+remove-extras loop (`git/src/git.ts:74-77`) does not match them and targets **the
+entire nested repository for deletion**; `rmSync` without `recursive` throws on a
+directory, which saves the data by accident but aborts the restore mid-loop,
+swallowed as a `console.error` at `git/index.ts:58` and leaving the tree in a
+partially-restored state.
+
+This is a property of tree snapshots at a work-tree boundary, not a bug in the
+loop. It is why D10 replaces the storage model.
+
+**7. The LSP project root is captured at load time.** `lens/index.ts:34` runs
 `const cwd = process.cwd()` in the extension factory and passes it to
 `createManager(cwd)` on the next line. That value becomes the child process `cwd`
 and the `initialize` `rootUri`. When Pi's session cwd differs from the process
@@ -110,24 +141,19 @@ whole session, unrecoverably.
 - **`pi-memory` re-reads every memory file on every LLM call.**
   `memory/index.ts:29` calls `listMemories(cwd)` inside the `context` hook, which
   fires once per call and hits the disk for every file each time.
-- **`git.restoreTree` is destructive with no undo.** It is `checkout-index -a -f`
-  plus removal of extras (`git/src/git.ts:63-78`), and `restoreOnForkShutdown`
-  (`hooks.ts:42`) calls it without snapshotting first. Once a fork restores, the
-  discarded state is unrecoverable.
+- **`restoreTree` is destructive with no undo.** `restoreOnForkShutdown`
+  (`hooks.ts:42`) calls it without snapshotting first, so a fork discards the
+  current state unrecoverably.
 - **File state follows session position in only one direction.** `pi-git` hooks
   the fork path alone, so rewinding a message reverts files, but navigating the
   session tree forward or across branches leaves the working tree behind. The
   automatic tracking the extension exists to provide is half-wired.
-- **Checkpoint refs are never collected.** `listRefs` (`git/src/git.ts:22,93`) has
+- **Checkpoints are never collected.** `listRefs` (`git/src/git.ts:22,93`) has
   zero production callers — only tests. `refs/pi-git/checkpoints/` grows without
   bound for the life of the repository.
 - **Non-git projects get nothing.** `isRepo()` false → every hook silently no-ops,
   so the extension's entire value is unavailable outside a git repository. Every
-  comparable harness works there (see D14).
-- **`restoreTree` leaves empty directories behind.** It removes extra files with
-  `rmSync(join(cwd, file))` (`git/src/git.ts:76`) but never prunes their parents,
-  so restoring past a `mkdir -p a/b/c` leaves the directory skeleton. Cosmetic,
-  but it means the restored tree is not byte-for-byte the snapshot.
+  comparable harness covers this case (D10).
 
 ---
 
@@ -287,7 +313,7 @@ Injection stays at `messages[0]` (per the approved answer). The prompt cache is
 still invalidated when a memory actually changes, which is correct and rare — the
 defect was re-reading the disk on every call, not the placement.
 
-### D10 — Git follows the session tree in both directions; no manual command
+### D10 — File state follows the session tree in both directions; no manual command
 
 The defect is that a restore discards the current working tree unrecoverably. The
 fix is **not** an undo command. `pi-git` exists to make file state follow session
@@ -297,11 +323,11 @@ own navigation *is* the undo/redo interface and files simply move with you. A
 
 Two changes:
 
-**Snapshot before restoring.** Every restore first checkpoints the current working
-tree against the entry being left. Since checkpoints are keyed by entry id in a ref
-namespace, the abandoned state becomes an ordinary checkpoint, reachable by
-navigating back to it. This dissolves "destructive with no undo" without inventing
-an undo concept, a second ref namespace, or a command.
+**Snapshot before restoring.** Every restore first checkpoints the current state
+against the entry being left. Checkpoints are keyed by entry id, so the abandoned
+state becomes an ordinary checkpoint, reachable by navigating back to it. This
+dissolves "destructive with no undo" without inventing an undo concept, a separate
+store, or a command.
 
 **Hook tree navigation.** `pi-git` currently hooks only the fork path
 (`session_before_fork` + `session_shutdown`), so rewinding a message reverts files
@@ -317,12 +343,47 @@ hooks can therefore reuse `currentUserEntryId(sm)` unchanged — it reads the br
 which is correct before navigation and correct again after it — and no leaf-to-turn
 resolution is needed on either side.
 
+**Storage is per-file and content-addressed, not a git tree.** This replaces the
+`write-tree`/`commit-tree`/private-ref mechanism entirely. A checkpoint is a
+manifest mapping **absolute path → content hash**, and blobs are stored once by
+`sha256` under `<agentDir()>/checkpoints/`.
+
+The reason is P0 #6: a tree snapshot is defined relative to a work-tree root, so a
+nested repository inside that root becomes an opaque gitlink and its contents are
+neither captured nor restored. Absolute paths have no root and therefore no
+boundary — `~/dev/pi/test.txt` and `~/dev/pi/pi-suite/test.txt` are simply two
+entries in the same manifest, restored identically.
+
+The same property removes several other problems at once, which is the strongest
+argument for it: non-git directories need no special backend, there is no
+`.gitignore` semantics question, no exclude list, no size cap, no empty-directory
+pruning, no `inner` vs `inner/` mismatch, and no `write-tree` object churn of the
+kind that reportedly grew to hundreds of gigabytes of orphaned packfiles in
+OpenCode's early snapshot service.
+
+Two structures make restore correct without rewriting history:
+
+- `origin[path]` — the file's content hash (or `ABSENT`) the first time pi-git
+  ever saw it, captured *before* the edit that revealed it.
+- `manifest[entryId][path]` — its hash (or `ABSENT`) at that checkpoint.
+
+Restoring entry *X* writes, for every known path, `manifest[X][path]` if that
+entry recorded it, and `origin[path]` otherwise. A path first tracked after *X*
+therefore restores to its pre-Pi state rather than being ignored or wrongly
+deleted, and no back-filling of earlier manifests is required.
+
+Prior art agrees this is the hard case and mostly does not solve it. Of four Pi
+rewind extensions, `pi-rewind` and `pi-rewind-hook` do not mention nested
+repositories; the most mature, `@ayulab/pi-rewind`, detects and **excludes** them,
+documenting that "to protect a nested repository, start Pi in that repository
+root." Excluding is safe but leaves the case uncovered; per-file storage covers it.
+
 **GC by age, not by count.** A "newest N" cap is unsafe once navigation can reach
-arbitrarily far back: pruning a checkpoint that is still reachable in the session
-tree would silently break its restore. Checkpoints are instead pruned when older
-than `checkpointTtlDays` (default 30), which bounds growth across sessions while
-leaving everything reachable in a live session intact. This gives `listRefs` its
-first production caller; `Git` gains `deleteRef`.
+arbitrarily far back: pruning a checkpoint still reachable in the session tree
+would silently break its restore. Session directories are pruned when older than
+`checkpointTtlDays` (default 30), then unreferenced blobs are swept. Content
+addressing means an unchanged file costs nothing on re-checkpoint and a file
+edited fifty times stores fifty versions only if all fifty differ.
 
 ### D11 — Slash commands are configuration surface, not action surface
 
@@ -352,9 +413,7 @@ there rather than pre-empted here.
 `createGit` passes an explicit environment to every `git` call with
 `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY`,
 `GIT_ALTERNATE_OBJECT_DIRECTORIES`, `GIT_COMMON_DIR`, and `GIT_NAMESPACE`
-**unset**, then sets only what it needs (the temp index, or the shadow backend's
-dir and worktree). Repository identity comes from `cwd` or explicit arguments —
-never from ambient state.
+**unset**. Repository identity comes from `cwd` alone — never from ambient state.
 
 `ExecOptions.env` therefore becomes `Record<string, string | undefined>`, where
 `undefined` **removes** the variable rather than merging it. Today `env` can only
@@ -364,10 +423,30 @@ Scrubbing is applied at the `createGit` boundary rather than per call site: a
 single forgotten call is exactly how this class of bug survives, and the guarantee
 is worth stating once for the whole module.
 
-### D14 — Non-git projects get a shadow-repo backend
+### D14 — Git is a change detector, never storage
 
-`pi-git` no-ops entirely outside a git repository today. That is the largest gap
-in the extension, and every comparable harness covers it. Verified locally:
+Per-file storage (D10) captures whatever pi-git is told about. Pi's `tool_call`
+hook fires **before** a tool executes and carries typed `input`, so the pre-edit
+bytes of every `write`/`edit` target are readable at exactly the right moment.
+That covers changes Pi makes through its own tools.
+
+It does not cover changes made *around* them — a `rm` inside a `bash` call, a
+build step, a generator. To catch those, at turn start in a directory that is a
+git repository, `git status --porcelain` is used to discover which paths are
+dirty, and those paths join the tracked set.
+
+Git is used **only to enumerate paths**. It never stores content, never writes an
+index, never creates tree or commit objects, and never restores anything. This is
+the whole point of the split: the failure modes catalogued in P0 #5 and #6 —
+index corruption from an inherited environment, gitlinks at work-tree boundaries,
+orphaned packfiles — all belong to git-as-storage, and none of them apply to
+git-as-`status`.
+
+Outside a git repository the detector simply yields nothing and coverage degrades
+to tool-driven writes, which is Claude Code's scope and still strictly more than
+today's behavior of doing nothing at all.
+
+Verified harness comparison, from local installs rather than documentation:
 
 | Harness | Mechanism | Location |
 |---|---|---|
@@ -376,37 +455,9 @@ in the extension, and every comparable harness covers it. Verified locally:
 | Gemini CLI | shadow git repo (per docs) | `~/.gemini/history/<project_hash>` |
 | Codex | none — no file history of any kind on disk | — |
 
-None requires the project to be a git repository; Codex, which has no file
-checkpointing at all, is also the one whose users report that rewinding the
-conversation leaves edits on disk.
-
-**Two backends behind the existing `Git` interface**, resolved once at
-construction:
-
-- **git project** → today's behavior: dangling commits in the real object
-  database under `refs/pi-git/`. Near-zero cost, because an unchanged tree's blobs
-  and trees already exist; a checkpoint adds one commit object.
-- **non-git project** → `git --git-dir=<agentDir>/checkpoints/<hash-of-cwd>.git
-  --work-tree=<cwd>`, `init` on first use.
-
-The two differ only in the argument prefix passed to `git`; `snapshotTree`,
-`restoreTree`, the ref layout, and every hook are shared. The shadow repo costs one
-full copy of the tree on first checkpoint, then only changed blobs — which is why
-it is *not* used for git projects, where that copy is pure waste.
-
-**Home directory, not in-project.** Gemini and OpenCode both store outside the
-project tree, and an in-project store would need gitignoring, would be swept by
-`rm -rf` of build directories, and could be committed by accident. `agentDir()`
-already honors `PI_CODING_AGENT_DIR`.
-
-**Bounding what a non-git snapshot captures.** A git project's `.gitignore` bounds
-`add -A`; a non-git project may have none, and `node_modules/` or `.venv/` would be
-swept in. Three mitigations: a default exclude list written to the shadow repo's
-`info/exclude` (`node_modules`, `.venv`, `venv`, `target`, `dist`, `build`,
-`__pycache__`, `.cache`, `*.log`); any `.gitignore` present is still honored,
-since git respects those regardless of repository root; and if the candidate set
-still exceeds `maxSnapshotBytes` (default 256 MB) the checkpoint is skipped with a
-one-time notice naming the largest offenders, rather than silently writing gigabytes.
+Codex, the one with no file checkpointing, is also the one whose users report that
+rewinding the conversation leaves edits on disk. Claude Code, the one that works
+in any directory, is the one whose storage model this adopts.
 
 ### D15 — Testing: injected deadlines, not real waiting
 
@@ -578,59 +629,80 @@ export function listMemories(cwd: string): Memory[];
 export function invalidateIndexCache(cwd?: string): void;
 ```
 
-### `git/src/backend.ts` (new)
+### `git/src/store.ts` (new) — the checkpoint store
+
+Replaces the ref-and-tree machinery. Pure filesystem, no git.
 
 ```ts
-export type GitBackend =
-  | { kind: "repo" }                                    // the project's own repo
-  | { kind: "shadow"; gitDir: string; workTree: string };  // non-git project
+/** A file's recorded state: a blob hash, or absent (it did not exist). */
+export type FileState = { hash: string } | { absent: true };
 
-/** Choose a backend for `cwd`: the project repo when it is one, else a shadow repo. */
-export function resolveBackend(exec: ExecFn, cwd: string): Promise<GitBackend>;
+/** entryId → (absolute path → state at that checkpoint). */
+export type Manifest = Record<string, FileState>;
 
-/** Shadow location: `<agentDir()>/checkpoints/<sha256(realpath(cwd)).slice(0,16)>.git`. */
-export function shadowGitDir(cwd: string): string;
+export interface CheckpointStore {
+  /** Record `paths` at `entryId`. Blobs are written once, keyed by sha256. */
+  checkpoint(entryId: string, paths: readonly string[]): Promise<Manifest>;
+  /** The state a path had when pi-git first saw it, before any edit. */
+  rememberOrigin(path: string): Promise<void>;
+  /** Restore to `entryId`: manifest state where recorded, else origin state. */
+  restore(entryId: string): Promise<{ written: string[]; removed: string[] }>;
+  has(entryId: string): Promise<boolean>;
+  /** Every path the session has tracked. */
+  tracked(): readonly string[];
+  /** Drop sessions older than `ttlDays`, then sweep unreferenced blobs. */
+  gc(ttlDays: number, nowMs: number): Promise<{ sessions: number; blobs: number }>;
+}
 
-/** Written to the shadow repo's `info/exclude` on init (D14). */
-export const DEFAULT_EXCLUDES: readonly string[];
-
-/** Bytes of candidate content above which a shadow snapshot is skipped. */
-export const DEFAULT_MAX_SNAPSHOT_BYTES = 268_435_456;   // 256 MB
+/** Root: `<agentDir()>/checkpoints/<sessionId>/`, blobs at `../blobs/<sha256>`. */
+export function createStore(sessionId: string, root?: string): CheckpointStore;
 ```
 
-### `git/src/git.ts` and `git/src/checkpoints.ts` (modified)
+Blobs are shared across sessions under a single `blobs/` directory, so the same
+file content checkpointed in ten sessions is stored once. `gc` sweeps by
+reference-counting live manifests, which is why blob deletion is a separate step
+from session deletion.
+
+### `git/src/detect.ts` (new) — git as change detector only
 
 ```ts
-// git.ts
-export function createGit(exec: ExecFn, cwd: string, backend?: GitBackend): Git;
-
-// Git interface gains:
-deleteRef(ref: string): Promise<void>;
-/** Which backend is in use — so hooks can report "not a repo" vs "shadowed". */
-readonly backend: GitBackend;
-
-// checkpoints.ts
-
-/** Prune checkpoint refs older than `ttlDays`. Returns how many were removed. */
-export function pruneCheckpoints(git: Git, ttlDays: number, nowMs: number): Promise<number>;
+/** Paths reported dirty by `git status --porcelain`, absolute. Empty when not a repo. */
+export function dirtyPaths(exec: ExecFn, cwd: string): Promise<string[]>;
 ```
 
-`nowMs` is injected rather than read from the clock so the TTL is testable without
-waiting or stubbing globals.
+The only git call remaining in the checkpoint path (D14). Read-only: no index, no
+objects, no refs.
+
+### `git/src/git.ts` and `git/src/checkpoints.ts` (removed)
+
+`snapshotTree`, `restoreTree`, `updateRef`, `readRef`, `listRefs`, `checkpointRef`,
+`findCheckpoint`, `restoreTo`, and `withTempIndex` have no remaining callers once
+D10 lands, and are deleted along with their tests. `isRepo` moves to `detect.ts`.
+`currentUserEntryId` is kept unchanged — it is the entry-id resolution both hooks
+rely on and is independent of storage.
+
+The worktree functions (`worktreeAdd`, `worktreeList`, `worktreeRemove`) were
+already dead code before this sub-project and remain out of scope; they are not
+part of the checkpoint path either way.
 
 ### `git/index.ts` (modified)
 
-Two hooks are added, mirroring the existing fork pair:
+Two hooks are added, mirroring the existing fork pair, plus one to feed the
+tracked set:
 
 ```ts
-// Before navigating: preserve the tree we are leaving, so no state is discarded.
-pi.on("session_before_tree", …)   // checkpoint at currentUserEntryId(sm)
+// Learn the pre-edit bytes of anything Pi is about to write (D14).
+pi.on("tool_call", …)             // write/edit → store.rememberOrigin(absPath)
 
-// After navigating: make the working tree match the position we arrived at.
-pi.on("session_tree", …)          // restore findCheckpoint(currentUserEntryId(sm))
+// Before navigating: preserve the state we are leaving, so nothing is discarded.
+pi.on("session_before_tree", …)   // store.checkpoint(currentUserEntryId(sm), paths)
+
+// After navigating: make the files match the position we arrived at.
+pi.on("session_tree", …)          // store.restore(currentUserEntryId(sm))
 ```
 
-Both reuse `currentUserEntryId` unchanged (D10). A position with no checkpoint —
+`paths` is `store.tracked()` unioned with `dirtyPaths(exec, cwd)`. Both navigation
+hooks reuse `currentUserEntryId` unchanged (D10). A position with no checkpoint —
 an entry that never started a turn — is a no-op, matching today's fork behavior.
 `/pi-git` gains no new arguments; `CommandDeps` is unchanged.
 
@@ -646,8 +718,8 @@ export function within<T>(ms: number, p: Promise<T>): Promise<T>;
 ```ts
 // git
 checkpointTtlDays: number;    // default 30 — age-based; a count cap is unsafe (D10)
-shadowNonGit: boolean;        // default true — checkpoint outside git repos (D14)
-maxSnapshotBytes: number;     // default 268_435_456 — skip oversized shadow snapshots
+detectDirty: boolean;         // default true — use git status to widen the tracked set (D14)
+maxFileBytes: number;         // default 10_485_760 — skip checkpointing files above 10 MB
 
 // spawn
 jobTimeoutMs: number;      // default 900_000 (15 min)
@@ -663,8 +735,7 @@ jobTimeoutMs: number;      // default 900_000 (15 min)
 is independently useful. Nothing else changes yet, so the suite stays green
 throughout.
 
-**Wave 2 — apply.** The git environment scrub (D13) goes **first** — it is a P0 and
-it depends only on wave 1's env-unset support. Then the LSP bound and `dispose`
+**Wave 2 — apply.** The LSP bound and `dispose`
 (D1, D2); signal threading through the lens tool; the manager's cwd re-keying (D4);
 the trust gate (D5); linter cwd + timeout; the remaining eight `cwdOf` sites plus
 the memory cwd cache (D12); the spawn job deadline; truncation at the agent-facing
@@ -672,14 +743,20 @@ boundaries (lens diagnostics and verify output, consult advice, browser content,
 spawn output, memory recall bodies); and the D3 CI guard, added last so it lands
 green.
 
-**Wave 3 — repair.** The memory index cache (D9); git's snapshot-before-restore
-plus the two tree-navigation hooks (D10); the shadow-repo backend for non-git
-projects (D14); the empty-directory prune in `restoreTree`; and age-based
-checkpoint GC last, since it is the only step a revert cannot undo.
+**Wave 3 — pi-git rebuild.** The memory index cache (D9), then pi-git in
+dependency order: the checkpoint store (`store.ts`) with its own tests against a
+temp directory; the change detector (`detect.ts`) plus the git environment scrub
+(D13); the three hooks wired in `git/index.ts` (D10, D14); deletion of the
+now-unreferenced tree machinery and its tests; and blob-and-session GC last, since
+it is the only step a revert cannot undo.
 
 Checkpoints between waves. Wave 1 and wave 3 are independent of each other; wave 2
-depends on wave 1. Within wave 3, the backend split (D14) lands before GC so the
-pruning logic is written against both backends rather than retrofitted to one.
+depends on wave 1. Within wave 3 the store lands before the hooks, so the hooks are
+written against a tested interface rather than the reverse.
+
+Wave 3 is larger than originally scoped — it is a storage rewrite rather than a
+patch — and is the natural place to stop and re-evaluate if the first two waves
+run long.
 
 ---
 
@@ -700,33 +777,42 @@ Behavioral, each one a test:
 7. Writing a project memory named `x` leaves a global memory named `x` intact.
 8. `listMemories` performs no file reads on a second call when the directory is
    unchanged, and does re-read after a write.
-9. A restore checkpoints the tree it is leaving, so navigating back returns to it —
-   nothing is discarded unrecoverably.
-10. Navigating the session tree forward restores that position's tree, not just
+9. A restore checkpoints the state it is leaving, so navigating back returns to
+   it — nothing is discarded unrecoverably.
+10. Navigating the session tree forward restores that position's files, not just
     backward: undo and redo are symmetric.
-11. Checkpoints older than `checkpointTtlDays` are pruned; newer ones survive.
-12. The LSP root, linters, verify, and spawn all act on the session cwd when it
+11. **The nested-repository case, as reproduced in P0 #6.** A session rooted at a
+    directory containing a nested git repository, with one file edited on each
+    side, restores **both**. This is the test the previous design fails.
+12. A file created after entry *X* is removed when restoring to *X*; a file that
+    existed before pi-git ever saw it restores to its origin state rather than
+    being deleted.
+13. Checkpointing works in a directory that is not a git repository, and the
+    directory gains no `.git`.
+14. A `bash`-driven edit inside a git repository is captured via the dirty-path
+    detector; outside a repository it is not, and that degradation is silent
+    rather than an error.
+15. Identical content checkpointed twice stores one blob; sessions older than
+    `checkpointTtlDays` are pruned and their unreferenced blobs swept, while blobs
+    still referenced by a live session survive.
+16. The LSP root, linters, verify, and spawn all act on the session cwd when it
     differs from the process cwd.
-13. With `GIT_DIR` and `GIT_INDEX_FILE` set in the environment to a *different*
-    repository, every `pi-git` operation still acts on `cwd`'s repository and
-    leaves the decoy's index untouched. This is the OpenCode failure, reproduced
-    as a test.
-14. In a directory that is not a git repository, a checkpoint is taken in the
-    shadow repo and a restore returns the tree; the project gains no `.git`.
-15. A non-git snapshot excludes `node_modules/` by default, and one exceeding
-    `maxSnapshotBytes` is skipped with a notice rather than written.
-16. Restoring past a `mkdir -p a/b/c` leaves no empty directories behind.
+17. With `GIT_DIR` and `GIT_INDEX_FILE` set in the environment to a *different*
+    repository, the dirty-path detector still reports `cwd`'s repository and
+    writes nothing anywhere. This is the OpenCode failure, reproduced as a test.
 
 Structural:
 
-17. No bare `process.cwd()` outside `shared/cwd.ts` and test files (D3).
-18. All 247 pre-existing tests still pass; `SURFACE` and `test/contract.test.ts`
+18. No bare `process.cwd()` outside `shared/cwd.ts` and test files (D3).
+19. All 247 pre-existing tests still pass except those covering deleted tree
+    machinery, which are removed with it; `SURFACE` and `test/contract.test.ts`
     are unmodified.
-19. `bunx tsc --noEmit` clean; `./scripts/smoke-install.sh` passes.
-20. Each extension still registers exactly one command, and it opens settings (D11).
-21. A live tmux dogfood covering the trust gate, an LSP timeout, a `/tree`
-    navigation in both directions with file changes following it, and a session
-    in a non-git directory.
+20. `bunx tsc --noEmit` clean; `./scripts/smoke-install.sh` passes.
+21. Each extension still registers exactly one command, and it opens settings (D11).
+22. A live tmux dogfood covering the trust gate, an LSP timeout, a `/tree`
+    navigation in both directions with file changes following it, a session in a
+    non-git directory, and a session rooted at `~/dev/pi` editing inside
+    `~/dev/pi/pi-suite`.
 
 ---
 
@@ -742,29 +828,36 @@ Structural:
   contract work that advertises it.
 - **Retry or reconnect for a dead LSP server.** This sub-project makes failure
   fast, bounded, and honest; automatic recovery is a feature.
-- **Tracking only the files Pi itself edited** (Claude Code's model, D14). It
-  bounds cost by construction and needs no exclude list, but it cannot revert what
-  Pi did not do — a stray `rm` in a bash call, a build artifact — which breaks the
-  "the tree matches the session position" guarantee the snapshot model provides.
-  Worth revisiting only if the size cap proves to bite in practice.
+- **A shadow git repository for non-git projects.** Considered and rejected once
+  per-file storage was chosen: it solves only the non-git case, while inheriting
+  gitlink boundaries, exclude-list and size-cap complexity, and the orphaned-object
+  churn that git-as-storage brings. Per-file storage covers non-git directories as
+  a side effect of having no repository concept at all.
+- **Restoring changes pi-git never observed.** Outside a git repository the
+  tracked set is limited to what Pi's own tools wrote. A filesystem watcher would
+  close that gap but adds ignore-pattern handling and build-output noise; revisit
+  only if the detector proves insufficient in practice.
+- **Nested-repository exclusion** (`@ayulab/pi-rewind`'s approach). Unnecessary
+  under per-file storage, which restores across the boundary rather than refusing
+  to cross it.
 
 ---
 
 ## Rollback
 
 Each wave is a series of small commits on `main` with CI green at every step, so
-any individual fix reverts independently. The only change with a persistent
-footprint is checkpoint GC, which *deletes* refs — so it is the one step that
-cannot be undone by reverting the commit. It ships last, behind a TTL that
-defaults to 30 days, and is verified against a throwaway repository before being
-pointed at anything real.
+any individual fix reverts independently — with two exceptions worth stating.
 
-The shadow repos (D14) are the other new footprint, but a benign one: they live
-entirely under `<agentDir()>/checkpoints/`, touch nothing in the project, and are
-removable with `rm -rf`. Reverting the code simply strands them; nothing reads them
-and nothing breaks.
+**Blob and session GC deletes data**, so it is the one step a revert cannot undo.
+It ships last, behind a TTL defaulting to 30 days, and is exercised against a
+throwaway store before being pointed at a real one.
 
-Everything else is confined to `refs/pi-git/`, invisible to normal git operation
-and removable with `git update-ref -d`. No user data format changes: memory files,
-config files, and checkpoint refs all keep their existing on-disk shape, so a
-revert to sub-project 1's code reads them unchanged.
+**Wave 3 replaces pi-git's storage**, so a revert past it strands any checkpoints
+written in the new format. They are inert: everything lives under
+`<agentDir()>/checkpoints/`, nothing in the project tree is touched, and `rm -rf`
+on that directory is a complete uninstall. The old `refs/pi-git/checkpoints/` refs
+from before the rewrite are likewise left in place rather than deleted — harmless,
+invisible to normal git operation, and removable with `git update-ref -d`.
+
+No other user data format changes: memory files and config files keep their
+existing on-disk shape, so a revert to sub-project 1's code reads them unchanged.
