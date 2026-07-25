@@ -9,7 +9,7 @@ export interface CommandDeps {
   loadConfig: () => MemoryConfig;
   saveConfig: (c: MemoryConfig) => void;
   /** Resolved at invoke time from the command's own context, not at extension load. */
-  listMemories: (cwd: string) => Memory[];
+  listMemories: (cwd: string) => readonly Memory[];
   deleteMemory: (name: string, cwd: string) => void;
 }
 

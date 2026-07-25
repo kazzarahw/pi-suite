@@ -3,7 +3,7 @@ import type { Memory } from "./frontmatter.ts";
 import { truncateForAgent } from "../../shared/index.ts";
 
 /** Rank memories by how many query terms appear in name/description/body; cap at `limit`. Pure. */
-export function selectByQuery(mems: Memory[], query: string, limit: number): Memory[] {
+export function selectByQuery(mems: readonly Memory[], query: string, limit: number): Memory[] {
   const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
   if (terms.length === 0) return mems.slice(0, limit);
   return mems
@@ -19,7 +19,7 @@ export function selectByQuery(mems: Memory[], query: string, limit: number): Mem
 }
 
 /** The always-in-context index: names + descriptions only (progressive disclosure). "" when empty. */
-export function formatIndexInjection(mems: Memory[]): string {
+export function formatIndexInjection(mems: readonly Memory[]): string {
   if (mems.length === 0) return "";
   const header = injectionHeader("memory", "what I remember — call memory_recall(name) for the full text");
   const body = mems.map((m) => `- ${m.name} (${m.type}) — ${m.description}`).join("\n");

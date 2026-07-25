@@ -1,8 +1,15 @@
 import { test, expect, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, utimesSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { listMemories, readMemory, writeMemory, deleteMemory } from "../src/store.ts";
+import {
+  listMemories,
+  readMemory,
+  writeMemory,
+  deleteMemory,
+  invalidateIndexCache,
+  memoryDirs,
+} from "../src/store.ts";
 import type { Memory } from "../src/frontmatter.ts";
 
 let globalDir: string;
@@ -14,6 +21,7 @@ beforeEach(() => {
   globalDir = mkdtempSync(join(tmpdir(), "pi-mem-g-"));
   cwd = mkdtempSync(join(tmpdir(), "pi-mem-p-"));
   process.env.PI_CODING_AGENT_DIR = globalDir;
+  invalidateIndexCache();
 });
 
 afterEach(() => {
@@ -108,4 +116,87 @@ test("deleteMemory with a scope removes only that scope's copy", () => {
   const left = listMemories(cwd).filter((m) => m.name === "keep");
   expect(left).toHaveLength(1);
   expect(left[0]!.scope).toBe("global");
+});
+
+// --- Index cache -----------------------------------------------------------
+// `listMemories` runs on the `context` hook, i.e. before every LLM call, and used to
+// re-read and re-parse every memory file each time. The cache turns that into a
+// directory listing plus one `stat` per file.
+//
+// Revalidation is per *file* mtime+size, not the directory's mtime: a directory's
+// mtime changes only when an entry is added or removed, so editing a memory in place
+// — with $EDITOR, or by another Pi session — would never be noticed.
+
+test("a repeated listMemories with nothing changed does not re-read the files", () => {
+  writeMemory(mem({ name: "cached", scope: "global" }), cwd);
+  const first = listMemories(cwd);
+  const second = listMemories(cwd);
+  // Same array instance: proof it came from the cache rather than a fresh parse.
+  expect(second).toBe(first);
+});
+
+test("writing through the store invalidates the cache", () => {
+  writeMemory(mem({ name: "v", scope: "global", body: "old" }), cwd);
+  expect(listMemories(cwd).find((m) => m.name === "v")!.body).toBe("old");
+  writeMemory(mem({ name: "v", scope: "global", body: "new" }), cwd);
+  expect(listMemories(cwd).find((m) => m.name === "v")!.body).toBe("new");
+});
+
+test("deleting through the store invalidates the cache", () => {
+  writeMemory(mem({ name: "d", scope: "project" }), cwd);
+  expect(listMemories(cwd)).toHaveLength(1);
+  deleteMemory("d", cwd);
+  expect(listMemories(cwd)).toHaveLength(0);
+});
+
+test("an edit made outside the store busts the cache", () => {
+  writeMemory(mem({ name: "external", scope: "project", body: "before" }), cwd);
+  expect(listMemories(cwd).find((m) => m.name === "external")!.body).toBe("before");
+
+  // Simulate another process (or $EDITOR) rewriting the file: no invalidate call.
+  const file = join(memoryDirs(cwd).project, "external.md");
+  writeFileSync(
+    file,
+    "---\nname: external\ndescription: d1\nmetadata:\n  type: reference\n---\n\nafter\n",
+    "utf8",
+  );
+  const future = new Date(Date.now() + 5_000);
+  utimesSync(file, future, future);
+
+  expect(listMemories(cwd).find((m) => m.name === "external")!.body).toBe("after");
+});
+
+test("a file appearing outside the store busts the cache", () => {
+  writeMemory(mem({ name: "first", scope: "project" }), cwd);
+  expect(listMemories(cwd)).toHaveLength(1);
+
+  const dir = memoryDirs(cwd).project;
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    join(dir, "dropped-in.md"),
+    "---\nname: dropped-in\ndescription: d\nmetadata:\n  type: reference\n---\n\nbody\n",
+    "utf8",
+  );
+
+  expect(listMemories(cwd).map((m) => m.name).sort()).toEqual(["dropped-in", "first"]);
+});
+
+test("two projects do not share a cache entry", () => {
+  const other = mkdtempSync(join(tmpdir(), "pi-mem-p2-"));
+  try {
+    writeMemory(mem({ name: "here", scope: "project" }), cwd);
+    writeMemory(mem({ name: "there", scope: "project" }), other);
+    expect(listMemories(cwd).map((m) => m.name)).toEqual(["here"]);
+    expect(listMemories(other).map((m) => m.name)).toEqual(["there"]);
+  } finally {
+    rmSync(other, { recursive: true, force: true });
+  }
+});
+
+test("invalidateIndexCache() with no argument clears every project", () => {
+  writeMemory(mem({ name: "z", scope: "project" }), cwd);
+  const first = listMemories(cwd);
+  invalidateIndexCache();
+  expect(listMemories(cwd)).not.toBe(first);
+  expect(listMemories(cwd).map((m) => m.name)).toEqual(["z"]);
 });
