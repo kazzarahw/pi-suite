@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative, resolve, dirname } from "node:path";
 import { SURFACE } from "../shared/index.ts";
 
@@ -221,3 +221,142 @@ test("the cwd checker actually detects a bare use, and ignores prose about one",
   expect(bareCwdUses("/* history: this used process.cwd() */\nconst d = cwdOf(ctx);")).toBe(0);
   expect(bareCwdUses("const d = cwdOf(ctx);")).toBe(0);
 });
+
+// ---------------------------------------------------------------------------
+// One implementation per concept.
+//
+// Every duplication this suite has produced followed the same course: a helper small
+// enough to retype rather than import, copied to a second site, then missed at a third —
+// and each miss was a live defect. `process.cwd()` above is the original instance; these
+// are the ones found alongside it. A scan is crude, but it fails at the moment the
+// second copy is written rather than weeks later.
+// ---------------------------------------------------------------------------
+
+/** Source with comments stripped, so prose explaining a rule never trips it. */
+function code(src: string): string {
+  return src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+}
+
+interface SingleSource {
+  what: string;
+  /** The pattern that identifies an implementation. */
+  re: RegExp;
+  /** The one file permitted to contain it, repo-relative. */
+  home: string;
+  fix: string;
+}
+
+const SINGLE_SOURCE: SingleSource[] = [
+  {
+    what: "a frontmatter parser",
+    re: /---\\r\?\\n/,
+    home: "shared/frontmatter.ts",
+    fix: "call parseFrontmatter()",
+  },
+  {
+    what: "a 31-multiply string hash",
+    re: /\*\s*31\s*\+/,
+    home: "shared/hash.ts",
+    fix: "call stableHash()",
+  },
+  {
+    what: "a read of PI_CODING_AGENT_DIR",
+    re: /PI_CODING_AGENT_DIR/,
+    home: "shared/config.ts",
+    fix: "call agentDir()",
+  },
+];
+
+for (const rule of SINGLE_SOURCE) {
+  test(`${rule.what} exists only in ${rule.home}`, () => {
+    const offenders: string[] = [];
+    for (const dir of [...EXTENSION_DIRS, "shared"]) {
+      for (const file of allTsFiles(dir)) {
+        const rel = relative(ROOT, file);
+        if (rel === rule.home) continue;
+        if (rel.includes("/test/")) continue; // tests legitimately construct fixtures
+        if (rule.re.test(code(readFileSync(file, "utf8")))) {
+          offenders.push(`${rel}: has ${rule.what} — ${rule.fix}`);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+}
+
+test("the single-source patterns actually match the thing they describe", () => {
+  // Guards the guards: three checkers that can never fail are not checkers.
+  const [frontmatter, hash, agentDir] = SINGLE_SOURCE as [SingleSource, SingleSource, SingleSource];
+  expect(frontmatter.re.test(String.raw`text.match(/^---\r?\n([\s\S]*?)---/)`)).toBe(true);
+  expect(hash.re.test("h = (h * 31 + s.charCodeAt(i)) | 0;")).toBe(true);
+  expect(agentDir.re.test('process.env.PI_CODING_AGENT_DIR ?? "x"')).toBe(true);
+  // And that each one's home really does contain it, so a rename cannot leave the rule
+  // passing vacuously against a file that no longer holds the implementation.
+  for (const rule of SINGLE_SOURCE) {
+    expect(rule.re.test(readFileSync(join(ROOT, rule.home), "utf8"))).toBe(true);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Import hygiene.
+// ---------------------------------------------------------------------------
+
+/** Specifiers imported more than once by the same file. */
+function duplicateImports(src: string): string[] {
+  const seen = new Map<string, number>();
+  for (const spec of importSpecifiers(src)) seen.set(spec, (seen.get(spec) ?? 0) + 1);
+  return [...seen].filter(([, n]) => n > 1).map(([spec]) => spec);
+}
+
+test("no file imports the same specifier twice", () => {
+  // Nine files did, most of them splitting a type import from a value import of the same
+  // module. Harmless individually, but it is the visible end of the copy-paste habit
+  // that produced everything the guards above exist for.
+  const offenders: string[] = [];
+  for (const dir of [...EXTENSION_DIRS, "shared", "test"]) {
+    for (const file of allTsFiles(dir)) {
+      const rel = relative(ROOT, file);
+      // The barrel re-exports each module twice by necessity: `verbatimModuleSyntax`
+      // requires `export type { … }` to be a separate statement from `export { … }`.
+      if (rel === "shared/index.ts") continue;
+      for (const spec of duplicateImports(readFileSync(file, "utf8"))) {
+        offenders.push(`${rel}: imports "${spec}" more than once`);
+      }
+    }
+  }
+  expect(offenders).toEqual([]);
+});
+
+test("the duplicate-import checker actually detects a duplicate", () => {
+  // Guards the guard.
+  expect(duplicateImports('import type { A } from "./x.ts";\nimport { b } from "./x.ts";')).toEqual([
+    "./x.ts",
+  ]);
+  expect(duplicateImports('import { A, b } from "./x.ts";')).toEqual([]);
+  expect(duplicateImports('import { a } from "./x.ts";\nimport { b } from "./y.ts";')).toEqual([]);
+});
+
+// ---------------------------------------------------------------------------
+// Extension shape.
+//
+// Extensions are peers: any one can be replaced by writing a new directory with the
+// same shape. That is only true if the shape is actually uniform, so it is checked
+// rather than described.
+// ---------------------------------------------------------------------------
+
+for (const ext of EXTENSION_DIRS) {
+  test(`[${ext}] has the standard extension layout`, () => {
+    const missing: string[] = [];
+    for (const entry of ["index.ts", "src", "test", "README.md"]) {
+      if (!existsSync(join(ROOT, ext, entry))) missing.push(entry);
+    }
+    expect(missing).toEqual([]);
+  });
+
+  test(`[${ext}] default-exports a factory taking the extension API`, () => {
+    // Pi calls this; a module that exported something else would fail at load, which is
+    // far from where the mistake was made.
+    const src = readFileSync(join(ROOT, ext, "index.ts"), "utf8");
+    expect(src).toMatch(/export default function \w+\(\s*pi\s*:/);
+  });
+}

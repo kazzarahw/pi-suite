@@ -1,6 +1,10 @@
 import { test, expect } from "bun:test";
 import { parseVerify, formatVerify, chooseVerifyCommand, runVerify } from "../src/verify.ts";
 import type { ExecFn } from "../../shared/exec.ts";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { autodetectVerify } from "../src/config.ts";
 
 test("parseVerify passes on exit 0", () => {
   const r = parseVerify("2 pass", "", 0);
@@ -84,4 +88,63 @@ test("verify forwards cwd, signal, and timeout to exec", async () => {
   expect(seen?.cwd).toBe("/tmp/project");
   expect(seen?.signal).toBe(ac.signal);
   expect(seen?.timeout).toBe(1234);
+});
+
+// ---------------------------------------------------------------------------
+// autodetectVerify — what pi-lens runs when no command is configured.
+//
+// It reads the project to decide, which is why `chooseVerifyCommand` above gates it on
+// trust. What it detects therefore matters: this is the one place the suite decides to
+// execute something a repository chose.
+// ---------------------------------------------------------------------------
+
+test("a bun lockfile means bun test", () => {
+  const dir = mkdtempSync(join(tmpdir(), "pi-lens-detect-"));
+  writeFileSync(join(dir, "bun.lock"), "");
+  expect(autodetectVerify(dir)).toBe("bun test");
+});
+
+test("the older bun.lockb is recognised too", () => {
+  const dir = mkdtempSync(join(tmpdir(), "pi-lens-detect-"));
+  writeFileSync(join(dir, "bun.lockb"), "");
+  expect(autodetectVerify(dir)).toBe("bun test");
+});
+
+test("a package.json test script means npm test", () => {
+  const dir = mkdtempSync(join(tmpdir(), "pi-lens-detect-"));
+  writeFileSync(join(dir, "package.json"), JSON.stringify({ scripts: { test: "jest" } }));
+  expect(autodetectVerify(dir)).toBe("npm test");
+});
+
+test("bun wins over a package.json test script", () => {
+  // A repo with both is a bun project with an npm-compatible manifest, not the reverse.
+  const dir = mkdtempSync(join(tmpdir(), "pi-lens-detect-"));
+  writeFileSync(join(dir, "bun.lock"), "");
+  writeFileSync(join(dir, "package.json"), JSON.stringify({ scripts: { test: "jest" } }));
+  expect(autodetectVerify(dir)).toBe("bun test");
+});
+
+test("a package.json without a test script is not a match", () => {
+  const dir = mkdtempSync(join(tmpdir(), "pi-lens-detect-"));
+  writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "x" }));
+  expect(autodetectVerify(dir)).toBeNull();
+});
+
+test("malformed JSON is not a match, and does not throw", () => {
+  const dir = mkdtempSync(join(tmpdir(), "pi-lens-detect-"));
+  writeFileSync(join(dir, "package.json"), "{ not json");
+  expect(autodetectVerify(dir)).toBeNull();
+});
+
+test("python markers mean pytest", () => {
+  for (const marker of ["pytest.ini", "pyproject.toml", "setup.cfg"]) {
+    const dir = mkdtempSync(join(tmpdir(), "pi-lens-detect-"));
+    writeFileSync(join(dir, marker), "");
+    expect(autodetectVerify(dir)).toBe("pytest");
+  }
+});
+
+test("a project with no markers detects nothing", () => {
+  // Null, not a guess. Running the wrong command is worse than running none.
+  expect(autodetectVerify(mkdtempSync(join(tmpdir(), "pi-lens-detect-")))).toBeNull();
 });

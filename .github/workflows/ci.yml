@@ -31,7 +31,10 @@ jobs:
       - name: Typecheck
         run: bunx tsc --noEmit
 
-      - name: Test
+      # Coverage is on by default via bunfig.toml, and the per-file floor there fails the
+      # run when any file drops below it — so this step is both the test suite and the
+      # coverage gate.
+      - name: Test (with the per-file coverage floor)
         run: bun test
 
       # Guards the bug that made the consolidation necessary: anything imported at

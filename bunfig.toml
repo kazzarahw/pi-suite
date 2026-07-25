@@ -1,0 +1,25 @@
+# Coverage, enforced on every `bun test`.
+#
+# The suite sits at ~97.8% lines in aggregate, but the numbers below are not that: Bun
+# applies `coverageThreshold` **per file**, not to the total. A global average is the
+# wrong guard anyway — it hides one untested file behind a hundred tested ones, which is
+# exactly how the seven command handlers sat at 14-28% for months without anyone
+# noticing. So this is a floor on the *worst* file. It ratchets: when the worst improves,
+# raise it.
+#
+# `lines`/`statements` are set just under today's worst, spawn/src/runner.ts at 64.9% —
+# the uncovered half is subprocess plumbing that needs a real `pi` to exercise.
+#
+# `functions` is lower because the metric is misleading here: three index.ts files sit at
+# 40-50% functions with 100% lines, the "uncovered functions" being the one-line
+# dependency thunks each passes to its builders (`loadConfig: () => loadConfig()`), which
+# only fire when a tool runs — and running pi-browser's or pi-consult's tool means
+# spawning a real `agent-browser` or `claude`.
+#
+# All three keys must be present. Bun's object form does not default the ones you omit:
+# a partial table fails every run regardless of actual coverage, silently and with the
+# test summary still reading "0 fail".
+[test]
+coverage = true
+coverageSkipTestFiles = true
+coverageThreshold = { lines = 0.6, functions = 0.4, statements = 0.6 }

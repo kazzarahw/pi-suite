@@ -78,19 +78,22 @@ Fixed by `SURFACE`, which `package.json` mirrors: `memory, todo, git, consult, s
 
 ```sh
 bun install
-bun test                    # unit, wiring, contract, and boundary tests
+bun test                    # unit, wiring, contract, and boundary tests + the coverage floor
 bunx tsc --noEmit
 ./scripts/smoke-install.sh  # clean clone + npm install --omit=dev + load all seven
 ```
 
-CI runs all four on every push.
+CI runs all of these on every push. `bun test` enforces a **per-file** coverage floor
+(see [`bunfig.toml`](./bunfig.toml)) — a floor on the worst file rather than an average,
+because an average hides one untested file behind a hundred tested ones.
 
 ### The guards
 
-Three test layers exist because of specific failures, not as ceremony:
+Four test layers exist because of specific failures, not as ceremony:
 
 - **Wiring tests** (`<name>/test/wiring.test.ts`) exercise each `index.ts` — hooks, guards, cwd resolution. This layer had no coverage originally, and it is where several defects lived. It pins the `!ctx.hasUI` guard in particular: injecting a message with no interactive UI makes Pi wait forever for a prompt that never arrives.
 - **Contract tests** (`test/contract.test.ts`) assert the live registry matches `shared/surface.ts`, that every emitted event exists in `EVENTS`, and that each extension's own README documents the tools it registers. Docs are checked against the code, never the reverse — earlier versions claimed a wrong tool count and a capability that was dead code.
-- **Install smoke test** (`scripts/smoke-install.sh`) reproduces a real install and asserts all seven load. This is the test that would have caught the packaging break that prompted the consolidation.
+- **Install smoke test** (`scripts/smoke-install.sh`) reproduces a real install and asserts every declared extension loads. This is the test that would have caught the packaging break that prompted the consolidation.
+- **Structural guards** (`test/boundaries.test.ts`) are source scans, each with a case proving it can fail: no cross-extension imports, no `process.cwd()` outside `shared/cwd.ts`, no second copy of a shared helper, no module unreachable from its `index.ts`, no duplicate imports, and the standard directory shape. Every one of them exists because the thing it forbids already happened once.
 
 AGPL-3.0.

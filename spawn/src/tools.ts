@@ -1,7 +1,7 @@
 import { Type, type Static } from "typebox";
 import type { AgentToolResult, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { AgentDef } from "./agents.ts";
-import { runAgent, type SpawnEvent, type SpawnResult } from "./runner.ts";
+import { runAgent, type RunAgentInput, type SpawnEvent, type SpawnResult } from "./runner.ts";
 import { runParallel, type Job } from "./pool.ts";
 import { eventToLine } from "./render.ts";
 import { cwdOf, truncateForAgent } from "../../shared/index.ts";
@@ -36,9 +36,20 @@ export interface SpawnDeps {
   depth: number;
   /** Env to hand child subprocesses (carries the incremented depth). */
   childEnv: () => Record<string, string>;
+  /**
+   * Run one delegated job. Defaults to {@link runAgent}; injected in tests.
+   *
+   * The tool used to call `runAgent` directly, which meant every path past the two
+   * guards — the widget, the event pairs, the single-versus-parallel split, the
+   * truncation — could only be reached by launching real `pi` subprocesses. None of it
+   * was tested. `runAgent` already takes an injectable `SpawnFn` for the same reason;
+   * this is that seam one level up.
+   */
+  runOne?: (input: RunAgentInput) => Promise<SpawnResult>;
 }
 
 export function buildSpawnTool(deps: SpawnDeps) {
+  const runOne = deps.runOne ?? ((input: RunAgentInput) => runAgent(input));
   return {
     name: "spawn",
     label: "Spawn",
@@ -90,7 +101,7 @@ export function buildSpawnTool(deps: SpawnDeps) {
           deps.emit("spawn:started", { agent: job.agentDef.name });
           status[job.agentDef.name] = "starting…";
           paint();
-          const result = await runAgent({
+          const result = await runOne({
             ...job,
             signal,
             env,
@@ -109,7 +120,7 @@ export function buildSpawnTool(deps: SpawnDeps) {
             jobs,
             deps.concurrency(),
             (job, s) =>
-              runAgent({
+              runOne({
                 ...job,
                 signal: s,
                 env,
