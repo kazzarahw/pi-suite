@@ -111,3 +111,48 @@ test("the boundary checker actually detects a cross-extension import", () => {
   expect(violation("lens", join(ROOT, "lens/src/tools.ts"), "node:fs")).toBeNull();
   expect(violation("lens", join(ROOT, "lens/src/tools.ts"), "lodash")).toContain("non-peer package");
 });
+
+// ---------------------------------------------------------------------------
+// cwd resolution is centralised (spec D3).
+// ---------------------------------------------------------------------------
+
+/**
+ * Strip comments, then find `process.cwd()` uses.
+ *
+ * Comments must go first: several modules now explain *why* they no longer call
+ * `process.cwd()`, and a naive scan would flag the explanation as the offence.
+ */
+function bareCwdUses(src: string): number {
+  const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  return [...code.matchAll(/\bprocess\.cwd\(\)/g)].length;
+}
+
+/**
+ * The correct idiom — `ctx?.sessionManager?.getCwd?.() ?? process.cwd()` — was
+ * copy-pasted into four files and missed in five others, and every one of those five
+ * was a live defect: pi-lens rooted its language servers and ran the project's verify
+ * command in the wrong directory, pi-memory wrote captured memories beside whatever
+ * directory Pi was launched from. Deduplicating into `cwdOf` fixes today's misses;
+ * this test is what stops the sixth copy from being written.
+ */
+test("process.cwd() appears nowhere outside shared/cwd.ts", () => {
+  const offenders: string[] = [];
+  for (const dir of [...EXTENSION_DIRS, "shared"]) {
+    for (const file of allTsFiles(dir)) {
+      const rel = relative(ROOT, file);
+      if (rel === "shared/cwd.ts") continue; // the one permitted implementation
+      if (rel.includes("/test/")) continue; // tests legitimately compare against it
+      const n = bareCwdUses(readFileSync(file, "utf8"));
+      if (n > 0) offenders.push(`${rel}: ${n} use(s) — call cwdOf(ctx) instead`);
+    }
+  }
+  expect(offenders).toEqual([]);
+});
+
+test("the cwd checker actually detects a bare use, and ignores prose about one", () => {
+  // Guards the guard: a checker that can never fail is not a checker.
+  expect(bareCwdUses("const d = process.cwd();")).toBe(1);
+  expect(bareCwdUses("// we no longer call process.cwd() here\nconst d = cwdOf(ctx);")).toBe(0);
+  expect(bareCwdUses("/* history: this used process.cwd() */\nconst d = cwdOf(ctx);")).toBe(0);
+  expect(bareCwdUses("const d = cwdOf(ctx);")).toBe(0);
+});
