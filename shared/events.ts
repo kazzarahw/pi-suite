@@ -37,14 +37,26 @@ export interface TodoItem {
  * The payload shape for every event, keyed by event name. The single source of
  * truth for the `domain:event` contract — emitters and subscribers both index
  * into this map, so drift is a type error.
+ *
+ * **Payloads must be self-contained.** A subscriber is handed `data` and nothing
+ * else — no `ExtensionContext`, so no `cwdOf`, no `ctx.ui`. Anything a handler needs
+ * belongs here. pi-memory learned this the hard way: with no cwd on `verify:failed`
+ * it kept a module-level latch of the last cwd it had seen from an unrelated hook,
+ * and before that it fell back to `process.cwd()` and wrote captured memories beside
+ * whatever directory Pi happened to be launched from.
+ *
+ * It is also what keeps extensions swappable. A subscriber that needs nothing but the
+ * payload works against *any* publisher of an event, not just the sibling that
+ * happens to ship today.
  */
 export interface EventPayloads {
   "consult:answered": { model: string; topic: string };
 
   "lens:clean": { file: string };
   "lens:issues": { file: string; diagnostics: Diagnostic[] };
-  "verify:passed": { cmd: string };
-  "verify:failed": { cmd: string; failures: string[] };
+  /** `cwd` is the project the command ran in — see the self-contained rule above. */
+  "verify:passed": { cmd: string; cwd: string };
+  "verify:failed": { cmd: string; failures: string[]; cwd: string };
 
   "git:checkpoint": { ref: string; reason: string };
   "git:rollback": { ref: string; reason: string };

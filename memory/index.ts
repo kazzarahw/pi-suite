@@ -17,17 +17,6 @@ import { cwdOf, stableHash } from "../shared/index.ts";
 export default function piMemory(pi: ExtensionAPI): void {
   const emit = (event: string, data: unknown) => pi.events.emit(event, data);
 
-  // The last cwd Pi told us about.
-  //
-  // The `verify:failed` handler below is a bus callback: it receives only `data`, with
-  // no ExtensionContext, so cwdOf cannot help there. It previously fell back to
-  // process.cwd(), which wrote project memories next to whatever directory Pi was
-  // launched from — and polluted this repo when the tests ran. Recording the cwd from
-  // the `context` hook (which fires before every LLM call, so well before any verify)
-  // gives the callback the session's directory. Putting cwd in the event payload is the
-  // better fix and belongs with the event-vocabulary work in sub-project 3.
-  let sessionCwd: string | null = null;
-
   pi.registerTool(buildRecallTool({ recallLimit: () => loadConfig().recallLimit, emit }));
   pi.registerTool(buildWriteTool({ recallLimit: () => loadConfig().recallLimit, emit }));
 
@@ -35,22 +24,27 @@ export default function piMemory(pi: ExtensionAPI): void {
   // house-style §6 channel for memory recall; no queued message, so no print-mode hang).
   pi.on("context", async (event, ctx) => {
     if (loadConfig().mode === "off") return;
-    const cwd = cwdOf(ctx);
-    sessionCwd = cwd;
-    const block = formatIndexInjection(listMemories(cwd));
+    const block = formatIndexInjection(listMemories(cwdOf(ctx)));
     if (!block) return;
     const injected = { role: "user" as const, content: block, timestamp: Date.now() };
     return { messages: [injected, ...event.messages] };
   });
 
   // Auto-capture a gotcha on verify:failed (opt-in; naive capture is noisy, so off by default).
+  //
+  // Everything this needs arrives in the payload, `cwd` included. It used to keep a
+  // module-level latch of the last cwd seen from the `context` hook, because a bus
+  // callback gets no ExtensionContext — which meant the handler's correctness depended
+  // on an unrelated hook having fired first, and on nothing between them changing
+  // directory. It also means this works against any publisher of `verify:failed`, not
+  // only pi-lens.
   pi.events.on("verify:failed", (data) => {
     const cfg = loadConfig();
     if (cfg.mode === "off" || !cfg.autoCapture) return;
-    // No session cwd observed yet means no LLM call has happened, so there is nothing
-    // to attribute this to. Skipping beats guessing and writing to the wrong project.
-    if (!sessionCwd) return;
-    const d = (data ?? {}) as { cmd?: string; failures?: string[] };
+    const d = (data ?? {}) as { cmd?: string; failures?: string[]; cwd?: string };
+    // A payload with no cwd is one this handler cannot attribute to a project. Skipping
+    // beats guessing and writing the memory into the wrong repository.
+    if (!d.cwd) return;
     const failures = (d.failures ?? []).slice(0, 5);
     if (failures.length === 0) return;
     const body = `Command: ${d.cmd ?? "(unknown)"}\nFailures:\n${failures.map((f) => `- ${f}`).join("\n")}`;
@@ -59,7 +53,7 @@ export default function piMemory(pi: ExtensionAPI): void {
     try {
       writeMemory(
         { name: key, description: `verify failed: ${d.cmd ?? "tests"}`, type: "project", scope: "project", body },
-        sessionCwd,
+        d.cwd,
       );
       emit("memory:wrote", { keys: [key] });
     } catch {

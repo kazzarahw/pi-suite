@@ -4,11 +4,11 @@ import { defaultExec } from "../shared/exec.ts";
 import { cwdOf, EDIT_TOOLS, FILE_TOOLS, editedPath } from "../shared/index.ts";
 import { loadConfig, saveConfig, autodetectVerify } from "./src/config.ts";
 import { createManager } from "./src/lsp/manager.ts";
-import { runLinters } from "./src/linters.ts";
-import { toolchainFor, DEFAULT_TOOLCHAINS, runFormatter } from "./src/toolchains.ts";
+import { toolchainFor, DEFAULT_TOOLCHAINS } from "./src/toolchains.ts";
 import { discoverWarmTargets, listWorkspaceFiles } from "./src/prewarm.ts";
 import { formatHealth, formatHealthCompact, probeAvailability, whichOnPath } from "./src/health.ts";
-import { mergeDiagnostics, formatDiagnostics, formatFormatted, type Diagnostic } from "./src/diagnostics.ts";
+import { composeToolResult, feedbackBlocks, gatherFeedback } from "./src/feedback.ts";
+import { createVerifyGate } from "./src/gate.ts";
 import { runVerify, formatVerify, chooseVerifyCommand } from "./src/verify.ts";
 import { buildLensTool } from "./src/tools.ts";
 import { buildLensCommand } from "./src/command.ts";
@@ -28,9 +28,7 @@ export default function piLens(pi: ExtensionAPI): void {
   // command ran in the wrong directory, for the entire session. Every site now resolves
   // `cwdOf(ctx)` from the hook that is actually firing.
   const manager = createManager();
-  let dirty = false; // an edit landed since the last verify
-  let hasErrors = false; // last diagnostics had unresolved errors → don't verify yet
-  let warnedUntrusted = false; // the trust skip is reported once per session, not per settle
+  const gate = createVerifyGate();
 
   pi.registerTool(buildLensTool({ manager: () => manager }));
 
@@ -43,54 +41,38 @@ export default function piLens(pi: ExtensionAPI): void {
     if (!rel) return;
     const projectCwd = cwdOf(ctx);
     const file = resolve(projectCwd, rel);
-    const tc = toolchainFor(file);
     const isEdit = EDIT_TOOLS.has(event.toolName);
 
-    // Opt-in auto-format runs first (write/edit only) so diagnostics reflect the formatted bytes.
-    let reformatNote = "";
-    if (isEdit && cfg.autoFormat && tc?.formatter) {
-      try {
-        if ((await runFormatter(file, tc.formatter, defaultExec, ctx?.signal)).changed) {
-          reformatNote = formatFormatted(rel, tc.formatter.name);
-        }
-      } catch {
-        /* never break an edit because the formatter misbehaved */
-      }
-    }
+    const gathered = await gatherFeedback({
+      file,
+      rel,
+      cwd: projectCwd,
+      toolchain: toolchainFor(file),
+      isEdit,
+      autoFormat: cfg.autoFormat,
+      manager,
+      exec: defaultExec,
+      signal: ctx?.signal,
+    });
 
-    let diags: Diagnostic[] = [];
-    try {
-      const lsp = await manager.pull(file, projectCwd);
-      const lint = tc ? await runLinters(file, tc.linters, defaultExec, projectCwd) : [];
-      diags = mergeDiagnostics(lsp, lint);
-    } catch {
-      return; // never break a read/edit because the LSP misbehaved
-    }
+    // A language server that never answered has told us nothing. Leave the result alone
+    // and leave the gate where it was: recording "no errors" here would let a verify run
+    // against code nothing had checked.
+    if (gathered.unavailable) return;
 
-    hasErrors = diags.some((d) => d.severity === "error");
-    if (isEdit) dirty = true;
-
-    // Compose the injection: a diagnostics block (or lens:clean), plus a reformat note when formatted.
-    const blocks: string[] = [];
-    if (diags.length > 0) {
-      pi.events.emit("lens:issues", { file, diagnostics: diags });
-      blocks.push(formatDiagnostics(rel, diags));
+    gate.noteDiagnostics(gathered.diagnostics, isEdit);
+    if (gathered.diagnostics.length > 0) {
+      pi.events.emit("lens:issues", { file, diagnostics: gathered.diagnostics });
     } else {
       pi.events.emit("lens:clean", { file });
     }
-    if (reformatNote) blocks.push(reformatNote);
-    if (blocks.length === 0) return;
-    return {
-      content: [...event.content, { type: "text" as const, text: `\n${blocks.join("\n")}` }],
-      details: event.details,
-      isError: event.isError,
-    };
+    return composeToolResult(event, feedbackBlocks(rel, gathered));
   });
 
   // Dynamic feedback: run verify on settle, but only after edits landed and parse cleanly.
   pi.on("agent_settled", async (_event, ctx) => {
     const cfg = loadConfig();
-    if (cfg.mode === "off" || !dirty || hasErrors) return;
+    if (cfg.mode === "off" || !gate.shouldVerify()) return;
     const projectCwd = cwdOf(ctx);
 
     // Trust gate: an autodetected command comes out of the repository, so running it in
@@ -103,8 +85,7 @@ export default function piLens(pi: ExtensionAPI): void {
     });
     if (choice.run === null) {
       // Say so once. A safety gate that is invisible reads as a broken feature.
-      if (choice.reason === "untrusted-autodetect" && !warnedUntrusted && ctx?.hasUI) {
-        warnedUntrusted = true;
+      if (choice.reason === "untrusted-autodetect" && ctx?.hasUI && gate.warnOnce()) {
         ctx.ui?.notify?.(
           "[pi-lens] project is not trusted — skipping the autodetected verify command. Trust the project, or set one explicitly with /pi-lens.",
           "warning",
@@ -113,15 +94,17 @@ export default function piLens(pi: ExtensionAPI): void {
       return;
     }
     const cmd = choice.run;
-    dirty = false;
+    gate.consume();
     let result;
     try {
       result = await runVerify(cmd, defaultExec, projectCwd, ctx?.signal, cfg.verifyTimeoutMs);
     } catch {
       return;
     }
-    if (result.passed) pi.events.emit("verify:passed", { cmd });
-    else pi.events.emit("verify:failed", { cmd, failures: result.failures });
+    // `projectCwd` travels with the event: a bus subscriber gets only `data`, so it
+    // cannot resolve the cwd for itself. See shared/events.ts.
+    if (result.passed) pi.events.emit("verify:passed", { cmd, cwd: projectCwd });
+    else pi.events.emit("verify:failed", { cmd, failures: result.failures, cwd: projectCwd });
     // Surface it to the agent — guarded on hasUI so print/JSON mode doesn't stall (see pi-todo).
     if (ctx?.hasUI) {
       pi.sendMessage({ customType: "pi-lens", content: formatVerify(result), display: true }, { deliverAs: "nextTurn" });

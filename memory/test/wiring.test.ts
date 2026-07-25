@@ -76,36 +76,56 @@ test("verify:failed does NOT auto-capture while autoCapture is off (the default)
 
 /**
  * The auto-capture handler is a bus callback: `pi.events.on` delivers only `data`, with
- * no ExtensionContext, so it cannot resolve a cwd the way the tools do. It used to fall
+ * no ExtensionContext, so it cannot resolve a cwd the way the tools do. It first fell
  * back to `process.cwd()`, writing project memories beside whatever directory Pi was
  * launched from — and polluting this repo when the tests ran, which is how it was found.
- * It now uses the cwd recorded by the `context` hook. No `chdir` is needed to contain it.
+ * The fix after that kept a module-level latch of the last cwd seen from the `context`
+ * hook, which worked but made this handler's correctness depend on an unrelated hook
+ * having fired first.
+ *
+ * The cwd now travels in the payload, so the handler needs no prior state at all — and
+ * works against any publisher of `verify:failed`, not just pi-lens.
  */
-test("verify:failed auto-captures under the SESSION cwd, not process.cwd()", async () => {
+test("verify:failed auto-captures under the cwd in the payload", async () => {
   await withConfig({ autoCapture: true }, async () => {
     const api = await loadExtension("memory");
-    const session = mkdtempSync(join(tmpdir(), "pi-memory-session-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-memory-session-"));
 
-    // The context hook is what teaches the extension where the session lives.
-    await api.fire("context", { messages: [] }, fakeCtx({ cwd: session }));
-    api.emitBus("verify:failed", { cmd: "bun test", failures: ["test a failed"] });
+    // No context hook fired first: the payload alone is sufficient.
+    api.emitBus("verify:failed", { cmd: "bun test", failures: ["test a failed"], cwd: project });
 
     const wrote = api.emitted.filter((e) => e.event === "memory:wrote");
     expect(wrote.length).toBe(1);
     expect(JSON.stringify(wrote[0]!.data)).toContain("gotcha-verify-");
-    expect(existsSync(join(session, ".pi", "memory"))).toBe(true);
+    expect(existsSync(join(project, ".pi", "memory"))).toBe(true);
     // The repo it was launched from must be untouched.
     expect(existsSync(join(process.cwd(), ".pi", "memory"))).toBe(false);
   });
 });
 
-// Without a context hook there is no session to attribute the capture to. Skipping is
-// the only safe option — the previous fallback guessed, and guessed wrong.
-test("verify:failed captures nothing before any session cwd is known", async () => {
+// A payload with no cwd cannot be attributed to a project. Skipping is the only safe
+// option — the original fallback guessed, and guessed wrong.
+test("verify:failed with no cwd in the payload captures nothing", async () => {
   await withConfig({ autoCapture: true }, async () => {
     const api = await loadExtension("memory");
     api.emitBus("verify:failed", { cmd: "bun test", failures: ["test a failed"] });
     expect(api.emitted.filter((e) => e.event === "memory:wrote")).toEqual([]);
+  });
+});
+
+// The cwd comes from the payload and nowhere else. A stale value observed from some
+// earlier hook must not be able to redirect the write, which is what the latch allowed.
+test("verify:failed ignores any cwd seen earlier from the context hook", async () => {
+  await withConfig({ autoCapture: true }, async () => {
+    const api = await loadExtension("memory");
+    const seenEarlier = mkdtempSync(join(tmpdir(), "pi-memory-stale-"));
+    const inPayload = mkdtempSync(join(tmpdir(), "pi-memory-payload-"));
+
+    await api.fire("context", { messages: [] }, fakeCtx({ cwd: seenEarlier }));
+    api.emitBus("verify:failed", { cmd: "bun test", failures: ["boom"], cwd: inPayload });
+
+    expect(existsSync(join(inPayload, ".pi", "memory"))).toBe(true);
+    expect(existsSync(join(seenEarlier, ".pi", "memory"))).toBe(false);
   });
 });
 

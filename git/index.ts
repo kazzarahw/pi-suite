@@ -3,7 +3,8 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { cwdOf, EDIT_TOOLS, editedPath } from "../shared/index.ts";
 import { defaultExec } from "../shared/exec.ts";
 import { loadConfig, saveConfig, type GitConfig } from "./src/config.ts";
-import { createStore, type CheckpointStore } from "./src/store.ts";
+import type { CheckpointStore } from "./src/store.ts";
+import { createGitSession } from "./src/session.ts";
 import { dirtyPaths } from "./src/detect.ts";
 import {
   currentLeafId,
@@ -39,50 +40,56 @@ interface GitCtx {
  */
 export default function piGit(pi: ExtensionAPI): void {
   const emit = (event: string, data: unknown) => pi.events.emit(event, data);
+  const session = createGitSession();
 
-  let lastCheckpointedEntryId: string | null = null;
-  let pendingFork: PendingFork | null = null;
-  let pendingTreeTarget: string | null = null;
-  let cached: { sessionId: string; maxFileBytes: number; store: CheckpointStore } | null = null;
+  // Genuine hook-to-hook handoff: one hook observes something the next one acts on.
+  // Grouped rather than loose so what survives between hooks is one thing to reason
+  // about, and so it is obvious this is all of it.
+  const pending: { fork: PendingFork | null; treeTarget: string | null } = {
+    fork: null,
+    treeTarget: null,
+  };
 
-  // Files left out of a checkpoint for size. Collected rather than reported from
-  // inside the store so the notice can be delivered once, from a hook that has a ctx.
-  const skipped: Array<{ path: string; bytes: number }> = [];
-  const announced = new Set<string>();
+  /** Narrow Pi's context once, rather than casting at each of a dozen use sites. */
+  const asGit = (ctx: unknown): GitCtx => (ctx ?? {}) as GitCtx;
 
   /**
-   * The store for this session, rebuilt only when the session or the size cap
-   * changes. `null` when there is no session to key on — nothing could be restored
-   * later, so there is nothing worth recording now.
+   * The preamble every hook shared: load the config, honor `mode: "off"`, resolve the
+   * store, and contain any failure.
+   *
+   * Containment is the point. A checkpoint is a side effect of a turn the user asked
+   * for, and a hook that throws takes the turn with it — so a failure here is reported
+   * and dropped, never propagated. `what` names the operation in that report.
    */
-  function storeFor(ctx: GitCtx | undefined, cfg: GitConfig): CheckpointStore | null {
-    const sessionId = ctx?.sessionManager?.getSessionId?.();
-    if (!sessionId) return null;
-    if (cached && cached.sessionId === sessionId && cached.maxFileBytes === cfg.maxFileBytes) {
-      return cached.store;
+  async function withStore(
+    what: string,
+    ctx: unknown,
+    run: (store: CheckpointStore, cfg: GitConfig, git: GitCtx) => Promise<void>,
+  ): Promise<void> {
+    const cfg = loadConfig();
+    if (cfg.mode === "off") return;
+    const git = asGit(ctx);
+    const store = session.store(git, cfg.maxFileBytes);
+    if (!store) return;
+    try {
+      await run(store, cfg, git);
+    } catch (error) {
+      console.error(`[pi-git] ${what} failed: ${(error as Error).message}`);
     }
-    const store = createStore(sessionId, {
-      maxFileBytes: cfg.maxFileBytes,
-      onSkip: (path, bytes) => skipped.push({ path, bytes }),
-    });
-    cached = { sessionId, maxFileBytes: cfg.maxFileBytes, store };
-    return store;
   }
 
   /**
-   * Say what was left out. A file silently excluded from a rewind is worse than a
-   * slow one.
+   * Say what was left out. A file silently excluded from a rewind is worse than a slow
+   * one.
    *
    * Reported to the user, not onto the event bus: the bus vocabulary is closed (see
-   * `shared/events.ts` and the contract test), and widening it is a change to the
-   * cross-extension surface, which this sub-project deliberately holds still.
+   * `shared/events.ts` and the contract test), and widening it would make a pi-git
+   * implementation detail part of the cross-extension surface.
    */
-  function reportSkips(ctx: GitCtx | undefined): void {
-    for (const skip of skipped.splice(0)) {
-      if (announced.has(skip.path)) continue;
-      announced.add(skip.path);
+  function reportSkips(ctx: GitCtx): void {
+    for (const skip of session.drainSkips()) {
       const message = `[pi-git] ${skip.path} is too large to checkpoint (${skip.bytes} bytes) — a rewind will not restore it.`;
-      if (ctx?.hasUI) ctx.ui?.notify?.(message, "warning");
+      if (ctx.hasUI) ctx.ui?.notify?.(message, "warning");
       else console.error(message);
     }
   }
@@ -90,14 +97,14 @@ export default function piGit(pi: ExtensionAPI): void {
   /**
    * What to capture: every path pi-git already tracks, plus whatever git reports as
    * changed. The second half is what catches a file `bash` wrote, which never passes
-   * through a tool call. Detection is a supplement — a failure there must not stop
-   * the checkpoint, and outside a repository it simply contributes nothing.
+   * through a tool call. Detection is a supplement — a failure there must not stop the
+   * checkpoint, and outside a repository it simply contributes nothing.
    */
-  async function pathsFor(store: CheckpointStore, cfg: GitConfig, ctx: GitCtx | undefined): Promise<string[]> {
+  async function pathsFor(store: CheckpointStore, cfg: GitConfig, ctx: GitCtx): Promise<string[]> {
     const paths = new Set(store.tracked());
     if (cfg.detectDirty) {
       try {
-        for (const path of await dirtyPaths(defaultExec, cwdOf(ctx), { signal: ctx?.signal })) {
+        for (const path of await dirtyPaths(defaultExec, cwdOf(ctx), { signal: ctx.signal })) {
           paths.add(path);
         }
       } catch {
@@ -107,21 +114,28 @@ export default function piGit(pi: ExtensionAPI): void {
     return [...paths];
   }
 
+  /** Checkpoint `paths` against `entryId`, then report anything left out. */
+  async function capture(
+    store: CheckpointStore,
+    cfg: GitConfig,
+    ctx: GitCtx,
+    entryId: string,
+    reason: string,
+  ): Promise<void> {
+    await checkpointTurn(store, entryId, await pathsFor(store, cfg, ctx), reason, emit);
+    reportSkips(ctx);
+  }
+
   // Fires *before* the tool runs, with typed input — the only moment the pre-edit
   // bytes are still on disk. This is what lets a restore delete a file the agent
   // created, rather than guessing from its later presence.
   pi.on("tool_call", async (event, ctx) => {
-    const cfg = loadConfig();
-    if (cfg.mode === "off" || !EDIT_TOOLS.has(event.toolName)) return;
+    if (!EDIT_TOOLS.has(event.toolName)) return;
     const path = editedPath(event.input);
     if (!path) return;
-    const store = storeFor(ctx as GitCtx, cfg);
-    if (!store) return;
-    try {
-      await store.rememberOrigin(resolve(cwdOf(ctx), path));
-    } catch (error) {
-      console.error(`[pi-git] could not record ${path}: ${(error as Error).message}`);
-    }
+    await withStore(`recording ${path}`, ctx, async (store, _cfg, git) => {
+      await store.rememberOrigin(resolve(cwdOf(git), path));
+    });
   });
 
   // Checkpoint the pre-edit state once per turn. The user message only becomes the
@@ -129,19 +143,12 @@ export default function piGit(pi: ExtensionAPI): void {
   // there; dedup by entry id so later assistant messages don't overwrite it.
   pi.on("message_start", async (event, ctx) => {
     if ((event.message as { role?: string })?.role !== "assistant") return;
-    const cfg = loadConfig();
-    if (cfg.mode === "off") return;
-    const entryId = currentUserEntryId((ctx as GitCtx).sessionManager ?? {});
-    if (!entryId || entryId === lastCheckpointedEntryId) return;
-    const store = storeFor(ctx as GitCtx, cfg);
-    if (!store) return;
-    try {
-      await checkpointTurn(store, entryId, await pathsFor(store, cfg, ctx as GitCtx), "turn", emit);
-      lastCheckpointedEntryId = entryId;
-      reportSkips(ctx as GitCtx);
-    } catch (error) {
-      console.error(`[pi-git] checkpoint failed: ${(error as Error).message}`);
-    }
+    await withStore("checkpoint", ctx, async (store, cfg, git) => {
+      const entryId = currentUserEntryId(git.sessionManager ?? {});
+      if (!entryId || entryId === session.lastCheckpointed()) return;
+      await capture(store, cfg, git, entryId, "turn");
+      session.markCheckpointed(entryId);
+    });
   });
 
   /**
@@ -161,19 +168,15 @@ export default function piGit(pi: ExtensionAPI): void {
    * `targetId` is the right key in both directions.
    */
   pi.on("session_before_tree", async (event, ctx) => {
-    const cfg = loadConfig();
-    if (cfg.mode === "off") return;
-    pendingTreeTarget = event.preparation?.targetId ?? null;
-    const store = storeFor(ctx as GitCtx, cfg);
-    if (!store) return;
-    const leafId = currentLeafId((ctx as GitCtx).sessionManager ?? {});
-    if (!leafId) return;
-    try {
-      await checkpointTurn(store, leafId, await pathsFor(store, cfg, ctx as GitCtx), "before-tree", emit);
-      reportSkips(ctx as GitCtx);
-    } catch (error) {
-      console.error(`[pi-git] checkpoint before navigation failed: ${(error as Error).message}`);
-    }
+    // Recorded before the mode gate: `session_tree` clears it either way, and stashing
+    // it costs nothing. Skipping it here would leave a stale target behind if the mode
+    // changed between the two hooks.
+    pending.treeTarget = event.preparation?.targetId ?? null;
+    await withStore("checkpoint before navigation", ctx, async (store, cfg, git) => {
+      const leafId = currentLeafId(git.sessionManager ?? {});
+      if (!leafId) return;
+      await capture(store, cfg, git, leafId, "before-tree");
+    });
   });
 
   // Navigated. Prefer the entry the user chose; fall back to the resulting leaf when
@@ -181,14 +184,10 @@ export default function piGit(pi: ExtensionAPI): void {
   // nearest checkpointed ancestor — the destination is often an assistant entry that
   // was never a checkpoint anchor.
   pi.on("session_tree", async (event, ctx) => {
-    const cfg = loadConfig();
-    const chosen = pendingTreeTarget;
-    pendingTreeTarget = null;
-    if (cfg.mode === "off") return;
-    const store = storeFor(ctx as GitCtx, cfg);
-    if (!store) return;
-    const sm = (ctx as GitCtx).sessionManager ?? {};
-    try {
+    const chosen = pending.treeTarget;
+    pending.treeTarget = null;
+    await withStore("restore after navigation", ctx, async (store, _cfg, git) => {
+      const sm = git.sessionManager ?? {};
       const start = chosen ?? event.newLeafId ?? currentLeafId(sm);
       let target = await resolveRestoreTarget(sm, start, (id) => store.has(id));
       if (!target) {
@@ -197,18 +196,16 @@ export default function piGit(pi: ExtensionAPI): void {
       }
       if (target) {
         await restoreEntry(store, target, "tree", emit);
-      } else if ((ctx as GitCtx).hasUI) {
+      } else if (git.hasUI) {
         // Silence here would read as "there was nothing to undo".
-        (ctx as GitCtx).ui?.notify?.(
+        git.ui?.notify?.(
           "[pi-git] no file checkpoint for that point in the session — files left as they are.",
           "warning",
         );
       }
       // The timeline moved; the next turn must checkpoint even if its entry id repeats.
-      lastCheckpointedEntryId = null;
-    } catch (error) {
-      console.error(`[pi-git] restore after navigation failed: ${(error as Error).message}`);
-    }
+      session.markCheckpointed(null);
+    });
   });
 
   /**
@@ -222,36 +219,23 @@ export default function piGit(pi: ExtensionAPI): void {
    * rejection. When nothing has expired the sweep costs one directory listing.
    */
   pi.on("session_start", async (_event, ctx) => {
-    const cfg = loadConfig();
-    if (cfg.mode === "off") return;
-    const store = storeFor(ctx as GitCtx, cfg);
-    if (!store) return;
-    try {
+    await withStore("checkpoint sweep", ctx, async (store, cfg) => {
       await store.gc(cfg.checkpointTtlDays, Date.now());
-    } catch (error) {
-      console.error(`[pi-git] checkpoint sweep failed: ${(error as Error).message}`);
-    }
+    });
   });
 
   // Record the fork target; restore only once the fork actually commits (shutdown).
   pi.on("session_before_fork", async (event) => {
-    pendingFork = { entryId: event.entryId, position: event.position };
+    pending.fork = { entryId: event.entryId, position: event.position };
   });
 
   pi.on("session_shutdown", async (event, ctx) => {
-    const cfg = loadConfig();
-    if (event.reason !== "fork" || cfg.mode === "off") {
-      pendingFork = null;
-      return;
-    }
-    try {
-      const store = storeFor(ctx as GitCtx, cfg);
-      if (store) await restoreOnForkShutdown(store, pendingFork, event.reason, emit);
-    } catch (error) {
-      console.error(`[pi-git] rewind restore failed: ${(error as Error).message}`);
-    } finally {
-      pendingFork = null;
-    }
+    const fork = pending.fork;
+    pending.fork = null;
+    if (event.reason !== "fork") return;
+    await withStore("rewind restore", ctx, async (store) => {
+      await restoreOnForkShutdown(store, fork, event.reason, emit);
+    });
   });
 
   const command = buildGitCommand({
