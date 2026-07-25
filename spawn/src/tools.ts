@@ -4,6 +4,7 @@ import type { AgentDef } from "./agents.ts";
 import { runAgent, type SpawnEvent, type SpawnResult } from "./runner.ts";
 import { runParallel, type Job } from "./pool.ts";
 import { eventToLine } from "./render.ts";
+import { cwdOf } from "../../shared/index.ts";
 
 const parameters = Type.Object({
   tasks: Type.Array(
@@ -54,7 +55,7 @@ export function buildSpawnTool(deps: SpawnDeps) {
         throw new Error(`[pi-spawn] max spawn depth (${MAX_DEPTH}) reached; refusing to nest further.`);
       }
 
-      const cwd = ctx?.sessionManager?.getCwd?.() ?? process.cwd();
+      const cwd = cwdOf(ctx);
       const agents = deps.discoverAgents(cwd);
       const byName = new Map(agents.map((a) => [a.name, a]));
 

@@ -31,7 +31,7 @@ export default function piSpawn(pi: ExtensionAPI): void {
   const command = buildSpawnCommand({
     loadConfig: () => loadConfig(),
     saveConfig: (c) => saveConfig(c),
-    listAgents: () => discoverAgents(process.cwd()),
+    listAgents: (cwd: string) => discoverAgents(cwd),
   });
   pi.registerCommand(command.name, command.options);
 }

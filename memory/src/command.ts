@@ -1,15 +1,16 @@
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type { SettingItem } from "@earendil-works/pi-tui";
 import { openSettingsPanel } from "../../shared/settings-panel.ts";
-import { MODES, type Mode } from "../../shared/index.ts";
+import { MODES, cwdOf, type Mode } from "../../shared/index.ts";
 import type { MemoryConfig } from "./config.ts";
 import type { Memory } from "./frontmatter.ts";
 
 export interface CommandDeps {
   loadConfig: () => MemoryConfig;
   saveConfig: (c: MemoryConfig) => void;
-  listMemories: () => Memory[];
-  deleteMemory: (name: string) => void;
+  /** Resolved at invoke time from the command's own context, not at extension load. */
+  listMemories: (cwd: string) => Memory[];
+  deleteMemory: (name: string, cwd: string) => void;
 }
 
 
@@ -46,7 +47,7 @@ export function buildMemoryCommand(deps: CommandDeps) {
             ctx?.ui?.notify?.(`[pi-memory] usage: delete <name>`, "error");
             return;
           }
-          deps.deleteMemory(value);
+          deps.deleteMemory(value, cwdOf(ctx));
           ctx?.ui?.notify?.(`[pi-memory] deleted "${value}"`, "info");
           return;
         }
@@ -58,9 +59,9 @@ export function buildMemoryCommand(deps: CommandDeps) {
           return;
         }
 
-        const count = deps.listMemories().length;
+        const count = deps.listMemories(cwdOf(ctx)).length;
         if (ctx.mode !== "tui") {
-          const names = deps.listMemories().map((m) => m.name).join(", ") || "none";
+          const names = deps.listMemories(cwdOf(ctx)).map((m) => m.name).join(", ") || "none";
           ctx?.ui?.notify?.(`[pi-memory] mode: ${cfg.mode} · autoCapture: ${cfg.autoCapture} · memories: ${names}`, "info");
           return;
         }

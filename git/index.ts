@@ -1,5 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { createGit } from "./src/git.ts";
+import { cwdOf } from "../shared/index.ts";
 import { defaultExec } from "../shared/exec.ts";
 import { loadConfig, saveConfig } from "./src/config.ts";
 import { checkpointTurn, restoreOnForkShutdown, type PendingFork } from "./src/hooks.ts";
@@ -15,7 +16,6 @@ import { buildGitCommand } from "./src/command.ts";
  * Build spec: docs/superpowers/plans/2026-07-20-pi-git.md
  */
 export default function piGit(pi: ExtensionAPI): void {
-  const cwdOf = (ctx: ExtensionContext): string => ctx?.sessionManager?.getCwd?.() ?? process.cwd();
   const emit = (event: string, data: unknown) => pi.events.emit(event, data);
 
   let lastCheckpointedEntryId: string | null = null;

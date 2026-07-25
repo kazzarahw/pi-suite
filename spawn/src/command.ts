@@ -4,11 +4,13 @@ import type { SettingItem } from "@earendil-works/pi-tui";
 import { openSettingsPanel } from "../../shared/settings-panel.ts";
 import type { AgentDef } from "./agents.ts";
 import type { SpawnConfig } from "./config.ts";
+import { cwdOf } from "../../shared/index.ts";
 
 export interface CommandDeps {
   loadConfig: () => SpawnConfig;
   saveConfig: (c: SpawnConfig) => void;
-  listAgents: () => AgentDef[];
+  /** Resolved at invoke time from the command's own context, not at extension load. */
+  listAgents: (cwd: string) => AgentDef[];
 }
 
 
@@ -46,7 +48,7 @@ export function buildSpawnCommand(deps: CommandDeps) {
           return;
         }
 
-        const roster = deps.listAgents().map((a) => a.name).join(", ") || "none";
+        const roster = deps.listAgents(cwdOf(ctx)).map((a) => a.name).join(", ") || "none";
         if (ctx.mode !== "tui") {
           const model = cfg.defaultModel || "(pi default)";
           ctx?.ui?.notify?.(`[pi-spawn] model: ${model} · concurrency: ${cfg.concurrency} · agents: ${roster}`, "info");

@@ -75,30 +75,37 @@ test("verify:failed does NOT auto-capture while autoCapture is off (the default)
 });
 
 /**
- * KNOWN DEFECT (scheduled for sub-project 2, "correctness hardening"):
- * the `verify:failed` auto-capture handler writes to `process.cwd()`, while both
- * memory tools correctly use `ctx.sessionManager.getCwd()`. A project-scope memory
- * therefore lands next to whatever directory pi was launched from rather than the
- * session's project — and, before this `chdir`, it polluted this repo when the
- * tests ran. The `chdir` below contains that; when the defect is fixed, replace it
- * with an assertion that the memory landed under the SESSION cwd.
+ * The auto-capture handler is a bus callback: `pi.events.on` delivers only `data`, with
+ * no ExtensionContext, so it cannot resolve a cwd the way the tools do. It used to fall
+ * back to `process.cwd()`, writing project memories beside whatever directory Pi was
+ * launched from — and polluting this repo when the tests ran, which is how it was found.
+ * It now uses the cwd recorded by the `context` hook. No `chdir` is needed to contain it.
  */
-test("verify:failed auto-captures a gotcha when autoCapture is on", async () => {
+test("verify:failed auto-captures under the SESSION cwd, not process.cwd()", async () => {
   await withConfig({ autoCapture: true }, async () => {
     const api = await loadExtension("memory");
-    const scratch = mkdtempSync(join(tmpdir(), "pi-memory-cwd-"));
-    const origCwd = process.cwd();
-    process.chdir(scratch);
-    try {
-      api.emitBus("verify:failed", { cmd: "bun test", failures: ["test a failed"] });
-      const wrote = api.emitted.filter((e) => e.event === "memory:wrote");
-      expect(wrote.length).toBe(1);
-      expect(JSON.stringify(wrote[0]!.data)).toContain("gotcha-verify-");
-      // Documents the defect: the memory landed under process.cwd(), not a session cwd.
-      expect(existsSync(join(scratch, ".pi", "memory"))).toBe(true);
-    } finally {
-      process.chdir(origCwd);
-    }
+    const session = mkdtempSync(join(tmpdir(), "pi-memory-session-"));
+
+    // The context hook is what teaches the extension where the session lives.
+    await api.fire("context", { messages: [] }, fakeCtx({ cwd: session }));
+    api.emitBus("verify:failed", { cmd: "bun test", failures: ["test a failed"] });
+
+    const wrote = api.emitted.filter((e) => e.event === "memory:wrote");
+    expect(wrote.length).toBe(1);
+    expect(JSON.stringify(wrote[0]!.data)).toContain("gotcha-verify-");
+    expect(existsSync(join(session, ".pi", "memory"))).toBe(true);
+    // The repo it was launched from must be untouched.
+    expect(existsSync(join(process.cwd(), ".pi", "memory"))).toBe(false);
+  });
+});
+
+// Without a context hook there is no session to attribute the capture to. Skipping is
+// the only safe option — the previous fallback guessed, and guessed wrong.
+test("verify:failed captures nothing before any session cwd is known", async () => {
+  await withConfig({ autoCapture: true }, async () => {
+    const api = await loadExtension("memory");
+    api.emitBus("verify:failed", { cmd: "bun test", failures: ["test a failed"] });
+    expect(api.emitted.filter((e) => e.event === "memory:wrote")).toEqual([]);
   });
 });
 

@@ -3,6 +3,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import type { AgentToolResult, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { MEMORY_TYPES, SCOPES, type Memory, type MemoryType, type Scope } from "./frontmatter.ts";
 import { listMemories, readMemory, writeMemory } from "./store.ts";
+import { cwdOf } from "../../shared/index.ts";
 import { selectByQuery, formatRecall } from "./recall.ts";
 import { scanSecrets } from "./secrets.ts";
 
@@ -11,7 +12,6 @@ export interface MemoryToolDeps {
   emit: (event: string, data: unknown) => void;
 }
 
-const cwdOf = (ctx: ExtensionContext): string => ctx?.sessionManager?.getCwd?.() ?? process.cwd();
 
 const recallParameters = Type.Object({
   query: Type.Optional(
