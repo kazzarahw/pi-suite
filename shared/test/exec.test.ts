@@ -1,12 +1,6 @@
 import { test, expect } from "bun:test";
 import { defaultExec, MAX_BUFFER } from "../exec.ts";
-
-/** Reject if a promise doesn't settle within `ms` — turns a hang into a clear failure. */
-const within = <T>(ms: number, p: Promise<T>): Promise<T> =>
-  Promise.race([
-    p,
-    new Promise<T>((_, rej) => setTimeout(() => rej(new Error(`did not settle within ${ms}ms`)), ms)),
-  ]);
+import { within } from "./harness.ts";
 
 test("defaultExec captures stdout and exit 0 for a successful command", async () => {
   const r = await defaultExec("sh", ["-c", "printf hello"]);

@@ -4,13 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createManager } from "../src/lsp/manager.ts";
 import type { ServerSpec } from "../src/lsp/config.ts";
-
-/** Reject if a promise doesn't settle within `ms` — turns a hang into a clear test failure. */
-const within = <T>(ms: number, p: Promise<T>): Promise<T> =>
-  Promise.race([
-    p,
-    new Promise<T>((_, rej) => setTimeout(() => rej(new Error(`did not settle within ${ms}ms`)), ms)),
-  ]);
+import { within } from "../../shared/test/harness.ts";
 
 let seq = 0;
 function tmpJson(): string {

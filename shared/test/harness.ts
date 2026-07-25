@@ -202,3 +202,21 @@ export async function loadExtension(dir: string): Promise<FakeApi> {
   mod.default(api);
   return api;
 }
+
+/**
+ * Reject if `p` has not settled within `ms` — the hang detector for bounded paths.
+ *
+ * Every test of a timeout, an abort, or a dead subprocess must go through this. A
+ * hang test written without it does not fail; it stops the whole run, which reads
+ * as a stuck CI job rather than a red test.
+ *
+ * The timer is cleared on settle. Without that, a suite of these leaves pending
+ * timers behind and the test process lingers after the last assertion.
+ */
+export function within<T>(ms: number, p: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  const bound = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`did not settle within ${ms}ms`)), ms);
+  });
+  return Promise.race([p, bound]).finally(() => clearTimeout(timer)) as Promise<T>;
+}
