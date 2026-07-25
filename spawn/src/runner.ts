@@ -2,6 +2,7 @@ import { spawn as nodeSpawn } from "node:child_process";
 import { mkdtempSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
+import { deadline } from "../../shared/index.ts";
 import type { AgentDef } from "./agents.ts";
 
 export interface SpawnResult {
@@ -28,6 +29,12 @@ export interface RunAgentInput {
   signal?: AbortSignal;
   env?: Record<string, string>;
   onEvent?: (e: SpawnEvent) => void;
+  /**
+   * Per-job deadline in ms. Applied here rather than at the call site so each job's
+   * clock starts when *it* starts: under a concurrency cap a queued job would otherwise
+   * inherit a deadline that had already been running while it waited.
+   */
+  timeoutMs?: number;
 }
 
 /** Construct the `pi --mode json` argv for a delegated task. Pure. */
@@ -134,7 +141,11 @@ const defaultSpawn: SpawnFn = (argv, opts) =>
 
 /** Run one delegated task in an isolated `pi` subprocess; parse its stream into a SpawnResult. */
 export async function runAgent(input: RunAgentInput, spawn: SpawnFn = defaultSpawn): Promise<SpawnResult> {
-  const { agentDef, task, signal, env, onEvent } = input;
+  const { agentDef, task, signal, env, onEvent, timeoutMs } = input;
+  // One signal carrying both reasons to stop: the user pressed Esc, or the job outlived
+  // its deadline. The existing SIGTERM→SIGKILL escalation handles either.
+  const bounded = timeoutMs ? deadline(timeoutMs, signal) : signal;
+  const timedOut = (): boolean => timeoutMs !== undefined && bounded?.aborted === true && signal?.aborted !== true;
   const promptFile = agentDef.systemPrompt.trim() ? writeTempPrompt(agentDef.name, agentDef.systemPrompt) : undefined;
   const argv = buildAgentArgv(agentDef, task, promptFile);
 
@@ -144,7 +155,7 @@ export async function runAgent(input: RunAgentInput, spawn: SpawnFn = defaultSpa
 
   try {
     const code = await spawn(argv, {
-      signal,
+      signal: bounded,
       env,
       onLine: (line) => {
         if (!line.trim()) return;
@@ -169,6 +180,17 @@ export async function runAgent(input: RunAgentInput, spawn: SpawnFn = defaultSpa
         }
       },
     });
+    // A job killed at its deadline did not "fail" — it never finished. Say so, rather
+    // than returning a truncated transcript that reads like a completed answer.
+    if (timedOut()) {
+      const partial = output.trim();
+      return {
+        agent: agentDef.name,
+        ok: false,
+        output: `[pi-spawn] ${agentDef.name} exceeded its ${timeoutMs}ms deadline and was terminated.${partial ? `\n\nPartial output:\n${partial}` : ""}`,
+        usage,
+      };
+    }
     return { agent: agentDef.name, ok: code === 0 && !sawError, output: output.trim(), usage };
   } finally {
     if (promptFile && existsSync(promptFile)) {

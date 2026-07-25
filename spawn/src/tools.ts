@@ -29,6 +29,8 @@ export interface SpawnDeps {
   discoverAgents: (cwd: string) => AgentDef[];
   defaultModel: () => string;
   concurrency: () => number;
+  /** Per-job deadline in ms. */
+  jobTimeoutMs: () => number;
   emit: (event: string, data: unknown) => void;
   /** This process's spawn nesting depth (from PI_SPAWN_DEPTH). */
   depth: number;
@@ -88,7 +90,13 @@ export function buildSpawnTool(deps: SpawnDeps) {
           deps.emit("spawn:started", { agent: job.agentDef.name });
           status[job.agentDef.name] = "starting…";
           paint();
-          const result = await runAgent({ ...job, signal, env, onEvent: onEventFor(job.agentDef.name) });
+          const result = await runAgent({
+            ...job,
+            signal,
+            env,
+            timeoutMs: deps.jobTimeoutMs(),
+            onEvent: onEventFor(job.agentDef.name),
+          });
           deps.emit("spawn:finished", { agent: result.agent, summary: result.output.slice(0, 200) });
           results = [result];
         } else {
@@ -100,7 +108,14 @@ export function buildSpawnTool(deps: SpawnDeps) {
           results = await runParallel(
             jobs,
             deps.concurrency(),
-            (job, s) => runAgent({ ...job, signal: s, env, onEvent: onEventFor(job.agentDef.name) }),
+            (job, s) =>
+              runAgent({
+                ...job,
+                signal: s,
+                env,
+                timeoutMs: deps.jobTimeoutMs(),
+                onEvent: onEventFor(job.agentDef.name),
+              }),
             signal,
           );
           for (const result of results) {

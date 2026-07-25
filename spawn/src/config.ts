@@ -11,11 +11,14 @@ export interface SpawnConfig {
   defaultModel: string;
   /** Max subagents in flight for a parallel spawn. */
   concurrency: number;
+  /** Deadline for a single delegated job. A wedged subagent otherwise runs until noticed. */
+  jobTimeoutMs: number;
 }
 
 export const DEFAULTS: SpawnConfig = {
   defaultModel: "",
   concurrency: Math.min(4, Math.max(1, cpus().length)),
+  jobTimeoutMs: 900_000,
 };
 
 export const SPEC: ConfigSpec<SpawnConfig> = {
@@ -25,6 +28,8 @@ export const SPEC: ConfigSpec<SpawnConfig> = {
     const p = raw as Partial<SpawnConfig>;
     return {
       defaultModel: typeof p.defaultModel === "string" ? p.defaultModel : defaults.defaultModel,
+      jobTimeoutMs:
+        typeof p.jobTimeoutMs === "number" && p.jobTimeoutMs > 0 ? p.jobTimeoutMs : defaults.jobTimeoutMs,
       concurrency:
         typeof p.concurrency === "number" && p.concurrency >= 1
           ? Math.floor(p.concurrency)

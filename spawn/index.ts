@@ -22,6 +22,7 @@ export default function piSpawn(pi: ExtensionAPI): void {
       discoverAgents: (cwd) => discoverAgents(cwd),
       defaultModel: () => loadConfig().defaultModel,
       concurrency: () => loadConfig().concurrency,
+      jobTimeoutMs: () => loadConfig().jobTimeoutMs,
       emit: (event, data) => pi.events.emit(event, data),
       depth,
       childEnv: () => ({ PI_SPAWN_DEPTH: String(depth + 1) }),

@@ -7,6 +7,7 @@ const baseDeps = (over: Partial<SpawnDeps> = {}): SpawnDeps => ({
   discoverAgents: () => [],
   defaultModel: () => "",
   concurrency: () => 2,
+  jobTimeoutMs: () => 900_000,
   emit: () => {},
   depth: 0,
   childEnv: () => ({}),

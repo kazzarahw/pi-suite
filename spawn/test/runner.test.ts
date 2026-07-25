@@ -1,6 +1,7 @@
 import { test, expect } from "bun:test";
 import { buildAgentArgv, toSpawnEvent, extractText, runAgent, type SpawnFn } from "../src/runner.ts";
 import type { AgentDef } from "../src/agents.ts";
+import { within } from "../../shared/test/harness.ts";
 
 const agent: AgentDef = { name: "scout", description: "", tools: ["read", "grep"], model: "opus", systemPrompt: "" };
 
@@ -50,4 +51,63 @@ test("runAgent reports ok:false on a non-zero exit", async () => {
   const fakeSpawn: SpawnFn = async () => 1;
   const r = await runAgent({ agentDef: { ...agent, systemPrompt: "" }, task: "t" }, fakeSpawn);
   expect(r.ok).toBe(false);
+});
+
+// --- Per-job deadline ------------------------------------------------------
+// spawn handled abort (SIGTERM→SIGKILL) but had no deadline, so a wedged subagent ran
+// until a human noticed. The deadline is applied inside runAgent rather than at the call
+// site so each job's clock starts when *it* starts: under a concurrency cap a queued job
+// would otherwise inherit a deadline that had been running while it waited.
+
+test("a job that never finishes is terminated at its deadline", async () => {
+  let killed = false;
+  const spawnFn: SpawnFn = (_argv, opts) =>
+    new Promise((resolve) => {
+      // Never resolves on its own; only the signal ends it, as a real wedged child would.
+      opts.signal?.addEventListener("abort", () => {
+        killed = true;
+        resolve(1);
+      });
+    });
+  const result = await within(
+    3000,
+    runAgent(
+      { agentDef: agent, task: "t", timeoutMs: 50 },
+      spawnFn,
+    ),
+  );
+  expect(killed).toBe(true);
+  expect(result.ok).toBe(false);
+  // Must read as "did not finish", not as an answer.
+  expect(result.output).toContain("deadline");
+});
+
+test("a job finishing inside its deadline is unaffected", async () => {
+  const spawnFn: SpawnFn = (_argv, opts) => {
+    opts.onLine(JSON.stringify({ type: "message_end", message: { role: "assistant", content: "done" } }));
+    return Promise.resolve(0);
+  };
+  const result = await within(
+    3000,
+    runAgent(
+      { agentDef: agent, task: "t", timeoutMs: 10_000 },
+      spawnFn,
+    ),
+  );
+  expect(result.ok).toBe(true);
+  expect(result.output).not.toContain("deadline");
+});
+
+// A user-initiated abort must stay distinguishable from a deadline kill.
+test("a user abort is not reported as a timeout", async () => {
+  const spawnFn: SpawnFn = (_argv, opts) =>
+    new Promise((resolve) => opts.signal?.addEventListener("abort", () => resolve(1)));
+  const ac = new AbortController();
+  const p = runAgent(
+    { agentDef: agent, task: "t", signal: ac.signal, timeoutMs: 10_000 },
+    spawnFn,
+  );
+  ac.abort();
+  const result = await within(3000, p);
+  expect(result.output).not.toContain("deadline");
 });

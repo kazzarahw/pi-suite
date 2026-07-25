@@ -105,7 +105,7 @@ test("[git] loadConfig backfills nested worktree fields and rejects an invalid m
 test("[spawn] loadConfig floors a fractional concurrency and rejects non-string/sub-1 values", () => {
   const path = tmp("spawn");
   writeFileSync(path, JSON.stringify({ concurrency: 3.9, defaultModel: 5 }));
-  expect(loadConfig(SPAWN, path)).toEqual({ defaultModel: "", concurrency: 3 });
+  expect(loadConfig(SPAWN, path)).toEqual({ defaultModel: "", concurrency: 3, jobTimeoutMs: SPAWN.defaults.jobTimeoutMs });
 });
 
 test("[browser] empty binPath falls back to default; empty session becomes undefined", () => {
@@ -132,4 +132,16 @@ test("SPECS covers every extension that has config", () => {
   expect(SPECS.map((s) => s.name).sort()).toEqual(
     ["browser", "consult", "git", "lens", "memory", "spawn", "todo"],
   );
+});
+
+test("[spawn] a non-positive jobTimeoutMs falls back to the default", () => {
+  const path = tmp("spawn");
+  writeFileSync(path, JSON.stringify({ jobTimeoutMs: 0 }));
+  expect(loadConfig(SPAWN, path).jobTimeoutMs).toBe(SPAWN.defaults.jobTimeoutMs);
+});
+
+test("[lens] a non-positive verifyTimeoutMs falls back to the default", () => {
+  const path = tmp("lens");
+  writeFileSync(path, JSON.stringify({ verifyTimeoutMs: -1 }));
+  expect(loadConfig(LENS, path).verifyTimeoutMs).toBe(LENS.defaults.verifyTimeoutMs);
 });
