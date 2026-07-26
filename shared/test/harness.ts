@@ -47,6 +47,8 @@ export interface FakeApi {
   messages: Array<{ message: unknown; options?: unknown }>;
   /** Everything persisted via `pi.appendEntry`. */
   entries: Array<{ customType: string; data?: unknown }>;
+  /** Every `pi.setLabel` call, in order. `undefined` clears a label. */
+  labels: Array<{ entryId: string; label: string | undefined }>;
   /** Widgets/status set via `ctx.ui` are recorded on the ctx, not here. */
   registerTool(tool: FakeTool): void;
   registerCommand(name: string, options: FakeCommand): void;
@@ -57,6 +59,7 @@ export interface FakeApi {
   };
   sendMessage(message: unknown, options?: unknown): void;
   appendEntry(customType: string, data?: unknown): void;
+  setLabel(entryId: string, label: string | undefined): void;
 
   // --- test drivers ---
   /** Invoke every handler for `hook` in registration order; returns the last defined result. */
@@ -75,6 +78,7 @@ export function createFakeApi(): FakeApi {
   const emitted: Array<{ event: string; data: unknown }> = [];
   const messages: Array<{ message: unknown; options?: unknown }> = [];
   const entries: Array<{ customType: string; data?: unknown }> = [];
+  const labels: FakeApi["labels"] = [];
 
   const api: FakeApi = {
     tools,
@@ -84,6 +88,7 @@ export function createFakeApi(): FakeApi {
     emitted,
     messages,
     entries,
+    labels,
     registerTool(tool) {
       tools.set(tool.name, tool);
     },
@@ -110,6 +115,9 @@ export function createFakeApi(): FakeApi {
     },
     appendEntry(customType, data) {
       entries.push({ customType, data });
+    },
+    setLabel(entryId, label) {
+      labels.push({ entryId, label });
     },
     async fire(hook, event, ctx) {
       let last: unknown;

@@ -24,6 +24,7 @@ export type {
   TodoItem,
   EventPayloads,
   EventName,
+  Emitter,
 } from "./events.ts";
 export { EVENTS, TODO_STATUSES } from "./events.ts";
 
@@ -34,6 +35,9 @@ export { SURFACE, ALL_TOOLS, MANIFEST, entryPoint } from "./surface.ts";
 
 export type { CwdSource } from "./cwd.ts";
 export { cwdOf } from "./cwd.ts";
+
+export type { TrustSource } from "./trust.ts";
+export { projectTrusted } from "./trust.ts";
 
 export { deadline } from "./deadline.ts";
 

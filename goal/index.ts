@@ -1,7 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { createNudgeGuard, nudgeAction } from "../shared/index.ts";
+import { createNudgeGuard, nudgeAction, type Emitter } from "../shared/index.ts";
 import { loadConfig, saveConfig } from "./src/config.ts";
-import { readProgress, type TodoProgress } from "./src/progress.ts";
+import { readProgress, readVerify, type TodoProgress, type VerifyState } from "./src/progress.ts";
 import { renderGoal, formatInjection, type Context } from "./src/render.ts";
 import { goalReminder } from "./src/nudge.ts";
 import { appendState, restoreState } from "./src/persist.ts";
@@ -18,6 +18,7 @@ import type { Goal } from "./src/state.ts";
  * `goal:set` / `goal:met`.
  */
 export default function piGoal(pi: ExtensionAPI): void {
+  const emit: Emitter = (event, data) => pi.events.emit(event, data);
   let goal: Goal | null = null;
   /**
    * Turns since the objective was set. In memory on purpose: persisting it would mean
@@ -28,9 +29,11 @@ export default function piGoal(pi: ExtensionAPI): void {
   let turnsSinceSet = 0;
   /** From `todo:updated`; stays null when nothing publishes it. See src/progress.ts. */
   let progress: TodoProgress | null = null;
+  /** From `verify:passed`; stays null when nothing publishes it. See src/progress.ts. */
+  let verify: VerifyState | null = null;
   const guard = createNudgeGuard();
 
-  const renderContext = (): Context => ({ turns: turnsSinceSet, progress });
+  const renderContext = (): Context => ({ turns: turnsSinceSet, progress, verify });
   const paint = (ctx: ExtensionContext): void => {
     ctx?.ui?.setWidget?.("goal", goal ? renderGoal(goal, renderContext()) : undefined);
   };
@@ -48,10 +51,16 @@ export default function piGoal(pi: ExtensionAPI): void {
         // permitted the next nudge, so `block` never terminated. The guard needs no
         // reset at all: `allow()` compares signatures, so a genuinely changed objective
         // rearms it by itself and an unchanged one correctly stays exhausted.
-        if (JSON.stringify(g) !== JSON.stringify(goal)) turnsSinceSet = 0;
+        if (JSON.stringify(g) !== JSON.stringify(goal)) {
+          turnsSinceSet = 0;
+          // A new objective has not been verified yet, whatever passed for the old one.
+          // Carrying the tick over would let a green run from before the goal changed
+          // vouch for work that has not happened.
+          verify = null;
+        }
         goal = g;
       },
-      emit: (event, data) => pi.events.emit(event, data),
+      emit,
       persist: (g) => appendState(pi, g),
       renderContext,
     }),
@@ -130,7 +139,7 @@ export default function piGoal(pi: ExtensionAPI): void {
   // rest of the session.
   pi.on("agent_settled", async (_event, ctx) => {
     const cfg = loadConfig();
-    const reminder = goalReminder(goal, progress);
+    const reminder = goalReminder(goal, progress, verify);
     const action = nudgeAction(cfg.mode, ctx.hasUI, reminder !== null);
     if (action === "none" || reminder === null) {
       guard.reset();
@@ -144,10 +153,19 @@ export default function piGoal(pi: ExtensionAPI): void {
     pi.sendMessage({ customType: "pi-goal", content: reminder, display: true }, options);
   });
 
-  // An optional enhancement, and the only coupling: whoever publishes `todo:updated`
-  // gets their progress folded into the objective's readout. With no publisher the
-  // handler never runs and the fragment never appears.
+  // Optional enhancements, and pi-goal's only couplings: whoever publishes these gets
+  // their signal folded into the objective's readout. With no publisher the handler
+  // never runs and the fragment never appears.
+  //
+  // Neither may reach the nudge *guard*. The settle signature is pi-goal's own state
+  // and nothing else (see above): folding a peer's state in would let a passing test —
+  // or any todo movement — rearm the quota, so installing pi-lens or pi-todo would
+  // silently change whether pi-goal's `block` mode terminates. These enhance what the
+  // reminder *says*, never how often it may be said.
   pi.events.on("todo:updated", (data) => {
     progress = readProgress(data);
+  });
+  pi.events.on("verify:passed", (data) => {
+    verify = readVerify(data);
   });
 }

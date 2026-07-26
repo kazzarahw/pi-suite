@@ -1,6 +1,8 @@
+import type { Emitter } from "../../shared/index.ts";
 import type { CheckpointStore } from "./store.ts";
 
-export type Emit = (event: string, data: unknown) => void;
+/** pi-git's emitter. Aliased for readability; the contract is shared/events.ts. */
+export type Emit = Emitter;
 
 /** What `session_before_fork` records, for `session_shutdown` to act on. */
 export interface PendingFork {
@@ -52,6 +54,48 @@ export async function restoreEntry(
   const summary = { entryId, written: written.length, removed: removed.length };
   emit("git:rollback", { ...summary, reason });
   return summary;
+}
+
+export interface GuardSummary {
+  /** Paths whose pre-delegation state is now recorded (or already was). */
+  recorded: number;
+  /** Paths left out because the working set exceeded `maxGuardedFiles`. */
+  skipped: number;
+}
+
+/**
+ * Record the working set before a delegated subagent runs.
+ *
+ * pi-git learns a file's pre-edit bytes from `tool_call`, which fires in this process.
+ * A subagent edits from *its own* `pi` process, so those writes are invisible here: a
+ * file that was clean when the delegation started has no origin, is in no manifest, and
+ * a rewind past the delegation leaves it modified while reporting success. That is the
+ * failure pi-git exists to prevent, occurring in the case the user watched least.
+ *
+ * Since which files a subagent will touch is unknowable in advance, this records the
+ * ones it *can* — the tracked tree plus whatever is already dirty. `rememberOrigin`
+ * never overwrites, so this is idempotent: the first guarded delegation in a session
+ * pays for the tree, and every later one is a no-op over paths already held.
+ *
+ * Returns what it did rather than reporting for itself, so the caller owns the one
+ * channel that reaches the user.
+ */
+export async function guardDelegation(
+  store: CheckpointStore,
+  paths: readonly string[],
+  maxFiles: number,
+): Promise<GuardSummary> {
+  const guarded = paths.slice(0, maxFiles);
+  for (const path of guarded) {
+    // One failure must not abandon the rest: a single unreadable file is not a reason
+    // to leave the other four thousand unguarded.
+    try {
+      await store.rememberOrigin(path);
+    } catch {
+      /* best effort, per path */
+    }
+  }
+  return { recorded: guarded.length, skipped: paths.length - guarded.length };
 }
 
 /**

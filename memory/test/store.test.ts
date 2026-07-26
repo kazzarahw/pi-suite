@@ -9,6 +9,7 @@ import {
   deleteMemory,
   invalidateIndexCache,
   memoryDirs,
+  ALL_SCOPES,
 } from "../src/store.ts";
 import type { Memory } from "../src/frontmatter.ts";
 
@@ -42,13 +43,13 @@ const mem = (over: Partial<Memory> = {}): Memory => ({
 
 test("writeMemory persists; readMemory reads it back", () => {
   writeMemory(mem(), cwd);
-  expect(readMemory("n1", cwd)?.body).toBe("b1");
+  expect(readMemory("n1", cwd, ALL_SCOPES)?.body).toBe("b1");
 });
 
 test("writeMemory dedups by name (updates in place, single entry)", () => {
   writeMemory(mem({ body: "old" }), cwd);
   writeMemory(mem({ body: "new" }), cwd);
-  const matches = listMemories(cwd).filter((m) => m.name === "n1");
+  const matches = listMemories(cwd, ALL_SCOPES).filter((m) => m.name === "n1");
   expect(matches).toHaveLength(1);
   expect(matches[0]!.body).toBe("new");
 });
@@ -61,14 +62,14 @@ test("writeMemory dedups by name (updates in place, single entry)", () => {
 test("listMemories merges global + project and tags scope", () => {
   writeMemory(mem({ name: "g", scope: "global" }), cwd);
   writeMemory(mem({ name: "p", scope: "project" }), cwd);
-  expect(listMemories(cwd).map((m) => m.name).sort()).toEqual(["g", "p"]);
-  expect(listMemories(cwd).find((m) => m.name === "p")!.scope).toBe("project");
+  expect(listMemories(cwd, ALL_SCOPES).map((m) => m.name).sort()).toEqual(["g", "p"]);
+  expect(listMemories(cwd, ALL_SCOPES).find((m) => m.name === "p")!.scope).toBe("project");
 });
 
 test("deleteMemory removes it", () => {
   writeMemory(mem(), cwd);
   deleteMemory("n1", cwd);
-  expect(readMemory("n1", cwd)).toBeNull();
+  expect(readMemory("n1", cwd, ALL_SCOPES)).toBeNull();
 });
 
 // --- Scope isolation -------------------------------------------------------
@@ -81,7 +82,7 @@ test("writing a project memory leaves a same-named global memory intact", () => 
   writeMemory(mem({ name: "build-cmd", scope: "global", body: "global body" }), cwd);
   writeMemory(mem({ name: "build-cmd", scope: "project", body: "project body" }), cwd);
 
-  const both = listMemories(cwd).filter((m) => m.name === "build-cmd");
+  const both = listMemories(cwd, ALL_SCOPES).filter((m) => m.name === "build-cmd");
   expect(both).toHaveLength(2);
   expect(both.find((m) => m.scope === "global")?.body).toBe("global body");
   expect(both.find((m) => m.scope === "project")?.body).toBe("project body");
@@ -90,13 +91,13 @@ test("writing a project memory leaves a same-named global memory intact", () => 
 test("writing a global memory leaves a same-named project memory intact", () => {
   writeMemory(mem({ name: "notes", scope: "project", body: "project body" }), cwd);
   writeMemory(mem({ name: "notes", scope: "global", body: "global body" }), cwd);
-  expect(listMemories(cwd).filter((m) => m.name === "notes")).toHaveLength(2);
+  expect(listMemories(cwd, ALL_SCOPES).filter((m) => m.name === "notes")).toHaveLength(2);
 });
 
 test("rewriting within one scope still replaces in place", () => {
   writeMemory(mem({ name: "x", scope: "project", body: "old" }), cwd);
   writeMemory(mem({ name: "x", scope: "project", body: "new" }), cwd);
-  const matches = listMemories(cwd).filter((m) => m.name === "x");
+  const matches = listMemories(cwd, ALL_SCOPES).filter((m) => m.name === "x");
   expect(matches).toHaveLength(1);
   expect(matches[0]!.body).toBe("new");
 });
@@ -106,14 +107,14 @@ test("deleteMemory without a scope removes the name from both scopes", () => {
   writeMemory(mem({ name: "gone", scope: "global" }), cwd);
   writeMemory(mem({ name: "gone", scope: "project" }), cwd);
   deleteMemory("gone", cwd);
-  expect(listMemories(cwd).filter((m) => m.name === "gone")).toHaveLength(0);
+  expect(listMemories(cwd, ALL_SCOPES).filter((m) => m.name === "gone")).toHaveLength(0);
 });
 
 test("deleteMemory with a scope removes only that scope's copy", () => {
   writeMemory(mem({ name: "keep", scope: "global", body: "g" }), cwd);
   writeMemory(mem({ name: "keep", scope: "project", body: "p" }), cwd);
   deleteMemory("keep", cwd, "project");
-  const left = listMemories(cwd).filter((m) => m.name === "keep");
+  const left = listMemories(cwd, ALL_SCOPES).filter((m) => m.name === "keep");
   expect(left).toHaveLength(1);
   expect(left[0]!.scope).toBe("global");
 });
@@ -129,29 +130,29 @@ test("deleteMemory with a scope removes only that scope's copy", () => {
 
 test("a repeated listMemories with nothing changed does not re-read the files", () => {
   writeMemory(mem({ name: "cached", scope: "global" }), cwd);
-  const first = listMemories(cwd);
-  const second = listMemories(cwd);
+  const first = listMemories(cwd, ALL_SCOPES);
+  const second = listMemories(cwd, ALL_SCOPES);
   // Same array instance: proof it came from the cache rather than a fresh parse.
   expect(second).toBe(first);
 });
 
 test("writing through the store invalidates the cache", () => {
   writeMemory(mem({ name: "v", scope: "global", body: "old" }), cwd);
-  expect(listMemories(cwd).find((m) => m.name === "v")!.body).toBe("old");
+  expect(listMemories(cwd, ALL_SCOPES).find((m) => m.name === "v")!.body).toBe("old");
   writeMemory(mem({ name: "v", scope: "global", body: "new" }), cwd);
-  expect(listMemories(cwd).find((m) => m.name === "v")!.body).toBe("new");
+  expect(listMemories(cwd, ALL_SCOPES).find((m) => m.name === "v")!.body).toBe("new");
 });
 
 test("deleting through the store invalidates the cache", () => {
   writeMemory(mem({ name: "d", scope: "project" }), cwd);
-  expect(listMemories(cwd)).toHaveLength(1);
+  expect(listMemories(cwd, ALL_SCOPES)).toHaveLength(1);
   deleteMemory("d", cwd);
-  expect(listMemories(cwd)).toHaveLength(0);
+  expect(listMemories(cwd, ALL_SCOPES)).toHaveLength(0);
 });
 
 test("an edit made outside the store busts the cache", () => {
   writeMemory(mem({ name: "external", scope: "project", body: "before" }), cwd);
-  expect(listMemories(cwd).find((m) => m.name === "external")!.body).toBe("before");
+  expect(listMemories(cwd, ALL_SCOPES).find((m) => m.name === "external")!.body).toBe("before");
 
   // Simulate another process (or $EDITOR) rewriting the file: no invalidate call.
   const file = join(memoryDirs(cwd).project, "external.md");
@@ -163,12 +164,12 @@ test("an edit made outside the store busts the cache", () => {
   const future = new Date(Date.now() + 5_000);
   utimesSync(file, future, future);
 
-  expect(listMemories(cwd).find((m) => m.name === "external")!.body).toBe("after");
+  expect(listMemories(cwd, ALL_SCOPES).find((m) => m.name === "external")!.body).toBe("after");
 });
 
 test("a file appearing outside the store busts the cache", () => {
   writeMemory(mem({ name: "first", scope: "project" }), cwd);
-  expect(listMemories(cwd)).toHaveLength(1);
+  expect(listMemories(cwd, ALL_SCOPES)).toHaveLength(1);
 
   const dir = memoryDirs(cwd).project;
   mkdirSync(dir, { recursive: true });
@@ -178,7 +179,7 @@ test("a file appearing outside the store busts the cache", () => {
     "utf8",
   );
 
-  expect(listMemories(cwd).map((m) => m.name).sort()).toEqual(["dropped-in", "first"]);
+  expect(listMemories(cwd, ALL_SCOPES).map((m) => m.name).sort()).toEqual(["dropped-in", "first"]);
 });
 
 test("two projects do not share a cache entry", () => {
@@ -186,8 +187,8 @@ test("two projects do not share a cache entry", () => {
   try {
     writeMemory(mem({ name: "here", scope: "project" }), cwd);
     writeMemory(mem({ name: "there", scope: "project" }), other);
-    expect(listMemories(cwd).map((m) => m.name)).toEqual(["here"]);
-    expect(listMemories(other).map((m) => m.name)).toEqual(["there"]);
+    expect(listMemories(cwd, ALL_SCOPES).map((m) => m.name)).toEqual(["here"]);
+    expect(listMemories(other, ALL_SCOPES).map((m) => m.name)).toEqual(["there"]);
   } finally {
     rmSync(other, { recursive: true, force: true });
   }
@@ -195,8 +196,8 @@ test("two projects do not share a cache entry", () => {
 
 test("invalidateIndexCache() with no argument clears every project", () => {
   writeMemory(mem({ name: "z", scope: "project" }), cwd);
-  const first = listMemories(cwd);
+  const first = listMemories(cwd, ALL_SCOPES);
   invalidateIndexCache();
-  expect(listMemories(cwd)).not.toBe(first);
-  expect(listMemories(cwd).map((m) => m.name)).toEqual(["z"]);
+  expect(listMemories(cwd, ALL_SCOPES)).not.toBe(first);
+  expect(listMemories(cwd, ALL_SCOPES).map((m) => m.name)).toEqual(["z"]);
 });

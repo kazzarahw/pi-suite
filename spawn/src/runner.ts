@@ -20,12 +20,30 @@ export interface SpawnEvent {
 /** Injectable process runner: builds/streams a `pi` subprocess. Tests fake this. */
 export type SpawnFn = (
   argv: string[],
-  opts: { signal?: AbortSignal; env?: Record<string, string>; onLine: (line: string) => void },
+  opts: {
+    /** Required — see {@link RunAgentInput.cwd}. */
+    cwd: string;
+    signal?: AbortSignal;
+    env?: Record<string, string>;
+    onLine: (line: string) => void;
+  },
 ) => Promise<number>;
 
 export interface RunAgentInput {
   agentDef: AgentDef;
   task: string;
+  /**
+   * The project the subagent works in — `cwdOf(ctx)`, resolved by the tool.
+   *
+   * **Required, and the reason is the whole point of `shared/cwd.ts`.** This used not
+   * to exist: `nodeSpawn` was called with no `cwd`, so the child silently inherited the
+   * extension host's `process.cwd()`. Where that differed from Pi's session cwd, a
+   * delegated subagent read and *edited files in the wrong project* — the most damaging
+   * instance of the bug the shared resolver was introduced to end, and the one its
+   * source-scan guard could never see, because inheriting `process.cwd()` by omission
+   * matches no text.
+   */
+  cwd: string;
   signal?: AbortSignal;
   env?: Record<string, string>;
   onEvent?: (e: SpawnEvent) => void;
@@ -113,6 +131,7 @@ const defaultSpawn: SpawnFn = (argv, opts) =>
     const proc = nodeSpawn(command, args, {
       shell: false,
       stdio: ["ignore", "pipe", "pipe"],
+      cwd: opts.cwd,
       env: { ...process.env, ...(opts.env ?? {}) },
     });
     let buffer = "";
@@ -141,7 +160,7 @@ const defaultSpawn: SpawnFn = (argv, opts) =>
 
 /** Run one delegated task in an isolated `pi` subprocess; parse its stream into a SpawnResult. */
 export async function runAgent(input: RunAgentInput, spawn: SpawnFn = defaultSpawn): Promise<SpawnResult> {
-  const { agentDef, task, signal, env, onEvent, timeoutMs } = input;
+  const { agentDef, task, cwd, signal, env, onEvent, timeoutMs } = input;
   // One signal carrying both reasons to stop: the user pressed Esc, or the job outlived
   // its deadline. The existing SIGTERM→SIGKILL escalation handles either.
   const bounded = timeoutMs ? deadline(timeoutMs, signal) : signal;
@@ -155,6 +174,7 @@ export async function runAgent(input: RunAgentInput, spawn: SpawnFn = defaultSpa
 
   try {
     const code = await spawn(argv, {
+      cwd,
       signal: bounded,
       env,
       onLine: (line) => {

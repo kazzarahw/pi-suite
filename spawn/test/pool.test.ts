@@ -3,7 +3,7 @@ import { runParallel, type Job, type RunOne } from "../src/pool.ts";
 import type { AgentDef } from "../src/agents.ts";
 
 const def = (name: string): AgentDef => ({ name, description: "", systemPrompt: "" });
-const jobs = (n: number): Job[] => Array.from({ length: n }, (_, i) => ({ agentDef: def(`a${i}`), task: `t${i}` }));
+const jobs = (n: number): Job[] => Array.from({ length: n }, (_, i) => ({ agentDef: def(`a${i}`), task: `t${i}`, cwd: process.cwd() }));
 
 test("runParallel never exceeds the concurrency cap and preserves input order", async () => {
   let inFlight = 0;

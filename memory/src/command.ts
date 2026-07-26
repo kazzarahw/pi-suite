@@ -22,6 +22,10 @@ export const FIELDS: readonly Field<MemoryConfig>[] = [
   enumField("mode", MODES, "Mode"),
   boolField("autoCapture", "Auto-capture on verify-fail", { verb: "autocapture" }),
   intField("recallLimit", "Recall limit", { verb: "recalllimit", presets: [1, 2, 3, 5, 10] }),
+  intField("indexLimit", "Index limit (injected every call)", {
+    verb: "indexlimit",
+    presets: [10, 25, 50, 100, 250],
+  }),
 ];
 
 /** `/pi-memory` — no arg opens the settings panel; `mode` / `autocapture` / `delete <name>`. */

@@ -31,6 +31,18 @@ export interface GitSession {
    * later, so there is nothing worth recording now.
    */
   store(ctx: SessionSource | undefined, maxFileBytes: number): CheckpointStore | null;
+  /**
+   * The store the most recent hook built, without needing a context.
+   *
+   * For **bus callbacks only**, which are handed `data` and nothing else — no
+   * `ExtensionContext`, so no `getSessionId`, so no way to key a store. `null` before
+   * any hook has run, which is the honest answer: nothing has been checkpointed yet, so
+   * there is nothing a subscriber could be extending.
+   *
+   * Safe against a session change because Pi fires `session_start` for the new session
+   * before anything in it can emit, and that hook rebuilds the cache.
+   */
+  currentStore(): CheckpointStore | null;
   /** Skips recorded since the last drain, each path reported at most once per session. */
   drainSkips(): Skip[];
   /** The entry id most recently checkpointed, for turn-level dedup. */
@@ -60,6 +72,8 @@ export function createGitSession(
       cached = { sessionId, maxFileBytes, store };
       return store;
     },
+
+    currentStore: () => cached?.store ?? null,
 
     drainSkips() {
       // Deduped on the way out, not on the way in: the store reports a skip on every

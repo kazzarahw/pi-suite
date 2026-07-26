@@ -3,6 +3,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import type { AgentToolResult, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { GOAL_STATUSES, applySet, type Goal, type GoalInput } from "./state.ts";
 import { renderGoal, type Context } from "./render.ts";
+import type { Emitter } from "../../shared/index.ts";
 
 const parameters = Type.Object({
   objective: Type.String({
@@ -28,7 +29,7 @@ type GoalSetParams = Static<typeof parameters>;
 export interface ToolDeps {
   getState: () => Goal | null;
   setState: (goal: Goal | null) => void;
-  emit: (event: string, data: unknown) => void;
+  emit: Emitter;
   persist: (goal: Goal | null) => void;
   /** Read *after* `setState`, so the turn counter it reports is the reset one. */
   renderContext: () => Context;

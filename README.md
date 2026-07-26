@@ -56,11 +56,12 @@ An **internal module**, imported by relative path — not a package and not a de
 | `events.ts` | the `domain:event` vocabulary and payload types |
 | `tags.ts` | the `<pi-*>` context-injection format |
 | `surface.ts` | the agent-surface SSOT — one entry per extension |
-| `config.ts` | config mechanism; each extension keeps its own validation |
+| `config.ts` | config paths (via Pi's own `getAgentDir`/`CONFIG_DIR_NAME`); each extension keeps its own validation |
 | `fields.ts` | config field validators, so every `parse` agrees on what's valid |
 | `settings-panel.ts` | the shared `/pi-<name>` settings panel |
 | `exec.ts` | the subprocess runner — always resolves, never rejects |
 | `cwd.ts` | `cwdOf(ctx)` — the only permitted working-directory resolution |
+| `trust.ts` | `projectTrusted(ctx)` — the gate on anything the repository supplied |
 | `deadline.ts` | a timeout composed with the caller's abort signal, distinguishably |
 | `truncate.ts` | agent-facing truncation, over Pi's own utilities |
 | `frontmatter.ts` | `---`-delimited markdown (memories, agent definitions) |

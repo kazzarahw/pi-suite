@@ -15,7 +15,7 @@ function harness(initial: Goal | null = null) {
     },
     emit: (event, data) => emitted.push({ event, data }),
     persist: (g) => persisted.push(g),
-    renderContext: () => ({ turns: 0, progress: null }),
+    renderContext: () => ({ turns: 0, progress: null, verify: null }),
   });
   const run = (params: unknown, ctx = fakeCtx()) =>
     tool.execute("call-1", params as never, undefined, undefined, ctx as unknown as ExtensionContext);

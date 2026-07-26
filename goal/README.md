@@ -22,7 +22,11 @@ The turn count and todo tally shown in the widget are deliberately **not** in th
 
 Emits `goal:set { objective, criteria? }` on every write, and `goal:met { objective }` once, when the objective transitions to met.
 
-If [`pi-todo`](../todo) — or anything else publishing `todo:updated` — is running, its progress folds into the readout (`3 turns · 2 of 5 todos done`). That is an *optional enhancement*, not a dependency: there is no import between the two, only the bus, and with pi-todo disabled, replaced, or absent the fragment simply never appears.
+If [`pi-todo`](../todo) — or anything else publishing `todo:updated` — is running, its progress folds into the readout (`3 turns · 2 of 5 todos done`). Likewise [`pi-lens`](../lens): a `verify:passed` adds `verify ✓`, and the settle reminder names the command that passed and asks whether it satisfies the criteria. `criteria` is literally *how you will know the objective is met*, and a green test run is the strongest evidence available for that.
+
+It never marks the objective **met**. Whether passing checks satisfy *this* objective is a judgement about intent, and it stays the agent's to make with `goal_set({ status: "met" })`; an extension that closed the goal off a green run would be answering a different question than the one the goal asked. A new objective clears the tick, so a run from before the goal changed cannot vouch for work that has not happened.
+
+Both are *optional enhancements*, not dependencies: there is no import in either direction, only the bus, and with those extensions disabled, replaced, or absent the fragments simply never appear. Neither may reach the nudge **guard** — the settle signature is pi-goal's own state and nothing else, because a peer that could rearm the quota would mean installing pi-lens or pi-todo silently changed whether `block` mode terminates.
 
 ## Automatic behavior (hooks)
 

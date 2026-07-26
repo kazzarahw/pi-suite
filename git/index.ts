@@ -5,22 +5,47 @@ import { defaultExec } from "../shared/exec.ts";
 import { loadConfig, saveConfig, type GitConfig } from "./src/config.ts";
 import type { CheckpointStore } from "./src/store.ts";
 import { createGitSession } from "./src/session.ts";
-import { dirtyPaths } from "./src/detect.ts";
+import { dirtyPaths, trackedPaths } from "./src/detect.ts";
 import {
   currentLeafId,
   currentUserEntryId,
   resolveRestoreTarget,
   type SessionManagerLike,
 } from "./src/checkpoints.ts";
-import { checkpointTurn, restoreEntry, restoreOnForkShutdown, type PendingFork } from "./src/hooks.ts";
+import {
+  checkpointTurn,
+  guardDelegation,
+  restoreEntry,
+  restoreOnForkShutdown,
+  type PendingFork,
+} from "./src/hooks.ts";
 import { buildGitCommand } from "./src/command.ts";
+
+/**
+ * The `/tree` label put on an entry pi-git can restore.
+ *
+ * Labels persist in the session and render in the `/tree` picker, so this turns the
+ * question a user actually has at that picker — *which of these points will put my
+ * files back?* — into something visible before they commit to navigating. Without it
+ * pi-git could only answer afterwards, by reporting that it had no checkpoint for the
+ * point already jumped to.
+ *
+ * A leading marker rather than prose: the picker is a dense list, and a label that
+ * wraps is worse than none. Entries the user has labelled themselves are left alone —
+ * see `labelCheckpoint`.
+ */
+export const CHECKPOINT_LABEL = "⏱ files";
 
 /** The slice of `ctx` this extension reads beyond what `cwdOf` needs. */
 interface GitCtx {
   hasUI?: boolean;
   signal?: AbortSignal;
   ui?: { notify?: (msg: string, level?: string) => void };
-  sessionManager?: SessionManagerLike & { getCwd?: () => string; getSessionId?: () => string };
+  sessionManager?: SessionManagerLike & {
+    getCwd?: () => string;
+    getSessionId?: () => string;
+    getLabel?: (entryId: string) => string | undefined;
+  };
 }
 
 /**
@@ -114,7 +139,25 @@ export default function piGit(pi: ExtensionAPI): void {
     return [...paths];
   }
 
-  /** Checkpoint `paths` against `entryId`, then report anything left out. */
+  /**
+   * Mark an entry as restorable, for the `/tree` picker.
+   *
+   * Never overwrites a label that is already there. Labels are a *user* feature —
+   * bookmarks they set themselves — and pi-git silently replacing
+   * "before the auth refactor" with its own marker would be taking a note the user
+   * wrote and throwing it away. Where the two collide the user's wins; the checkpoint
+   * still exists and still restores, it just is not the thing announcing itself.
+   */
+  function labelCheckpoint(git: GitCtx, entryId: string): void {
+    try {
+      if (git.sessionManager?.getLabel?.(entryId)) return;
+      pi.setLabel?.(entryId, CHECKPOINT_LABEL);
+    } catch {
+      /* labelling is an affordance, never a reason to fail a checkpoint */
+    }
+  }
+
+  /** Checkpoint `paths` against `entryId`, label it, then report anything left out. */
   async function capture(
     store: CheckpointStore,
     cfg: GitConfig,
@@ -123,6 +166,7 @@ export default function piGit(pi: ExtensionAPI): void {
     reason: string,
   ): Promise<void> {
     await checkpointTurn(store, entryId, await pathsFor(store, cfg, ctx), reason, emit);
+    labelCheckpoint(ctx, entryId);
     reportSkips(ctx);
   }
 
@@ -236,6 +280,58 @@ export default function piGit(pi: ExtensionAPI): void {
     await withStore("rewind restore", ctx, async (store) => {
       await restoreOnForkShutdown(store, fork, event.reason, emit);
     });
+  });
+
+  /**
+   * The one cooperation pi-git takes part in, and the only gap in its coverage that a
+   * hook could not close.
+   *
+   * Every other way a file changes reaches this process: through `tool_call` for the
+   * edit tools, and through `detectDirty` for anything `bash` wrote. A subagent's edits
+   * reach neither — they happen in a separate `pi` process — so a file that was clean
+   * when the delegation began had no origin recorded, was in no manifest, and survived
+   * a rewind untouched while pi-git reported success. The least supervised edits in the
+   * suite were the only ones it could not undo.
+   *
+   * Subscribed rather than imported, so this holds against *any* publisher of
+   * `spawn:started` and disappears cleanly when nothing publishes it — pi-spawn stays
+   * disable-able, and pi-git keeps working with it gone.
+   *
+   * The payload carries `cwd` because a bus callback gets no `ExtensionContext`; the
+   * store comes from `currentStore()` for the same reason.
+   */
+  pi.events.on("spawn:started", (data) => {
+    const cfg = loadConfig();
+    if (cfg.mode === "off" || !cfg.guardDelegated) return;
+    const d = (data ?? {}) as { agent?: string; cwd?: string };
+    // No cwd is no project to enumerate. Guessing one would guard the wrong repository,
+    // which is worse than not guarding: it reports coverage it does not have.
+    if (!d.cwd) return;
+    const store = session.currentStore();
+    if (!store) return;
+    const cwd = d.cwd;
+
+    // Detached on purpose. `pi.events.emit` is synchronous, so awaiting here would put
+    // a full-tree hash on pi-spawn's critical path; the subagent takes seconds to
+    // start, and `rememberOrigin` is idempotent, so racing it is safe where blocking on
+    // it is rude. Failures are contained rather than surfacing as an unhandled rejection.
+    void (async () => {
+      try {
+        const paths = new Set(await trackedPaths(defaultExec, cwd));
+        for (const path of await dirtyPaths(defaultExec, cwd)) paths.add(path);
+        const { skipped } = await guardDelegation(store, [...paths], cfg.maxGuardedFiles);
+        if (skipped > 0) {
+          // Same standard as reportSkips: a partial guard that looks total is the
+          // failure mode, so say what was left out.
+          console.error(
+            `[pi-git] ${d.agent ?? "a subagent"} was delegated in a working set of ${paths.size} files; ` +
+              `${skipped} beyond maxGuardedFiles (${cfg.maxGuardedFiles}) are not protected — a rewind will not restore them.`,
+          );
+        }
+      } catch (error) {
+        console.error(`[pi-git] guarding delegated edits failed: ${(error as Error).message}`);
+      }
+    })();
   });
 
   const command = buildGitCommand({

@@ -29,6 +29,7 @@ each other. Both are enforced by `test/boundaries.test.ts`.
 | `settings-panel.ts` | the shared `/pi-<name>` settings panel |
 | `exec.ts` | the subprocess runner — always resolves, never rejects |
 | `cwd.ts` | `cwdOf(ctx)` — the only permitted way to resolve a working directory |
+| `trust.ts` | `projectTrusted(ctx)` — the gate on anything the repository supplied |
 | `deadline.ts` | composes a timeout with the caller's abort signal, distinguishably |
 | `truncate.ts` | agent-facing truncation, over Pi's own utilities |
 | `frontmatter.ts` | `---`-delimited markdown frontmatter (memories, agent defs) |
@@ -96,9 +97,21 @@ via an import. Event names are `domain:event` and their payloads are declared in
 `events.ts`, so a mismatch between emitter and subscriber is a type error.
 
 **Payloads must be self-contained.** A subscriber receives only `data` — no
-`ExtensionContext`, so no `cwdOf`. Anything a handler needs belongs in the payload. This
-is also what lets a subscriber work against *any* publisher of an event rather than only
-the sibling that happens to ship today.
+`ExtensionContext`, so no `cwdOf` and no store to key. Anything a handler needs belongs in
+the payload. This is also what lets a subscriber work against *any* publisher of an event
+rather than only the sibling that happens to ship today.
+
+**Emit through `Emitter`**, never `(event: string, data: unknown)`. `events.ts` has always
+claimed a mismatch between emitter and subscriber is "caught by the compiler"; it was not,
+because every extension declared its own untyped `emit` dep, and `git:checkpoint` drifted
+behind the claim — declared `{ ref }` while emitting `{ entryId, files }`. `Emitter` binds
+each name to its payload, so both an unknown event and a wrong shape fail at the call site.
+
+The vocabulary is checked in both directions: nothing is emitted that `EVENTS` does not
+declare, and nothing is declared that no extension emits. The second is the event-level
+form of the module-reachability rule — a name a subscriber could bind to and never hear
+from is dead, not deferred. A publisher with *no in-repo subscriber* is fine and
+deliberate: that is a working extension point.
 
 **Guard `ctx.hasUI` before injecting a message.** In one-shot print/JSON mode there is no
 next prompt, so a queued message stalls Pi's exit waiting for one that never arrives.
@@ -125,8 +138,11 @@ unless they represent a durable fact.
 
 ## Configuration and the enforcement dial
 
-Settings live under `<agentDir>/pi-<name>.json`; `agentDir()` honors
-`PI_CODING_AGENT_DIR` and is the **only** way to resolve it. Each extension exports a
+Settings live under `<agentDir>/pi-<name>.json`. `agentDir()` delegates to Pi's own
+`getAgentDir()` and is the **only** way to resolve it; a project-local directory is
+`projectConfigDir(cwd, …)`, never a hardcoded `.pi`. Both halves are configurable
+upstream — `CONFIG_DIR_NAME` comes from Pi's `piConfig.configDir` and the env var name is
+derived from `piConfig.name` — so a literal is correct for exactly one build of Pi. Each extension exports a
 `ConfigSpec` — `name`, `defaults`, and its own `parse` — and gets read/write/fallback
 from `config.ts`. Validation stays per-extension because the shapes genuinely differ;
 build `parse` from the `fields.ts` validators, and construct the result field by field,
@@ -139,12 +155,50 @@ Every automation-capable extension exposes the same three-level `mode`:
 |---|---|
 | `"off"` | manual tools only; no automatic behavior |
 | `"notify"` *(default)* | auto-run + surface/inject feedback; **never blocks** |
-| `"block"` | additionally hard-`{ block: true }` the offending action on failure |
+| `"block"` | escalate from telling to compelling — see below |
+
+`block` takes two shapes, decided by whether the extension has an action it can refuse:
+
+| Shape | Extensions | Behavior |
+|---|---|---|
+| **Interdict** | pi-lens | returns `{ block: true }`, and the offending action does not happen |
+| **Insist** | pi-todo, pi-goal | triggers another turn, because the complaint *is* that nothing happened |
+
+Both are "the strongest thing this extension can do about what it found"; an extension
+whose finding is unfinished work has nothing to interdict, so it insists instead. Either
+shape must be **bounded** — pi-lens by a gate it consumes, pi-todo and pi-goal by
+`createNudgeGuard` — since the agent that provoked the escalation may never resolve it.
 
 Extensions may add sub-flags, but the top-level `mode` means the same thing everywhere.
-Those with no blockable action support `off`/`notify` only and treat `block` as `notify`
-— pi-git (checkpointing is invisible) and pi-memory (writes aren't gated). Document the
-collapse in that extension's README.
+Those with neither an action to interdict nor anything to insist on collapse `block` to
+`notify` — pi-git (checkpointing is invisible) and pi-memory (writes aren't gated).
+Document the collapse in that extension's README.
+
+## Project trust
+
+Anything the **repository** supplies and the model then reads is gated on
+`projectTrusted(ctx)`. Pi's trust model (`docs/security.md`) covers the project resources
+Pi knows about — `.pi/settings.json`, `.pi/extensions`, `.pi/skills`, `.pi/prompts`,
+`.pi/themes`, `.pi/SYSTEM.md`. It cannot cover the ones this suite invented, because it
+has never heard of them:
+
+| Resource | Extension | Why it needs the gate |
+|---|---|---|
+| autodetected verify command | pi-lens | runs whatever the repository chose |
+| `.pi/memory` | pi-memory | injected into **every** LLM call |
+| `.pi/agents` | pi-spawn | becomes a subagent's system prompt, and wins name collisions |
+
+The test is *does a repository-supplied file become model input or model action?* If so,
+gate it, and say so once through the extension's warn-once channel rather than failing
+silently — a safety gate nobody can see reads as a broken feature.
+
+This is not a claim to prevent prompt injection; Pi is explicit that repository content
+is expected local-agent risk. It is the narrower, preventable case, and the suite applies
+Pi's own line to its own additions.
+
+User-facing readouts are **not** gated: trust governs what reaches the model, not what a
+user may see of their own files. `/pi-memory` lists project memories in an untrusted
+project so that `delete <name>` can still name one.
 
 ## Status and UI
 
@@ -172,3 +226,7 @@ touching the others — the only coupling permitted is this library and the even
    `test/boundaries.test.ts` — a capability nothing calls is not deferred, it is dead.
 5. Write a `test/wiring.test.ts` using `shared/test/harness.ts`. This layer had no
    coverage in the original seven repos and is where several defects lived.
+6. Resolve every directory through `cwdOf(ctx)` / `agentDir()` / `projectConfigDir(cwd, …)`,
+   and pass a `cwd` to every subprocess. A child spawned without one inherits the
+   extension host's directory *by omission*, which no source scan can catch — this is why
+   `ExecOptions.cwd` is required rather than defaulted.

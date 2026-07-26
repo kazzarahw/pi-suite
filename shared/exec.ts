@@ -11,8 +11,21 @@
 import { execFile } from "node:child_process";
 
 export interface ExecOptions {
-  /** Working directory for the child process. */
-  cwd?: string;
+  /**
+   * Working directory for the child process. **Required.**
+   *
+   * A child spawned without one inherits the extension host's `process.cwd()`, which
+   * is not Pi's session cwd. That is the same defect `shared/cwd.ts` exists to prevent,
+   * but `test/boundaries.test.ts`'s source scan cannot catch it: inheriting by
+   * *omission* matches no text. Three call sites were in that blind spot — pi-consult
+   * ran `claude -p` against the wrong project's files, pi-spawn's subagents *edited*
+   * the wrong project, and pi-browser wrote screenshots into it.
+   *
+   * Optional-with-a-default would have re-opened the hole, so it is required and the
+   * type checker enumerates the call sites. Pass `cwdOf(ctx)`; a caller that genuinely
+   * has no project (a `which`-style probe) passes it anyway and ignores it.
+   */
+  cwd: string;
   /**
    * Extra environment, merged **over** `process.env` (never replacing it).
    *

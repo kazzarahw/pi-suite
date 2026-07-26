@@ -9,9 +9,23 @@ export interface MemoryConfig {
   autoCapture: boolean;
   /** Max memory bodies a query recall returns. */
   recallLimit: number;
+  /**
+   * Max entries listed in the always-injected index.
+   *
+   * Distinct from `recallLimit` because they bound different things: `recallLimit`
+   * caps one deliberate lookup, this caps a block that rides on *every* LLM call.
+   * 50 names-and-descriptions is a few hundred tokens; the overflow is still
+   * reachable by `memory_recall(query)`, which searches the whole store.
+   */
+  indexLimit: number;
 }
 
-export const DEFAULTS: MemoryConfig = { mode: DEFAULT_MODE, autoCapture: false, recallLimit: 3 };
+export const DEFAULTS: MemoryConfig = {
+  mode: DEFAULT_MODE,
+  autoCapture: false,
+  recallLimit: 3,
+  indexLimit: 50,
+};
 
 export const SPEC: ConfigSpec<MemoryConfig> = {
   name: "memory",
@@ -22,6 +36,7 @@ export const SPEC: ConfigSpec<MemoryConfig> = {
       mode: oneOf<Mode>(p.mode, MODES, DEFAULT_MODE),
       autoCapture: bool(p.autoCapture, defaults.autoCapture),
       recallLimit: int(p.recallLimit, defaults.recallLimit),
+      indexLimit: int(p.indexLimit, defaults.indexLimit),
     };
   },
 };

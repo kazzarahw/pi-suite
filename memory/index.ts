@@ -1,11 +1,11 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { loadConfig, saveConfig } from "./src/config.ts";
-import { listMemories, deleteMemory, writeMemory } from "./src/store.ts";
+import { listMemories, deleteMemory, writeMemory, ALL_SCOPES } from "./src/store.ts";
 import { formatIndexInjection } from "./src/recall.ts";
 import { scanSecrets } from "./src/secrets.ts";
 import { buildRecallTool, buildWriteTool } from "./src/tools.ts";
 import { buildMemoryCommand } from "./src/command.ts";
-import { cwdOf, stableHash } from "../shared/index.ts";
+import { cwdOf, projectTrusted, stableHash, type Emitter } from "../shared/index.ts";
 
 /**
  * pi-memory — persistent, write-back memory.
@@ -15,7 +15,7 @@ import { cwdOf, stableHash } from "../shared/index.ts";
  * auto-capture a gotcha on `verify:failed`. Emits `memory:wrote` / `memory:recalled`.
  */
 export default function piMemory(pi: ExtensionAPI): void {
-  const emit = (event: string, data: unknown) => pi.events.emit(event, data);
+  const emit: Emitter = (event, data) => pi.events.emit(event, data);
 
   pi.registerTool(buildRecallTool({ recallLimit: () => loadConfig().recallLimit, emit }));
   pi.registerTool(buildWriteTool({ recallLimit: () => loadConfig().recallLimit, emit }));
@@ -23,8 +23,13 @@ export default function piMemory(pi: ExtensionAPI): void {
   // Standing context: inject the memory index into each LLM call (ephemeral — the
   // context-injection channel for recall; no queued message, so no print-mode hang).
   pi.on("context", async (event, ctx) => {
-    if (loadConfig().mode === "off") return;
-    const block = formatIndexInjection(listMemories(cwdOf(ctx)));
+    const cfg = loadConfig();
+    if (cfg.mode === "off") return;
+    // `<cwd>/.pi/memory` is repository content, and this block is prepended to every
+    // LLM call — so an untrusted project does not get to write the agent's standing
+    // context. Same line pi-lens draws around an autodetected verify command.
+    const scope = { includeProject: projectTrusted(ctx) };
+    const block = formatIndexInjection(listMemories(cwdOf(ctx), scope), cfg.indexLimit);
     if (!block) return;
     const injected = { role: "user" as const, content: block, timestamp: Date.now() };
     return { messages: [injected, ...event.messages] };
@@ -64,7 +69,10 @@ export default function piMemory(pi: ExtensionAPI): void {
   const command = buildMemoryCommand({
     loadConfig: () => loadConfig(),
     saveConfig: (c) => saveConfig(c),
-    listMemories: (cwd: string) => listMemories(cwd),
+    // Deliberately unscoped. Trust governs what reaches the *model*; it does not hide
+    // the user's own files from the user, and `/pi-memory delete <name>` has to be able
+    // to name a project memory in a project the user has not trusted.
+    listMemories: (cwd: string) => listMemories(cwd, ALL_SCOPES),
     deleteMemory: (name: string, cwd: string) => deleteMemory(name, cwd),
   });
   pi.registerCommand(command.name, command.options);

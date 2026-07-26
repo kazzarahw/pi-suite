@@ -38,7 +38,7 @@ test("runAgent parses a fed JSON stream into final output + accumulated usage", 
     for (const l of lines) opts.onLine(l);
     return 0;
   };
-  const r = await runAgent({ agentDef: { ...agent, systemPrompt: "" }, task: "t", onEvent: (e) => kinds.push(e.kind) }, fakeSpawn);
+  const r = await runAgent({ agentDef: { ...agent, systemPrompt: "" }, task: "t", cwd: process.cwd(), onEvent: (e) => kinds.push(e.kind) }, fakeSpawn);
   expect(r.ok).toBe(true);
   expect(r.output).toBe("final answer");
   expect(r.usage.turns).toBe(2);
@@ -49,7 +49,7 @@ test("runAgent parses a fed JSON stream into final output + accumulated usage", 
 
 test("runAgent reports ok:false on a non-zero exit", async () => {
   const fakeSpawn: SpawnFn = async () => 1;
-  const r = await runAgent({ agentDef: { ...agent, systemPrompt: "" }, task: "t" }, fakeSpawn);
+  const r = await runAgent({ agentDef: { ...agent, systemPrompt: "" }, task: "t", cwd: process.cwd() }, fakeSpawn);
   expect(r.ok).toBe(false);
 });
 
@@ -72,7 +72,7 @@ test("a job that never finishes is terminated at its deadline", async () => {
   const result = await within(
     3000,
     runAgent(
-      { agentDef: agent, task: "t", timeoutMs: 50 },
+      { agentDef: agent, task: "t", cwd: process.cwd(), timeoutMs: 50 },
       spawnFn,
     ),
   );
@@ -90,7 +90,7 @@ test("a job finishing inside its deadline is unaffected", async () => {
   const result = await within(
     3000,
     runAgent(
-      { agentDef: agent, task: "t", timeoutMs: 10_000 },
+      { agentDef: agent, task: "t", cwd: process.cwd(), timeoutMs: 10_000 },
       spawnFn,
     ),
   );
@@ -104,10 +104,28 @@ test("a user abort is not reported as a timeout", async () => {
     new Promise((resolve) => opts.signal?.addEventListener("abort", () => resolve(1)));
   const ac = new AbortController();
   const p = runAgent(
-    { agentDef: agent, task: "t", signal: ac.signal, timeoutMs: 10_000 },
+    { agentDef: agent, task: "t", cwd: process.cwd(), signal: ac.signal, timeoutMs: 10_000 },
     spawnFn,
   );
   ac.abort();
   const result = await within(3000, p);
   expect(result.output).not.toContain("deadline");
+});
+
+test("runAgent launches the subagent in the project, not the extension host's directory", async () => {
+  // The defect this closes: `nodeSpawn` was called with no `cwd`, so the child inherited
+  // `process.cwd()`. Where that differed from Pi's session cwd — which is the whole
+  // reason `shared/cwd.ts` exists — a delegated subagent read and *edited files in the
+  // wrong project*, and `test/boundaries.test.ts`'s scan could not see it, because
+  // inheriting by omission matches no text.
+  let seen: string | undefined;
+  const fakeSpawn: SpawnFn = async (_argv, opts) => {
+    seen = opts.cwd;
+    return 0;
+  };
+  await runAgent(
+    { agentDef: { ...agent, systemPrompt: "" }, task: "t", cwd: "/tmp/some-other-project" },
+    fakeSpawn,
+  );
+  expect(seen).toBe("/tmp/some-other-project");
 });

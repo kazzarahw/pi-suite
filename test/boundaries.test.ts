@@ -260,10 +260,13 @@ const SINGLE_SOURCE: SingleSource[] = [
     fix: "call stableHash()",
   },
   {
-    what: "a read of PI_CODING_AGENT_DIR",
-    re: /PI_CODING_AGENT_DIR/,
+    // Was "a read of PI_CODING_AGENT_DIR". That rule went stale the moment the literal
+    // was replaced by Pi's own resolver: the env var name is *derived* upstream from
+    // the app name, so a rule naming the stock spelling no longer describes the concept.
+    what: "an agent-directory resolution",
+    re: /getAgentDir|CONFIG_DIR_NAME/,
     home: "shared/config.ts",
-    fix: "call agentDir()",
+    fix: "call agentDir() or projectConfigDir(cwd, …)",
   },
 ];
 
@@ -289,12 +292,85 @@ test("the single-source patterns actually match the thing they describe", () => 
   const [frontmatter, hash, agentDir] = SINGLE_SOURCE as [SingleSource, SingleSource, SingleSource];
   expect(frontmatter.re.test(String.raw`text.match(/^---\r?\n([\s\S]*?)---/)`)).toBe(true);
   expect(hash.re.test("h = (h * 31 + s.charCodeAt(i)) | 0;")).toBe(true);
-  expect(agentDir.re.test('process.env.PI_CODING_AGENT_DIR ?? "x"')).toBe(true);
-  // And that each one's home really does contain it, so a rename cannot leave the rule
-  // passing vacuously against a file that no longer holds the implementation.
+  expect(agentDir.re.test('return join(homedir(), CONFIG_DIR_NAME, "agent");')).toBe(true);
+  // And that each one's home really does contain it — **as code**, not as prose.
+  //
+  // The raw-text version of this check was one comment away from vacuous: the rule
+  // above used to match `PI_CODING_AGENT_DIR`, and when the implementation stopped
+  // reading that variable a doc comment still mentioning it kept the rule green while
+  // it guarded nothing. Stripping comments first is what makes "the home really holds
+  // the implementation" mean what it says.
   for (const rule of SINGLE_SOURCE) {
-    expect(rule.re.test(readFileSync(join(ROOT, rule.home), "utf8"))).toBe(true);
+    expect(rule.re.test(code(readFileSync(join(ROOT, rule.home), "utf8")))).toBe(true);
   }
+});
+
+/**
+ * The config directory is `CONFIG_DIR_NAME`, never the literal.
+ *
+ * Pi builds it from its own `package.json` (`piConfig.configDir`), so a rebranded
+ * distribution uses `.tau` and a hardcoded `.pi` writes into a directory nothing else
+ * reads. pi-memory and pi-spawn each had one — `join(cwd, ".pi", "memory")` and
+ * `join(cwd, ".pi", "agents")` — which is the familiar shape: a fragment short enough
+ * to retype instead of import.
+ */
+test('a hardcoded ".pi" directory appears nowhere in source', () => {
+  const offenders: string[] = [];
+  for (const dir of [...EXTENSION_DIRS, "shared"]) {
+    for (const file of allTsFiles(dir)) {
+      const rel = relative(ROOT, file);
+      if (rel.includes("/test/")) continue; // fixtures build real directories on disk
+      if (/["'`]\.pi["'`]/.test(code(readFileSync(file, "utf8")))) {
+        offenders.push(`${rel}: hardcodes ".pi" — call projectConfigDir(cwd, …)`);
+      }
+    }
+  }
+  expect(offenders).toEqual([]);
+});
+
+/**
+ * Anything that launches a process passes it a `cwd`.
+ *
+ * This closes the blind spot in the `process.cwd()` scan above. That scan is textual,
+ * and a child spawned with no `cwd` option inherits `process.cwd()` *by omission* —
+ * there is no text to find, so the guard that exists precisely to stop this could not
+ * see it. Three call sites lived in the gap: pi-consult ran `claude` against the wrong
+ * project, pi-browser wrote files into it, and pi-spawn's subagents *edited* it.
+ *
+ * `ExecOptions.cwd` being required is the real fix and the compiler enforces it. This
+ * covers the modules that legitimately go around `shared/exec.ts` — pi-lens spawns
+ * language servers, which are long-lived and need raw stdio pipes, and reads the
+ * workspace with `execFileSync` — where no type is doing the work.
+ *
+ * Deliberately not an allowlist of who may spawn. The first version of this test was
+ * one, it named two files, and it failed against two more that were entirely correct:
+ * the invariant worth enforcing is that a child knows its directory, not which module
+ * is permitted to have one.
+ */
+test("every module that spawns a process passes cwd", () => {
+  const offenders: string[] = [];
+  for (const dir of [...EXTENSION_DIRS, "shared"]) {
+    for (const file of allTsFiles(dir)) {
+      const rel = relative(ROOT, file);
+      if (rel.includes("/test/")) continue;
+      const src = code(readFileSync(file, "utf8"));
+      if (!/from\s+["']node:child_process["']/.test(src)) continue;
+      if (!/\bcwd[:,]/.test(src)) {
+        offenders.push(`${rel}: spawns without passing cwd — the child inherits process.cwd()`);
+      }
+    }
+  }
+  expect(offenders).toEqual([]);
+});
+
+test("the spawn-cwd checker actually detects a child launched without one", () => {
+  // Guards the guard, in the shape the real defect took: an options object with a
+  // signal and an env but no cwd is exactly what pi-spawn's runner passed.
+  const bad = `import { spawn } from "node:child_process";\nspawn(cmd, args, { stdio: "pipe", env });`;
+  const good = `import { spawn } from "node:child_process";\nspawn(cmd, args, { cwd, stdio: "pipe", env });`;
+  const spawns = (src: string) => /from\s+["']node:child_process["']/.test(src) && /\bcwd[:,]/.test(src);
+  expect(spawns(bad)).toBe(false);
+  expect(spawns(good)).toBe(true);
 });
 
 // ---------------------------------------------------------------------------

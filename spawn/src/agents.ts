@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { agentDir } from "../../shared/config.ts";
+import { agentDir, projectConfigDir } from "../../shared/config.ts";
 import { parseFrontmatter } from "../../shared/index.ts";
 
 export interface AgentDef {
@@ -68,11 +68,22 @@ export function defaultAgents(): AgentDef[] {
   return readAgentsFrom(bundledAgentsDir());
 }
 
-/** Merge defaults ∪ global ∪ project, with project winning on name collisions. */
-export function discoverAgents(cwd: string): AgentDef[] {
+/**
+ * Merge defaults ∪ global ∪ project, with project winning on name collisions.
+ *
+ * `includeProject` is the trust gate, and this is the sharper of the suite's two
+ * project-local reads: an agent definition's body becomes a subagent's
+ * `--append-system-prompt`, and because project entries win collisions, an untrusted
+ * repository could otherwise redefine the bundled `reviewer` — keeping the name the
+ * caller asked for and replacing everything it does. Required rather than defaulted,
+ * so the compiler names every call site. See `shared/trust.ts`.
+ */
+export function discoverAgents(cwd: string, includeProject: boolean): AgentDef[] {
   const byName = new Map<string, AgentDef>();
   for (const a of defaultAgents()) byName.set(a.name, a);
   for (const a of readAgentsFrom(globalAgentsDir())) byName.set(a.name, a);
-  for (const a of readAgentsFrom(join(cwd, ".pi", "agents"))) byName.set(a.name, a);
+  if (includeProject) {
+    for (const a of readAgentsFrom(projectConfigDir(cwd, "agents"))) byName.set(a.name, a);
+  }
   return [...byName.values()];
 }

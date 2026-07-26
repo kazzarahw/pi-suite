@@ -37,6 +37,27 @@ Agents are markdown files (frontmatter: `name`, `description`, optional `model`,
 | `defaultModel` | *(pi default)* | model for subagents whose def doesn't pin one |
 | `concurrency` | `min(4, cores)` | max subagents in flight for a parallel spawn |
 
+## Project trust
+
+Agent definitions under `<cwd>/.pi/agents` are **repository content**, and a definition's
+body becomes the subagent's `--append-system-prompt`. Project entries also win name
+collisions — so without a gate an untrusted repository could keep the name `reviewer` and
+replace everything it does. When `ctx.isProjectTrusted()` is false those definitions are
+skipped; the bundled and global rosters are unaffected, so declining trust narrows the
+roster rather than emptying it. `/pi-spawn` reports the same roster the tool would accept.
+
+Pi gates the project resources it knows about; `.pi/agents` is one this extension
+invented, so the gate lives here. [`pi-memory`](../memory) and [`pi-lens`](../lens) draw
+the same line.
+
+## Working directory
+
+Every subagent runs in the **session's** project (`cwdOf(ctx)`), which is threaded from
+the tool through `Job` and into the child process. It is required rather than defaulted:
+a child spawned without a `cwd` inherits the extension host's `process.cwd()`, and where
+that differed from Pi's session cwd a delegated subagent read and *edited files in the
+wrong project*.
+
 ## Install
 
 ```sh

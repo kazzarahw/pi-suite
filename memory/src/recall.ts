@@ -17,12 +17,35 @@ export function selectByQuery(mems: readonly Memory[], query: string, limit: num
     .map((x) => x.m);
 }
 
-/** The always-in-context index: names + descriptions only (progressive disclosure). "" when empty. */
-export function formatIndexInjection(mems: readonly Memory[]): string {
+/**
+ * The always-in-context index: names + descriptions only (progressive disclosure).
+ * `""` when empty.
+ *
+ * **Bounded, because this is the one string that is in literally every request.** It
+ * used to map every memory with no cap and no truncation, while `formatRecall` right
+ * below it was truncated — so a store that grew to a few hundred memories quietly
+ * bought a few hundred lines of prompt on every call, forever, and the suite's own
+ * "everything agent-facing goes through truncateForAgent" rule was unenforced exactly
+ * where it mattered most.
+ *
+ * The newest `limit` entries win, and the block says how many it left out: a silently
+ * shortened index reads as "that is all I remember", which is the same failure as
+ * answering a wedged language server with "(none found)". Recall still reaches the
+ * omitted ones by name or query — the index is a table of contents, not the memory.
+ */
+export function formatIndexInjection(mems: readonly Memory[], limit: number): string {
   if (mems.length === 0) return "";
+  const shown = mems.slice(0, limit);
+  const omitted = mems.length - shown.length;
   const header = injectionHeader("memory", "what I remember — call memory_recall(name) for the full text");
-  const body = mems.map((m) => `- ${m.name} (${m.type}) — ${m.description}`).join("\n");
-  return injectionBlock("memory", header, body);
+  const lines = shown.map((m) => `- ${m.name} (${m.type}) — ${m.description}`);
+  if (omitted > 0) {
+    lines.push(
+      `[… ${omitted} more not listed; memory_recall(query) searches all ${mems.length}]`,
+    );
+  }
+  // The cap is a count; this is the byte/line backstop for pathological descriptions.
+  return injectionBlock("memory", header, truncateForAgent(lines.join("\n"), { label: "memory index" }));
 }
 
 /** Full bodies for a recall. "" when empty. */

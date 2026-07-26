@@ -4,6 +4,8 @@ import { runAgent, type SpawnResult } from "./runner.ts";
 export interface Job {
   agentDef: AgentDef;
   task: string;
+  /** The project the subagent runs in. Part of the job, not of the call — see RunAgentInput.cwd. */
+  cwd: string;
 }
 
 export type RunOne = (job: Job, signal?: AbortSignal) => Promise<SpawnResult>;

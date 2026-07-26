@@ -29,10 +29,42 @@ Git still has a job, read-only: `git status` tells pi-git which files changed, s
 |---|---|---|
 | `mode` | `notify` | `off` disables checkpointing; `notify`/`block` both = checkpoint + restore (nothing to block, so they're equivalent) |
 | `detectDirty` | `true` | also checkpoint what `git status` reports, catching changes made by `bash` |
+| `guardDelegated` | `true` | record the working set before a delegated subagent runs — see below |
 | `checkpointTtlDays` | `30` | how long a session's checkpoints survive; swept on session start |
 | `maxFileBytes` | `10485760` | files larger than this are reported and left out rather than stored |
+| `maxGuardedFiles` | `5000` | cap on the delegation guard's working set; overflow is reported, never silently dropped (JSON file only) |
 
 Does **not** require a git repository.
+
+## Delegated edits
+
+pi-git learns a file's pre-edit bytes from the `tool_call` hook, which fires in *this*
+process. A subagent edits from its own `pi` process, so those writes are invisible here:
+a file that was clean when the delegation started had no recorded origin, was in no
+manifest, and survived a rewind untouched while pi-git reported success. The least
+supervised edits in the suite were the only ones it could not undo.
+
+So pi-git subscribes to `spawn:started` and records the repository's working set —
+`git ls-files` plus whatever is already dirty — *before* the subagent runs. It cannot
+know which files will be touched, so it covers the ones that can be. That is affordable
+only because the store is content-addressed: a file checkpointed unchanged is one blob,
+shared across every entry and session that references it. The first guarded delegation in
+a session pays for the tree; later ones are near-free, since `rememberOrigin` never
+rewrites an origin it already holds.
+
+Subscribed, not imported. It holds against *any* publisher of `spawn:started`, and with
+nothing publishing it the handler never runs — [`pi-spawn`](../spawn) stays independently
+disable-able, and pi-git keeps working with it gone. Outside a git repository there is no
+working set to enumerate, so the guard contributes nothing and the ordinary hooks still
+cover every edit made through a tool.
+
+## `/tree` labels
+
+An entry pi-git checkpoints is labelled `⏱ files`, so the `/tree` picker shows which
+points will actually put your files back *before* you navigate to one. Without it pi-git
+could only answer afterwards, by reporting that it had no checkpoint for the point you
+had already jumped to. A label you set yourself is never overwritten — those are your
+bookmarks, and the checkpoint still restores either way.
 
 ## Install
 

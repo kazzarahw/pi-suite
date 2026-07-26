@@ -4,7 +4,7 @@ import type { AgentToolResult, ExtensionContext } from "@earendil-works/pi-codin
 import type { ExecFn } from "../../shared/exec.ts";
 import type { BrowserConfig } from "./config.ts";
 import { runBrowser, type BrowserAction } from "./browser.ts";
-import { truncateForAgent } from "../../shared/index.ts";
+import { cwdOf, truncateForAgent } from "../../shared/index.ts";
 
 const ACTIONS = [
   "open", "snapshot", "read", "search", "click", "type", "fill", "press", "hover",
@@ -54,9 +54,16 @@ export function buildBrowserTool(deps: BrowserToolDeps) {
       params: BrowserParams,
       signal: AbortSignal | undefined,
       _onUpdate: unknown,
-      _ctx: ExtensionContext,
+      ctx: ExtensionContext,
     ): Promise<AgentToolResult<{ action: BrowserAction }>> {
-      const output = await runBrowser(params.action, params, deps.loadConfig(), deps.exec, signal);
+      const output = await runBrowser(
+        params.action,
+        params,
+        deps.loadConfig(),
+        deps.exec,
+        cwdOf(ctx),
+        signal,
+      );
       return {
         content: [
           { type: "text", text: truncateForAgent(output || "(no output)", { label: `browser ${params.action}` }) },

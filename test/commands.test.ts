@@ -67,8 +67,10 @@ for (const { dir, fields } of TABLES) {
  * deliberately, rather than quietly having no way to reach it.
  */
 const INTENTIONALLY_UNEXPOSED: Record<string, string[]> = {
-  // Bounded by the store and rarely tuned; editable in the JSON file.
-  git: ["maxFileBytes"],
+  // Bounded by the store and rarely tuned; editable in the JSON file. `maxGuardedFiles`
+  // joins them: `guardDelegated` is the decision a user makes (it has a cost), the cap
+  // is the tuning underneath it.
+  git: ["maxFileBytes", "maxGuardedFiles"],
   // A deadline for a whole test suite — set once, in the file, if at all.
   lens: ["verifyTimeoutMs"],
   // Same, for a delegated job.

@@ -3,7 +3,7 @@ import { renderGoal, formatInjection } from "../src/render.ts";
 import type { Goal } from "../src/state.ts";
 
 const active: Goal = { objective: "ship the auth refactor", status: "active" };
-const bare = { turns: 0, progress: null };
+const bare = { turns: 0, progress: null, verify: null };
 
 test("the widget marks active and met differently", () => {
   expect(renderGoal(active, bare)[0]).toBe("▸ ship the auth refactor");
@@ -15,18 +15,18 @@ test("the widget says nothing extra when there is nothing extra to say", () => {
 });
 
 test("the widget annotates turns and todo progress", () => {
-  const lines = renderGoal(active, { turns: 4, progress: { done: 2, total: 5 } });
+  const lines = renderGoal(active, { turns: 4, progress: { done: 2, total: 5 }, verify: null });
   expect(lines[1]).toBe("  4 turns · 2 of 5 todos done");
 });
 
 test("one turn is singular", () => {
-  expect(renderGoal(active, { turns: 1, progress: null })[1]).toBe("  1 turn");
+  expect(renderGoal(active, { turns: 1, progress: null, verify: null })[1]).toBe("  1 turn");
 });
 
 test("zero turns is omitted rather than shown", () => {
   // Zero is also what a restore reports, since the counter is in memory — printing
   // "0 turns" would claim the objective is new when it may be anything but.
-  expect(renderGoal(active, { turns: 0, progress: { done: 0, total: 2 } })[1]).toBe(
+  expect(renderGoal(active, { turns: 0, progress: { done: 0, total: 2 }, verify: null })[1]).toBe(
     "  0 of 2 todos done",
   );
 });
@@ -67,7 +67,7 @@ test("the injection does not change as turns pass or todos move", () => {
 });
 
 test("the widget carries the volatile state the injection refuses", () => {
-  const lines = renderGoal(active, { turns: 3, progress: { done: 1, total: 2 } });
+  const lines = renderGoal(active, { turns: 3, progress: { done: 1, total: 2 }, verify: null });
   expect(lines[1]).toBe("  3 turns · 1 of 2 todos done");
 });
 

@@ -1,6 +1,6 @@
 import { DEFAULT_MODE, MODES, type Mode } from "../../shared/index.ts";
 import { defineConfig, type ConfigSpec } from "../../shared/config.ts";
-import { bool, oneOf, posNum } from "../../shared/fields.ts";
+import { bool, int, oneOf, posNum } from "../../shared/fields.ts";
 import { DEFAULT_MAX_FILE_BYTES } from "./store.ts";
 
 /** pi-git configuration. */
@@ -20,6 +20,26 @@ export interface GitConfig {
   detectDirty: boolean;
   /** Files larger than this are reported and left out rather than stored. */
   maxFileBytes: number;
+  /**
+   * Record the repository's working set before a delegated subagent runs.
+   *
+   * A subagent edits from its own `pi` process, so its writes never reach this
+   * extension's `tool_call` hook — the hook that captures a file's pre-edit bytes. A
+   * rewind past a delegation therefore left every file the subagent touched exactly as
+   * it left them, which is the one thing pi-git exists to prevent, in the case the user
+   * supervised least.
+   */
+  guardDelegated: boolean;
+  /**
+   * Cap on files the delegation guard records in one pass.
+   *
+   * The first guarded delegation in a large repository hashes and stores the whole
+   * tracked tree; afterwards it is nearly free, because the store is content-addressed
+   * and `rememberOrigin` never rewrites an origin it already has. The cap bounds that
+   * first pass, and exceeding it is *reported* rather than silently truncated — a
+   * partial guard that looks total is worse than no guard.
+   */
+  maxGuardedFiles: number;
 }
 
 export const DEFAULTS: GitConfig = {
@@ -27,6 +47,8 @@ export const DEFAULTS: GitConfig = {
   checkpointTtlDays: 30,
   detectDirty: true,
   maxFileBytes: DEFAULT_MAX_FILE_BYTES,
+  guardDelegated: true,
+  maxGuardedFiles: 5000,
 };
 
 export const SPEC: ConfigSpec<GitConfig> = {
@@ -39,6 +61,8 @@ export const SPEC: ConfigSpec<GitConfig> = {
       checkpointTtlDays: posNum(p.checkpointTtlDays, defaults.checkpointTtlDays),
       detectDirty: bool(p.detectDirty, defaults.detectDirty),
       maxFileBytes: posNum(p.maxFileBytes, defaults.maxFileBytes),
+      guardDelegated: bool(p.guardDelegated, defaults.guardDelegated),
+      maxGuardedFiles: int(p.maxGuardedFiles, defaults.maxGuardedFiles),
     };
   },
 };

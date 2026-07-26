@@ -53,7 +53,7 @@ export async function gatherFeedback(input: GatherInput): Promise<Gathered> {
   let reformatNote = "";
   if (isEdit && autoFormat && toolchain?.formatter) {
     try {
-      if ((await runFormatter(file, toolchain.formatter, exec, signal)).changed) {
+      if ((await runFormatter(file, toolchain.formatter, exec, cwd, signal)).changed) {
         reformatNote = formatFormatted(rel, toolchain.formatter.name);
       }
     } catch {

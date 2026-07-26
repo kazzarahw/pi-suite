@@ -1,7 +1,7 @@
 import { Type, type Static } from "typebox";
 import type { AgentToolResult, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { ConsultConfig } from "./config.ts";
-import { truncateForAgent } from "../../shared/index.ts";
+import { type Emitter, cwdOf, truncateForAgent } from "../../shared/index.ts";
 
 const parameters = Type.Object({
   prompt: Type.String({
@@ -19,8 +19,13 @@ type ConsultParams = Static<typeof parameters>;
 /** Dependencies the tool reads at call time. `ctx.ui` is NOT here — it comes from the execute `ctx`. */
 export interface ToolDeps {
   loadConfig: () => ConsultConfig;
-  runConsult: (o: { model: string; prompt: string; signal?: AbortSignal }) => Promise<string>;
-  emit: (event: string, data: unknown) => void;
+  runConsult: (o: {
+    model: string;
+    prompt: string;
+    cwd: string;
+    signal?: AbortSignal;
+  }) => Promise<string>;
+  emit: Emitter;
 }
 
 /** Build the `consult` tool definition for `pi.registerTool`. */
@@ -43,7 +48,12 @@ export function buildConsultTool(deps: ToolDeps) {
       const model = params.model?.trim() || cfg.defaultModel;
       ctx?.ui?.setStatus?.("consult", `consulting ${model}…`);
       try {
-        const advice = await deps.runConsult({ model, prompt: params.prompt, signal });
+        const advice = await deps.runConsult({
+          model,
+          prompt: params.prompt,
+          cwd: cwdOf(ctx),
+          signal,
+        });
         deps.emit("consult:answered", { model, topic: params.prompt.slice(0, 80) });
         return {
           content: [{ type: "text", text: truncateForAgent(advice, { label: "consult advice" }) }],

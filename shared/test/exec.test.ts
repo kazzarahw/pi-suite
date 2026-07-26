@@ -1,6 +1,9 @@
 import { test, expect } from "bun:test";
 import { defaultExec, MAX_BUFFER } from "../exec.ts";
 import { within } from "./harness.ts";
+import { mkdtempSync, realpathSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 test("defaultExec captures stdout and exit 0 for a successful command", async () => {
   const r = await defaultExec("sh", ["-c", "printf hello"]);
@@ -41,6 +44,7 @@ test("defaultExec honors cwd", async () => {
 // Carried over from pi-git: extra env is merged OVER process.env, not replacing it.
 test("defaultExec merges env over process.env rather than replacing it", async () => {
   const r = await defaultExec("sh", ["-c", "printf '%s|%s' \"$PI_SUITE_TEST_VAR\" \"$HOME\""], {
+    cwd: process.cwd(),
     env: { PI_SUITE_TEST_VAR: "set-by-test" },
   });
   const [custom, home] = r.stdout.split("|");
@@ -49,13 +53,13 @@ test("defaultExec merges env over process.env rather than replacing it", async (
 });
 
 test("defaultExec settles rather than hanging when the signal is already aborted", async () => {
-  const r = await within(2000, defaultExec("sh", ["-c", "sleep 5"], { signal: AbortSignal.abort() }));
+  const r = await within(2000, defaultExec("sh", ["-c", "sleep 5"], { cwd: process.cwd(), signal: AbortSignal.abort() }));
   expect(r.code).not.toBe(0);
 });
 
 test("defaultExec settles when the signal aborts mid-flight", async () => {
   const ac = new AbortController();
-  const p = defaultExec("sh", ["-c", "sleep 5"], { signal: ac.signal });
+  const p = defaultExec("sh", ["-c", "sleep 5"], { cwd: process.cwd(), signal: ac.signal });
   setTimeout(() => ac.abort(), 50);
   const r = await within(3000, p);
   expect(r.code).not.toBe(0);
@@ -71,7 +75,7 @@ test("MAX_BUFFER is 64MB", () => {
 // a deadline is reported through the result, never by rejecting.
 
 test("a command exceeding its timeout resolves, non-zero, with killed set", async () => {
-  const r = await within(3000, defaultExec("sh", ["-c", "sleep 5"], { timeout: 100 }));
+  const r = await within(3000, defaultExec("sh", ["-c", "sleep 5"], { cwd: process.cwd(), timeout: 100 }));
   expect(r.code).not.toBe(0);
   expect(r.killed).toBe(true);
 });
@@ -81,7 +85,7 @@ test("a command exceeding its timeout resolves, non-zero, with killed set", asyn
 // otherwise indistinguishable from an ordinary failure — the same class of lie as
 // reporting a wedged language server as "(none found)".
 test("a command that writes to stderr and THEN times out still reports killed", async () => {
-  const r = await within(3000, defaultExec("sh", ["-c", "printf partial >&2; sleep 5"], { timeout: 150 }));
+  const r = await within(3000, defaultExec("sh", ["-c", "printf partial >&2; sleep 5"], { cwd: process.cwd(), timeout: 150 }));
   expect(r.stderr).toContain("partial");
   expect(r.killed).toBe(true);
   expect(r.code).not.toBe(0);
@@ -112,6 +116,7 @@ test("an undefined env value removes the variable from the child", async () => {
   process.env.PI_SUITE_UNSET_ME = "inherited";
   try {
     const r = await defaultExec("sh", ["-c", "printf '[%s]' \"$PI_SUITE_UNSET_ME\""], {
+      cwd: process.cwd(),
       env: { PI_SUITE_UNSET_ME: undefined },
     });
     expect(r.stdout).toBe("[]");
@@ -124,6 +129,7 @@ test("removing one variable leaves the rest of the environment intact", async ()
   process.env.PI_SUITE_UNSET_ME = "inherited";
   try {
     const r = await defaultExec("sh", ["-c", "printf '%s' \"$HOME\""], {
+      cwd: process.cwd(),
       env: { PI_SUITE_UNSET_ME: undefined },
     });
     expect(r.stdout).toBe(process.env.HOME ?? "");
@@ -134,7 +140,17 @@ test("removing one variable leaves the rest of the environment intact", async ()
 
 test("a defined env value still sets the variable", async () => {
   const r = await defaultExec("sh", ["-c", "printf '%s' \"$PI_SUITE_SET_ME\""], {
+    cwd: process.cwd(),
     env: { PI_SUITE_SET_ME: "value" },
   });
   expect(r.stdout).toBe("value");
+});
+
+test("ExecOptions.cwd is honored, which is why the type requires it", async () => {
+  // Required rather than optional-with-a-default: a child spawned without one inherits
+  // the extension host's process.cwd(), and `test/boundaries.test.ts`'s textual scan
+  // cannot see an inheritance that has no text. Three extensions were in that gap.
+  const dir = mkdtempSync(join(tmpdir(), "pi-exec-cwd-"));
+  const r = await defaultExec("sh", ["-c", "pwd"], { cwd: dir });
+  expect(realpathSync(r.stdout.trim())).toBe(realpathSync(dir));
 });

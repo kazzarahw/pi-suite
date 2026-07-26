@@ -36,6 +36,34 @@ Emits `memory:wrote { keys }` / `memory:recalled { keys }`.
 | `mode` | `notify` | `off` disables index injection + auto-capture |
 | `autoCapture` | `false` | capture a gotcha on `verify:failed` |
 | `recallLimit` | `3` | max bodies a keyword recall returns |
+| `indexLimit` | `50` | max entries listed in the injected index |
+
+`recallLimit` and `indexLimit` bound different things. `recallLimit` caps one deliberate
+lookup; `indexLimit` caps a block that rides on **every** LLM call, which is why it needs
+a bound at all — the index used to be an unbounded map over the whole store, so a few
+hundred memories bought a few hundred lines of prompt on every call for the rest of the
+session. When it is capped the block says how many it left out, and
+`memory_recall(query)` still searches all of them.
+
+## Project trust
+
+Memories under `<cwd>/.pi/memory` are **repository content**, and the index is prepended
+to every LLM call — so an untrusted project does not get to write the agent's standing
+context. When [`ctx.isProjectTrusted()`](https://pi.dev) is false, the project scope is
+skipped for both the injection and `memory_recall`; global memories are unaffected.
+
+Pi's own trust model gates the project resources Pi knows about — `.pi/settings.json`,
+`.pi/extensions`, `.pi/skills`, and friends. It has never heard of `.pi/memory`, which
+this extension invented, so the gate has to live here. [`pi-lens`](../lens) draws the same
+line around an autodetected verify command, and [`pi-spawn`](../spawn) around project
+agent definitions.
+
+This is not a claim to prevent prompt injection; Pi is explicit that repository content is
+expected local-agent risk. It is the narrower, preventable case.
+
+`/pi-memory` itself is deliberately **not** gated: trust governs what reaches the model,
+not what the user can see of their own files, and `delete <name>` has to be able to name a
+project memory in a project you have not trusted.
 
 ## Install
 

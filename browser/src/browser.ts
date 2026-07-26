@@ -122,6 +122,12 @@ export async function runBrowser(
   args: BrowserArgs,
   cfg: BrowserConfig,
   exec: ExecFn,
+  /**
+   * The session's project. agent-browser resolves relative paths against its own cwd,
+   * so without this a `screenshot docs/shot.png` landed beside whatever directory the
+   * extension host happened to start in rather than in the project the agent is working on.
+   */
+  cwd: string,
   signal?: AbortSignal,
 ): Promise<string> {
   const sessionArgs = cfg.session ? ["--session", cfg.session] : [];
@@ -131,7 +137,10 @@ export async function runBrowser(
     const query = req(args.query, "query", "search");
     let last = "";
     for (const build of SEARCH_URLS) {
-      const { stdout, code } = await exec(cfg.binPath, [...sessionArgs, "read", build(query)], { signal });
+      const { stdout, code } = await exec(cfg.binPath, [...sessionArgs, "read", build(query)], {
+        cwd,
+        signal,
+      });
       const out = stdout.trim();
       if (code === 0 && !looksBlocked(out)) return out;
       if (out) last = out;
@@ -140,7 +149,7 @@ export async function runBrowser(
   }
 
   const argv = [...sessionArgs, ...browserArgv(action, args)];
-  const { stdout, stderr, code } = await exec(cfg.binPath, argv, { signal });
+  const { stdout, stderr, code } = await exec(cfg.binPath, argv, { cwd, signal });
   if (code !== 0) {
     throw new Error(`[pi-browser] agent-browser ${action} failed (${code}): ${stderr.trim() || "(no stderr)"}`);
   }

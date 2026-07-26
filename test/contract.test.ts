@@ -131,12 +131,41 @@ test("every emitted event name is declared in EVENTS", () => {
   expect(offenders).toEqual([]);
 });
 
-test("EVENTS declares one event per emitting domain, and the vocabulary does not shrink", () => {
-  // 15 today: consult 1, lens 2, verify 2, git 2, todo 2, goal 2, memory 2, spawn 2.
-  expect(EVENT_NAMES.size).toBeGreaterThanOrEqual(15);
-  for (const domain of ["consult", "lens", "verify", "git", "todo", "goal", "memory", "spawn"]) {
-    expect([...EVENT_NAMES].some((e) => e.startsWith(`${domain}:`))).toBe(true);
+/**
+ * ...and the vocabulary is *reachable*: nothing is declared that nobody emits.
+ *
+ * This replaces a `size >= 15` ratchet, which was the wrong guard for what the bus
+ * turned out to be. `events.ts` was written spec-first, in the suite's first commit,
+ * from a `HOUSE-STYLE.md` §4 that has since been deleted — so a never-shrink rule
+ * pinned a wishlist rather than a contract, and would have kept pinning it after the
+ * document that justified it was gone.
+ *
+ * The rule that actually belongs here is the one `test/boundaries.test.ts` already
+ * applies to modules: *a capability nothing reaches is not deferred, it is dead.* An
+ * event no publisher emits is exactly that — a name a subscriber could bind to and
+ * never hear from. The direction matters: this suite deliberately emits several events
+ * it does not itself consume, because a publisher with no in-repo subscriber is a
+ * working extension point (and every one of them is asserted by that extension's own
+ * tests), whereas a declaration with no publisher is a promise nothing keeps.
+ */
+test("every event declared in EVENTS is emitted by some extension", () => {
+  const emitted = new Set<string>();
+  for (const ext of SURFACE) {
+    for (const file of sourceFiles(ext.dir)) {
+      for (const m of readFileSync(file, "utf8").matchAll(/\bemit\(\s*"([a-z]+:[a-z-]+)"/g)) {
+        emitted.add(m[1]!);
+      }
+    }
   }
+  // Only for domains actually present: disabling an extension must not fail a claim
+  // about it — the same rule the wrapsToolResult check follows.
+  const present = new Set(SURFACE.map((e) => e.dir));
+  const claimed = [...EVENT_NAMES].filter((name) => {
+    const domain = name.split(":")[0]!;
+    // `verify:*` is published by pi-lens, so its domain name is not its directory.
+    return present.has(domain === "verify" ? "lens" : domain);
+  });
+  expect(claimed.filter((name) => !emitted.has(name))).toEqual([]);
 });
 
 // ---------------------------------------------------------------------------

@@ -3,6 +3,7 @@ import { discoverAgents } from "./src/agents.ts";
 import { loadConfig, saveConfig } from "./src/config.ts";
 import { buildSpawnTool } from "./src/tools.ts";
 import { buildSpawnCommand } from "./src/command.ts";
+import type { Emitter } from "../shared/index.ts";
 
 /**
  * pi-spawn — delegate tasks to isolated subagents.
@@ -13,15 +14,16 @@ import { buildSpawnCommand } from "./src/command.ts";
  * A depth guard (PI_SPAWN_DEPTH) prevents runaway nesting.
  */
 export default function piSpawn(pi: ExtensionAPI): void {
+  const emit: Emitter = (event, data) => pi.events.emit(event, data);
   const depth = Number(process.env.PI_SPAWN_DEPTH ?? "0") || 0;
 
   pi.registerTool(
     buildSpawnTool({
-      discoverAgents: (cwd) => discoverAgents(cwd),
+      discoverAgents: (cwd, includeProject) => discoverAgents(cwd, includeProject),
       defaultModel: () => loadConfig().defaultModel,
       concurrency: () => loadConfig().concurrency,
       jobTimeoutMs: () => loadConfig().jobTimeoutMs,
-      emit: (event, data) => pi.events.emit(event, data),
+      emit,
       depth,
       childEnv: () => ({ PI_SPAWN_DEPTH: String(depth + 1) }),
     }),
@@ -30,7 +32,7 @@ export default function piSpawn(pi: ExtensionAPI): void {
   const command = buildSpawnCommand({
     loadConfig: () => loadConfig(),
     saveConfig: (c) => saveConfig(c),
-    listAgents: (cwd: string) => discoverAgents(cwd),
+    listAgents: (cwd: string, includeProject: boolean) => discoverAgents(cwd, includeProject),
   });
   pi.registerCommand(command.name, command.options);
 }

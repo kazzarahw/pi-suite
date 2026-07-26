@@ -61,6 +61,40 @@ export async function isRepo(exec: ExecFn, cwd: string, signal?: AbortSignal): P
  * directly with the store's key space. `[]` when `cwd` is not a repository — the
  * caller falls back to the paths it tracked through tool calls.
  */
+/**
+ * Every file git tracks under `cwd`, absolute. `[]` outside a repository.
+ *
+ * `dirtyPaths` answers "what changed"; this answers "what *could* change", and the
+ * difference is the whole point of the delegation guard. pi-git normally learns a
+ * file's pre-edit bytes from the `tool_call` hook, which fires in *this* process — so
+ * a subagent, editing from its own `pi` process, is invisible to it. A file that was
+ * clean when the delegation started and modified by it therefore has no recorded
+ * origin, and a rewind past the delegation silently leaves it modified.
+ *
+ * There is no way to know in advance which files a subagent will touch, so the guard
+ * records the ones it *can* touch. That is only affordable because the store is
+ * content-addressed: a file checkpointed unchanged is one blob, shared across every
+ * entry and session that references it.
+ *
+ * Tracked files only — not untracked ones, which `dirtyPaths` already covers, and not
+ * ignored ones, which are build output.
+ */
+export async function trackedPaths(
+  exec: ExecFn,
+  cwd: string,
+  opts: DetectOptions = {},
+): Promise<string[]> {
+  const { signal } = opts;
+  if (!(await isRepo(exec, cwd, signal))) return [];
+  // `-z` for the same reason as `status`: a path is only unambiguous NUL-terminated.
+  const r = await runGit(exec, cwd, ["ls-files", "-z"], signal);
+  if (r.code !== 0) return [];
+  return r.stdout
+    .split("\0")
+    .filter((p) => p.length > 0)
+    .map((p) => resolve(cwd, p));
+}
+
 export async function dirtyPaths(
   exec: ExecFn,
   cwd: string,

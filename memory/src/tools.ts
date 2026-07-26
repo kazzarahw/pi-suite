@@ -3,13 +3,13 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import type { AgentToolResult, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { MEMORY_TYPES, SCOPES, type Memory, type MemoryType, type Scope } from "./frontmatter.ts";
 import { listMemories, readMemory, writeMemory } from "./store.ts";
-import { cwdOf } from "../../shared/index.ts";
+import { cwdOf, projectTrusted, type Emitter } from "../../shared/index.ts";
 import { selectByQuery, formatRecall } from "./recall.ts";
 import { scanSecrets } from "./secrets.ts";
 
 export interface MemoryToolDeps {
   recallLimit: () => number;
-  emit: (event: string, data: unknown) => void;
+  emit: Emitter;
 }
 
 const recallParameters = Type.Object({
@@ -39,14 +39,18 @@ export function buildRecallTool(deps: MemoryToolDeps) {
       ctx: ExtensionContext,
     ): Promise<AgentToolResult<{ keys: string[] }>> {
       const cwd = cwdOf(ctx);
+      // Same gate as the index injection: an explicit recall must not be the way a
+      // cloned repository's memories reach the model after the standing block declined
+      // to carry them.
+      const scope = { includeProject: projectTrusted(ctx) };
       let mems: Memory[];
       if (params.name) {
-        const m = readMemory(params.name, cwd);
+        const m = readMemory(params.name, cwd, scope);
         mems = m ? [m] : [];
       } else if (params.query) {
-        mems = selectByQuery(listMemories(cwd), params.query, deps.recallLimit());
+        mems = selectByQuery(listMemories(cwd, scope), params.query, deps.recallLimit());
       } else {
-        mems = listMemories(cwd).slice(0, deps.recallLimit());
+        mems = listMemories(cwd, scope).slice(0, deps.recallLimit());
       }
       const keys = mems.map((m) => m.name);
       deps.emit("memory:recalled", { keys });

@@ -40,14 +40,14 @@ test("runBrowser runs binPath + argv, returns trimmed stdout, prepends session",
     return { stdout: "  page text \n", stderr: "", code: 0, killed: false };
   };
   const cfg: BrowserConfig = { binPath: "agent-browser", session: "s1" };
-  const out = await runBrowser("open", { url: "https://x.com" }, cfg, exec);
+  const out = await runBrowser("open", { url: "https://x.com" }, cfg, exec, process.cwd());
   expect(out).toBe("page text");
   expect(captured).toEqual({ cmd: "agent-browser", args: ["--session", "s1", "open", "https://x.com"] });
 });
 
 test("runBrowser throws with stderr text on a non-zero exit", async () => {
   const exec: ExecFn = async () => ({ stdout: "", stderr: "boom", code: 3, killed: false });
-  await expect(runBrowser("snapshot", {}, { binPath: "agent-browser" }, exec)).rejects.toThrow("boom");
+  await expect(runBrowser("snapshot", {}, { binPath: "agent-browser" }, exec, process.cwd())).rejects.toThrow("boom");
 });
 
 test("looksBlocked flags bot-walls and tiny output, not real results", () => {
@@ -67,7 +67,7 @@ test("runBrowser search falls back to the next engine when the first is blocked"
     if (url.includes("duckduckgo")) return { stdout: "unusual traffic detected, wait a moment", stderr: "", code: 0, killed: false };
     return { stdout: "1. Result title\nexample.com\nA real snippet for the query goes here.", stderr: "", code: 0, killed: false };
   };
-  const out = await runBrowser("search", { query: "x" }, { binPath: "agent-browser" }, exec);
+  const out = await runBrowser("search", { query: "x" }, { binPath: "agent-browser" }, exec, process.cwd());
   expect(out).toContain("Result title");
   expect(seen[0]).toContain("duckduckgo");
   expect(seen[1]).toContain("bing");
@@ -75,5 +75,5 @@ test("runBrowser search falls back to the next engine when the first is blocked"
 
 test("runBrowser search requires a query", async () => {
   const exec: ExecFn = async () => ({ stdout: "", stderr: "", code: 0, killed: false });
-  await expect(runBrowser("search", {}, { binPath: "agent-browser" }, exec)).rejects.toThrow('"query" is required');
+  await expect(runBrowser("search", {}, { binPath: "agent-browser" }, exec, process.cwd())).rejects.toThrow('"query" is required');
 });

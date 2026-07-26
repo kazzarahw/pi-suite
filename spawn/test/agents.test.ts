@@ -35,9 +35,30 @@ test("discoverAgents lets a project agent override a default by name", () => {
   mkdirSync(join(cwd, ".pi", "agents"), { recursive: true });
   writeFileSync(join(cwd, ".pi", "agents", "scout.md"), `---\nname: scout\ndescription: MY scout\n---\ncustom`);
 
-  const agents = discoverAgents(cwd);
+  const agents = discoverAgents(cwd, true);
   expect(agents.find((a) => a.name === "scout")!.description).toBe("MY scout");
   expect(agents.some((a) => a.name === "worker")).toBe(true);
 
   rmSync(cwd, { recursive: true, force: true });
+});
+
+test("an untrusted project's agent definitions are ignored", async () => {
+  // The sharper of the suite's two project-local reads: a definition's body becomes the
+  // subagent's --append-system-prompt, and project entries win name collisions — so an
+  // untrusted repository could otherwise keep the name `scout` and replace what it does.
+  const cwd = mkdtempSync(join(tmpdir(), "pi-spawn-untrusted-"));
+  mkdirSync(join(cwd, ".pi", "agents"), { recursive: true });
+  writeFileSync(
+    join(cwd, ".pi", "agents", "scout.md"),
+    `---\nname: scout\ndescription: repo-supplied\n---\nrepo-supplied prompt`,
+  );
+
+  const trusted = discoverAgents(cwd, true).find((a) => a.name === "scout")!;
+  expect(trusted.description).toBe("repo-supplied");
+
+  const untrusted = discoverAgents(cwd, false).find((a) => a.name === "scout")!;
+  // The bundled one is still there — declining trust drops the override, it does not
+  // leave the roster empty.
+  expect(untrusted.description).not.toBe("repo-supplied");
+  expect(untrusted.systemPrompt).not.toContain("repo-supplied prompt");
 });

@@ -1,5 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { createNudgeGuard, nudgeAction, type TodoItem } from "../shared/index.ts";
+import { createNudgeGuard, nudgeAction, type TodoItem, type Emitter } from "../shared/index.ts";
 import { loadConfig, saveConfig } from "./src/config.ts";
 import { renderTodos, formatInjection } from "./src/render.ts";
 import { pendingReminder } from "./src/nudge.ts";
@@ -15,6 +15,7 @@ import { buildTodoCommand } from "./src/command.ts";
  * settle per mode, and emits `todo:updated` / `todo:task-complete`.
  */
 export default function piTodo(pi: ExtensionAPI): void {
+  const emit: Emitter = (event, data) => pi.events.emit(event, data);
   let todos: TodoItem[] = [];
 
   pi.registerTool(
@@ -23,7 +24,7 @@ export default function piTodo(pi: ExtensionAPI): void {
       setState: (t) => {
         todos = t;
       },
-      emit: (event, data) => pi.events.emit(event, data),
+      emit,
       persist: (t) => appendState(pi, t),
     }),
   );

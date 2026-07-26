@@ -4,7 +4,7 @@ import type { AgentDef } from "./agents.ts";
 import { runAgent, type RunAgentInput, type SpawnEvent, type SpawnResult } from "./runner.ts";
 import { runParallel, type Job } from "./pool.ts";
 import { eventToLine } from "./render.ts";
-import { cwdOf, truncateForAgent } from "../../shared/index.ts";
+import { type Emitter, cwdOf, projectTrusted, truncateForAgent } from "../../shared/index.ts";
 
 const parameters = Type.Object({
   tasks: Type.Array(
@@ -26,12 +26,12 @@ type SpawnParams = Static<typeof parameters>;
 const MAX_DEPTH = 2;
 
 export interface SpawnDeps {
-  discoverAgents: (cwd: string) => AgentDef[];
+  discoverAgents: (cwd: string, includeProject: boolean) => AgentDef[];
   defaultModel: () => string;
   concurrency: () => number;
   /** Per-job deadline in ms. */
   jobTimeoutMs: () => number;
-  emit: (event: string, data: unknown) => void;
+  emit: Emitter;
   /** This process's spawn nesting depth (from PI_SPAWN_DEPTH). */
   depth: number;
   /** Env to hand child subprocesses (carries the incremented depth). */
@@ -69,7 +69,7 @@ export function buildSpawnTool(deps: SpawnDeps) {
       }
 
       const cwd = cwdOf(ctx);
-      const agents = deps.discoverAgents(cwd);
+      const agents = deps.discoverAgents(cwd, projectTrusted(ctx));
       const byName = new Map(agents.map((a) => [a.name, a]));
 
       const jobs: Job[] = params.tasks.map((t) => {
@@ -79,7 +79,7 @@ export function buildSpawnTool(deps: SpawnDeps) {
           throw new Error(`[pi-spawn] unknown agent "${t.agent}". Available: ${available}.`);
         }
         const agentDef = def.model ? def : { ...def, model: deps.defaultModel() || undefined };
-        return { agentDef, task: t.task };
+        return { agentDef, task: t.task, cwd };
       });
 
       const env = deps.childEnv();
@@ -98,7 +98,7 @@ export function buildSpawnTool(deps: SpawnDeps) {
       try {
         if (jobs.length === 1) {
           const job = jobs[0]!;
-          deps.emit("spawn:started", { agent: job.agentDef.name });
+          deps.emit("spawn:started", { agent: job.agentDef.name, cwd });
           status[job.agentDef.name] = "starting…";
           paint();
           const result = await runOne({
@@ -108,11 +108,11 @@ export function buildSpawnTool(deps: SpawnDeps) {
             timeoutMs: deps.jobTimeoutMs(),
             onEvent: onEventFor(job.agentDef.name),
           });
-          deps.emit("spawn:finished", { agent: result.agent, summary: result.output.slice(0, 200) });
+          deps.emit("spawn:finished", { agent: result.agent, cwd, summary: result.output.slice(0, 200) });
           results = [result];
         } else {
           for (const job of jobs) {
-            deps.emit("spawn:started", { agent: job.agentDef.name });
+            deps.emit("spawn:started", { agent: job.agentDef.name, cwd });
             status[job.agentDef.name] = "queued…";
           }
           paint();
@@ -130,7 +130,7 @@ export function buildSpawnTool(deps: SpawnDeps) {
             signal,
           );
           for (const result of results) {
-            deps.emit("spawn:finished", { agent: result.agent, summary: result.output.slice(0, 200) });
+            deps.emit("spawn:finished", { agent: result.agent, cwd, summary: result.output.slice(0, 200) });
           }
         }
       } finally {

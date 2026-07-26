@@ -1,12 +1,28 @@
 import { readdirSync, readFileSync, writeFileSync, mkdirSync, rmSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { agentDir } from "../../shared/config.ts";
+import { agentDir, projectConfigDir } from "../../shared/config.ts";
 import { parseMemory, serializeMemory, type Memory, type Scope } from "./frontmatter.ts";
 
-/** Global (agent-config) and project memory dirs. Honors PI_CODING_AGENT_DIR (also lets tests redirect global). */
+/** Global (agent-config) and project memory dirs, both through the suite's one resolver. */
 export function memoryDirs(cwd: string): { global: string; project: string } {
-  return { global: join(agentDir(), "memory"), project: join(cwd, ".pi", "memory") };
+  return { global: join(agentDir(), "memory"), project: projectConfigDir(cwd, "memory") };
 }
+
+/**
+ * Whether a read may include the project scope.
+ *
+ * Required rather than defaulted, and named rather than a bare boolean, because the
+ * failure it prevents is silent: a call site that forgot the flag would inject a
+ * cloned repository's memories into every LLM call and look exactly like one that
+ * did not. Making it required means the compiler enumerates the call sites.
+ */
+export interface ReadScope {
+  /** Include `<cwd>/.pi/memory` — i.e. `projectTrusted(ctx)`. See `shared/trust.ts`. */
+  includeProject: boolean;
+}
+
+/** Every scope, for the write paths and for callers that have already decided. */
+export const ALL_SCOPES: ReadScope = { includeProject: true };
 
 const slug = (name: string): string =>
   name.trim().toLowerCase().replace(/[^\w.-]+/g, "-").replace(/^-+|-+$/g, "");
@@ -61,8 +77,11 @@ function rewriteIndex(dir: string, scope: Scope): void {
  * each file's mtime and size costs one extra `stat` and closes that hole.
  *
  * Keyed by the resolved directory pair rather than by `cwd`: the global directory
- * depends on `PI_CODING_AGENT_DIR`, which can differ between two lookups of the same
- * project.
+ * depends on the agent dir, which can differ between two lookups of the same project.
+ *
+ * The scope is part of the key too. Without it, one trusted read would populate the
+ * cache with the project's memories and every later untrusted read would be served
+ * them — the gate would hold on the first call of a session and leak on all the rest.
  */
 interface CacheEntry {
   signature: string;
@@ -71,8 +90,8 @@ interface CacheEntry {
 
 const indexCache = new Map<string, CacheEntry>();
 
-const cacheKey = (dirs: { global: string; project: string }): string =>
-  `${dirs.global}\0${dirs.project}`;
+const cacheKey = (dirs: { global: string; project: string }, scope: ReadScope): string =>
+  `${dirs.global}\0${dirs.project}\0${scope.includeProject ? "p" : "-"}`;
 
 /** `name:mtime:size` for every memory file in `dir`, or `"-"` when the directory is absent. */
 function dirSignature(dir: string): string {
@@ -100,33 +119,45 @@ function dirSignature(dir: string): string {
  * covers changes made by another process. Omit `cwd` to clear every project.
  */
 export function invalidateIndexCache(cwd?: string): void {
-  if (cwd === undefined) indexCache.clear();
-  else indexCache.delete(cacheKey(memoryDirs(cwd)));
+  if (cwd === undefined) {
+    indexCache.clear();
+    return;
+  }
+  const dirs = memoryDirs(cwd);
+  // Both scopes: a write is scoped, but it invalidates whichever cached views could
+  // have shown it, and there are only two.
+  indexCache.delete(cacheKey(dirs, { includeProject: true }));
+  indexCache.delete(cacheKey(dirs, { includeProject: false }));
 }
 
 /**
  * Every memory, global first. The returned array is the cached one — shared, frozen,
  * and `readonly` so a caller cannot sort it in place and corrupt the cache for the
  * rest of the session.
+ *
+ * `scope.includeProject` is the trust gate: `<cwd>/.pi/memory` is repository content,
+ * and this list is injected into every LLM call.
  */
-export function listMemories(cwd: string): readonly Memory[] {
+export function listMemories(cwd: string, scope: ReadScope): readonly Memory[] {
   const dirs = memoryDirs(cwd);
-  const key = cacheKey(dirs);
-  const signature = `${dirSignature(dirs.global)}\0${dirSignature(dirs.project)}`;
+  const key = cacheKey(dirs, scope);
+  const signature = `${dirSignature(dirs.global)}\0${
+    scope.includeProject ? dirSignature(dirs.project) : "-"
+  }`;
 
   const hit = indexCache.get(key);
   if (hit && hit.signature === signature) return hit.memories;
 
   const memories = Object.freeze([
     ...readDir(dirs.global, "global"),
-    ...readDir(dirs.project, "project"),
+    ...(scope.includeProject ? readDir(dirs.project, "project") : []),
   ]);
   indexCache.set(key, { signature, memories });
   return memories;
 }
 
-export function readMemory(name: string, cwd: string): Memory | null {
-  return listMemories(cwd).find((m) => m.name === name) ?? null;
+export function readMemory(name: string, cwd: string, scope: ReadScope): Memory | null {
+  return listMemories(cwd, scope).find((m) => m.name === name) ?? null;
 }
 
 /**

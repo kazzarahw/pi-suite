@@ -19,12 +19,12 @@ test("selectByQuery ranks by term overlap, caps at limit, drops non-matches", ()
 });
 
 test("formatIndexInjection is names+descriptions only, wrapped in <pi-memory>", () => {
-  const idx = formatIndexInjection([m("a-fact", "a desc", "the secret body")]);
+  const idx = formatIndexInjection([m("a-fact", "a desc", "the secret body")], 50);
   expect(idx).toContain("<pi-memory>");
   expect(idx).toContain("a-fact");
   expect(idx).toContain("a desc");
   expect(idx).not.toContain("the secret body");
-  expect(formatIndexInjection([])).toBe("");
+  expect(formatIndexInjection([], 50)).toBe("");
 });
 
 test("formatRecall includes full bodies", () => {

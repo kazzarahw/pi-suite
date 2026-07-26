@@ -1,9 +1,35 @@
 /**
  * The universal enforcement dial.
  *
- * Every automation-capable extension exposes this same three-level `mode`.
- * It means the same thing everywhere; extensions may add domain-specific
- * sub-flags, but never redefine these levels.
+ * Every automation-capable extension exposes this same three-level `mode`. What each
+ * level *means* is fixed; extensions may add domain-specific sub-flags, but never
+ * redefine the levels.
+ *
+ * ## What `block` means, precisely
+ *
+ * `off` and `notify` are unambiguous. `block` is the level worth stating carefully,
+ * because it takes two shapes depending on whether the extension has an action to
+ * block — and this file previously described only the first, while two of the three
+ * extensions that implement it did the second.
+ *
+ * | Shape | Extensions | Behavior |
+ * |---|---|---|
+ * | **Interdict** | pi-lens | the extension observes an action it can refuse, so `block` returns `{ block: true }` and the action does not happen |
+ * | **Insist** | pi-todo, pi-goal | the extension observes *inaction* — unfinished work at `agent_settled` — so `block` triggers another turn, bounded by a nudge guard |
+ *
+ * They are not opposites by accident: both are "the strongest thing this extension can
+ * do to make the agent deal with what it found". An extension with a blockable action
+ * interdicts it; one whose complaint is that nothing happened cannot interdict
+ * anything, so it insists instead. What unites them, and what a user setting the dial
+ * is choosing, is *escalation from telling to compelling*.
+ *
+ * The one rule both shapes obey: `block` never acts without a bound. pi-lens gates on
+ * a verify gate it consumes; pi-todo and pi-goal go through `createNudgeGuard`. An
+ * unbounded `block` is a loop, since the agent that provoked it may never resolve it.
+ *
+ * Extensions with no blockable action *and* nothing to insist on collapse `block` to
+ * `notify` — pi-git (checkpointing is invisible) and pi-memory (writes are not gated).
+ * Each says so in its own README.
  */
 
 /** The three enforcement levels, shared by every automation-capable extension. */

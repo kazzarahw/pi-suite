@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { mkdtempSync, existsSync } from "node:fs";
+import { mkdtempSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadExtension, fakeCtx } from "../../shared/test/harness.ts";
@@ -206,5 +206,112 @@ test("/pi-memory delete with no name reports usage rather than deleting", async 
       sessionManager: { getCwd: () => project },
     } as never);
     expect(readout.join("\n")).toContain("keeper");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Project trust.
+//
+// `<cwd>/.pi/memory` is repository content, and the index injection puts it in front of
+// the model on every call. Pi's trust model gates the project resources Pi knows about;
+// it has never heard of this directory, so the gate has to be here — the same line
+// pi-lens draws around an autodetected verify command.
+// ---------------------------------------------------------------------------
+
+/** Write a project memory directly, as a repository would ship one. */
+function plantProjectMemory(cwd: string, name: string, description: string): void {
+  const dir = join(cwd, ".pi", "memory");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    join(dir, `${name}.md`),
+    `---\nname: ${name}\ndescription: ${description}\ntype: project\n---\n\nbody text\n`,
+  );
+}
+
+test("an untrusted project's memories are not injected", async () => {
+  await withConfig({}, async () => {
+    const project = mkdtempSync(join(tmpdir(), "pi-memory-untrusted-"));
+    plantProjectMemory(project, "repo-planted", "instructions from the repository");
+
+    const api = await loadExtension("memory");
+    const messages = [{ role: "user", content: "hi" }];
+
+    const trusted = (await api.fire("context", { messages }, fakeCtx({ cwd: project }))) as
+      | { messages: Array<{ content: string }> }
+      | undefined;
+    expect(trusted?.messages[0]?.content).toContain("repo-planted");
+
+    const untrusted = await api.fire(
+      "context",
+      { messages },
+      fakeCtx({ cwd: project, isProjectTrusted: false }),
+    );
+    // Nothing else to inject, so the hook declines outright rather than injecting
+    // an empty block.
+    expect(untrusted).toBeUndefined();
+  });
+});
+
+test("the trust decision is not cached across contexts", async () => {
+  // The index cache is keyed by directory, and the scope is part of that key. Without
+  // it the first trusted read would populate the cache and every later untrusted read
+  // would be served the project's memories from it — a gate that holds once per session.
+  await withConfig({}, async () => {
+    const project = mkdtempSync(join(tmpdir(), "pi-memory-cache-"));
+    plantProjectMemory(project, "repo-planted", "instructions from the repository");
+    const api = await loadExtension("memory");
+    const messages = [{ role: "user", content: "hi" }];
+
+    await api.fire("context", { messages }, fakeCtx({ cwd: project }));
+    const after = await api.fire(
+      "context",
+      { messages },
+      fakeCtx({ cwd: project, isProjectTrusted: false }),
+    );
+    expect(after).toBeUndefined();
+  });
+});
+
+test("memory_recall does not route around the injection's trust gate", async () => {
+  await withConfig({}, async () => {
+    const project = mkdtempSync(join(tmpdir(), "pi-memory-recall-trust-"));
+    plantProjectMemory(project, "repo-planted", "instructions from the repository");
+    const api = await loadExtension("memory");
+
+    const out = (await api.tools.get("memory_recall")!.execute(
+      "1",
+      { name: "repo-planted" } as never,
+      undefined,
+      undefined,
+      fakeCtx({ cwd: project, isProjectTrusted: false }),
+    )) as { content: Array<{ text: string }> };
+    expect(out.content[0]!.text).toBe("(no matching memories)");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The index is bounded.
+//
+// It is the one string present in literally every request, and it used to be an
+// unbounded map over the whole store.
+// ---------------------------------------------------------------------------
+
+test("the injected index is capped, and says how many it left out", async () => {
+  await withConfig({ indexLimit: 2 }, async () => {
+    const project = mkdtempSync(join(tmpdir(), "pi-memory-cap-"));
+    for (const n of ["one", "two", "three", "four"]) plantProjectMemory(project, n, `desc ${n}`);
+
+    const api = await loadExtension("memory");
+    const result = (await api.fire(
+      "context",
+      { messages: [{ role: "user", content: "hi" }] },
+      fakeCtx({ cwd: project }),
+    )) as { messages: Array<{ content: string }> };
+
+    const block = result.messages[0]!.content;
+    expect(block.match(/^- /gm)).toHaveLength(2);
+    // Silently short would read as "that is all I remember".
+    expect(block).toContain("2 more not listed");
+    expect(block).toContain("searches all 4");
   });
 });

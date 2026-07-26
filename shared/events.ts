@@ -58,8 +58,18 @@ export interface EventPayloads {
   "verify:passed": { cmd: string; cwd: string };
   "verify:failed": { cmd: string; failures: string[]; cwd: string };
 
-  "git:checkpoint": { ref: string; reason: string };
-  "git:rollback": { ref: string; reason: string };
+  /**
+   * File state recorded against a session entry. `files` is how many paths it covered.
+   *
+   * These two declared `{ ref, reason }` until the `Emitter` type below was introduced,
+   * while pi-git had been emitting `entryId` and a count since the store stopped being
+   * git-backed and `ref` stopped existing. Nothing caught it: this map's own doc comment
+   * promised the compiler would, and the compiler was never given the chance, because
+   * every extension emitted through `(event: string, data: unknown)`. A subscriber
+   * written against the declaration would have read `data.ref` and got `undefined`.
+   */
+  "git:checkpoint": { entryId: string; files: number; reason: string };
+  "git:rollback": { entryId: string; written: number; removed: number; reason: string };
 
   "todo:updated": { todos: TodoItem[] };
   "todo:task-complete": { task: string };
@@ -71,12 +81,35 @@ export interface EventPayloads {
   "memory:wrote": { keys: string[] };
   "memory:recalled": { keys: string[] };
 
-  "spawn:started": { agent: string };
-  "spawn:finished": { agent: string; summary?: string };
+  /**
+   * A delegation is about to run in its own `pi` process.
+   *
+   * `cwd` is the project the subagent will work in — the self-contained rule again, and
+   * here it is load-bearing rather than defensive: pi-git subscribes to this to record
+   * the working set *before* edits it will never see through `tool_call` land on disk,
+   * and a bus callback gets no `ExtensionContext` to resolve a directory from.
+   */
+  "spawn:started": { agent: string; cwd: string };
+  "spawn:finished": { agent: string; cwd: string; summary?: string };
 }
 
 /** Every valid event name. */
 export type EventName = keyof EventPayloads;
+
+/**
+ * How an extension emits. **Use this type for every `emit` dependency.**
+ *
+ * The map above has always said a mismatch between emitter and subscriber "is caught by
+ * the compiler rather than at runtime". That was not true: `pi.events.emit` takes
+ * `(string, unknown)`, and every extension declared its own `emit` dep the same way, so
+ * the map was documentation that merely resembled a type. `git:checkpoint` drifted
+ * behind it — declared `{ ref }`, emitting `{ entryId, files }` — and stayed wrong
+ * across the rewrite that removed `ref`.
+ *
+ * Binding the name to its payload makes the claim real: an unknown event name and a
+ * payload of the wrong shape are both compile errors at the call site.
+ */
+export type Emitter = <E extends EventName>(event: E, data: EventPayloads[E]) => void;
 
 /**
  * Event-name constants, grouped by domain. Reference these instead of typing

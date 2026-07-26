@@ -415,3 +415,92 @@ test("a malformed todo:updated payload does not break the subscriber", async () 
     expect(ctx.uiCalls.widgets.at(-1)!.lines!.join(" ")).not.toContain("todos");
   });
 });
+
+// ---------------------------------------------------------------------------
+// verify:passed — evidence about the objective, never a decision about it.
+// ---------------------------------------------------------------------------
+
+test("a passing verify shows in the widget and is named in the reminder", async () => {
+  await withConfig({}, async () => {
+    const api = await loadExtension("goal");
+    const ctx = fakeCtx({});
+    await api.tools.get("goal_set")!.execute(
+      "1",
+      { objective: "ship the auth refactor", criteria: "tokens rotate cleanly" } as never,
+      undefined,
+      undefined,
+      ctx,
+    );
+
+    api.emitBus("verify:passed", { cmd: "bun test", cwd: process.cwd() });
+    await api.fire("turn_end", {}, ctx);
+    expect(ctx.uiCalls.widgets.at(-1)!.lines!.join(" ")).toContain("verify ✓");
+
+    await api.fire("agent_settled", {}, ctx);
+    const sent = api.messages.at(-1)!.message as { content: string };
+    expect(sent.content).toContain("`bun test` passed");
+    // Evidence, put as a question. Whether passing checks satisfy *this* objective is a
+    // judgement about intent, and it stays the agent's to make via goal_set.
+    expect(sent.content).toContain("does that satisfy the criteria?");
+  });
+});
+
+test("the objective is never auto-marked met by a passing verify", async () => {
+  await withConfig({}, async () => {
+    const api = await loadExtension("goal");
+    const ctx = fakeCtx({});
+    await api.tools.get("goal_set")!.execute(
+      "1",
+      { objective: "ship the auth refactor" } as never,
+      undefined,
+      undefined,
+      ctx,
+    );
+    api.emitBus("verify:passed", { cmd: "bun test", cwd: process.cwd() });
+    await api.fire("agent_settled", {}, ctx);
+    // Still open: the reminder fired at all, and nothing recorded a met goal.
+    expect(api.messages.at(-1)).toBeDefined();
+    const states = api.entries.filter((e) => e.customType === "goal-state");
+    expect((states.at(-1)!.data as { goal: { status: string } }).goal.status).toBe("active");
+  });
+});
+
+test("a passing verify does not carry over to a new objective", async () => {
+  // A green run from before the goal changed must not vouch for work that has not
+  // happened yet.
+  await withConfig({}, async () => {
+    const api = await loadExtension("goal");
+    const ctx = fakeCtx({});
+    const set = (objective: string) =>
+      api.tools.get("goal_set")!.execute("1", { objective } as never, undefined, undefined, ctx);
+
+    await set("first objective");
+    api.emitBus("verify:passed", { cmd: "bun test", cwd: process.cwd() });
+    await set("a different objective");
+    await api.fire("turn_end", {}, ctx);
+    expect(ctx.uiCalls.widgets.at(-1)!.lines!.join(" ")).not.toContain("verify ✓");
+  });
+});
+
+test("a passing verify cannot rearm the nudge quota", async () => {
+  // pi-goal's settle signature is its own state and nothing else. If a peer's signal
+  // could refill the quota, installing pi-lens would silently change whether pi-goal's
+  // `block` mode terminates — an optional enhancement must not do that.
+  await withConfig({ mode: "block", maxNudges: 1 }, async () => {
+    const api = await loadExtension("goal");
+    const ctx = fakeCtx({});
+    await api.tools.get("goal_set")!.execute(
+      "1",
+      { objective: "ship it" } as never,
+      undefined,
+      undefined,
+      ctx,
+    );
+    await api.fire("agent_settled", {}, ctx);
+    const afterFirst = api.messages.length;
+
+    api.emitBus("verify:passed", { cmd: "bun test", cwd: process.cwd() });
+    await api.fire("agent_settled", {}, ctx);
+    expect(api.messages.length).toBe(afterFirst);
+  });
+});

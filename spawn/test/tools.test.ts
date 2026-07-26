@@ -239,3 +239,35 @@ test("a long transcript is truncated, keeping the tail", async () => {
   expect(textOf(result)).toContain("truncated");
   expect(result.details.results[0]!.output.split("\n").length).toBeGreaterThan(4000);
 });
+
+test("the tool hands each job the session cwd, and announces it on the bus", async () => {
+  // Two halves of the same defect. `runAgent` never received a cwd, so subagents ran in
+  // the extension host's directory; and `spawn:started` never carried one, so pi-git —
+  // which gets `data` and nothing else on a bus callback — could not guard the right
+  // project even once it subscribed.
+  const seen: string[] = [];
+  const events: Array<{ event: string; data: unknown }> = [];
+  const deps = baseDeps({
+    discoverAgents: () => AGENTS,
+    emit: (event, data) => events.push({ event, data }),
+    runOne: async (i) => {
+      seen.push(i.cwd);
+      return ok(i.agentDef.name);
+    },
+  });
+  const ctx = {
+    sessionManager: { getCwd: () => "/tmp/pi-spawn-session-cwd" },
+  } as unknown as ExtensionContext;
+  await buildSpawnTool(deps).execute(
+    "id",
+    { tasks: [{ agent: "scout", task: "t" }, { agent: "builder", task: "u" }] },
+    undefined,
+    undefined,
+    ctx,
+  );
+
+  expect(seen).toEqual(["/tmp/pi-spawn-session-cwd", "/tmp/pi-spawn-session-cwd"]);
+  for (const e of events) {
+    expect((e.data as { cwd?: string }).cwd).toBe("/tmp/pi-spawn-session-cwd");
+  }
+});

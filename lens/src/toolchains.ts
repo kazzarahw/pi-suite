@@ -116,6 +116,8 @@ export async function runFormatter(
   path: string,
   spec: FormatterSpec,
   exec: ExecFn,
+  /** The project root. A formatter resolves its config (.prettierrc, rustfmt.toml, …) from here. */
+  cwd: string,
   signal?: AbortSignal,
 ): Promise<{ changed: boolean }> {
   let before: string;
@@ -127,7 +129,7 @@ export async function runFormatter(
   const [cmd, ...args] = spec.cmd(path);
   if (!cmd) return { changed: false };
   try {
-    const { code } = await exec(cmd, args, { signal });
+    const { code } = await exec(cmd, args, { cwd, signal });
     if (code !== 0) return { changed: false };
   } catch {
     return { changed: false };

@@ -1,6 +1,6 @@
 import { injectionBlock } from "../../shared/index.ts";
 import type { Goal, GoalStatus } from "./state.ts";
-import type { TodoProgress } from "./progress.ts";
+import type { TodoProgress, VerifyState } from "./progress.ts";
 
 const MARKERS: Record<GoalStatus, string> = {
   active: "▸",
@@ -16,15 +16,20 @@ const truncate = (s: string, n: number): string => (s.length > n ? `${s.slice(0,
 export interface Context {
   turns: number;
   progress: TodoProgress | null;
+  /** The last `verify:passed`, when something published one. See progress.ts. */
+  verify: VerifyState | null;
 }
 
-/** `4 turns · 2 of 5 todos done`, or `""` when there is nothing worth saying. */
+/** `4 turns · 2 of 5 todos done · verify ✓`, or `""` when there is nothing worth saying. */
 function annotate(ctx: Context): string {
   const parts: string[] = [];
   // Zero turns is not "just set" — it is also what a restore reports, since the counter
   // is in memory and does not survive a fork. Saying nothing is honest; "0 turns" is not.
   if (ctx.turns > 0) parts.push(`${ctx.turns} turn${ctx.turns === 1 ? "" : "s"}`);
   if (ctx.progress) parts.push(`${ctx.progress.done} of ${ctx.progress.total} todos done`);
+  // The command is not named here; the widget is a glance, and `verify ✓` is the whole
+  // signal. The reminder below names it, where the agent may need to act on it.
+  if (ctx.verify) parts.push("verify ✓");
   return parts.join(" · ");
 }
 

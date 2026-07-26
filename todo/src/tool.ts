@@ -1,6 +1,6 @@
 import { Type, type Static } from "typebox";
 import { StringEnum } from "@earendil-works/pi-ai";
-import { TODO_STATUSES, type TodoItem } from "../../shared/index.ts";
+import { TODO_STATUSES, type TodoItem, type Emitter } from "../../shared/index.ts";
 import type { AgentToolResult, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { applyWrite, type TodoInput } from "./state.ts";
 import { renderTodos } from "./render.ts";
@@ -28,7 +28,7 @@ type TodoWriteParams = Static<typeof parameters>;
 export interface TodoDeps {
   getState: () => TodoItem[];
   setState: (todos: TodoItem[]) => void;
-  emit: (event: string, data: unknown) => void;
+  emit: Emitter;
   persist: (todos: TodoItem[]) => void;
 }
 

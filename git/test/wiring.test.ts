@@ -15,6 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadExtension, fakeCtx, type FakeApi, type FakeCtxOverrides } from "../../shared/test/harness.ts";
 import { saveConfig, DEFAULTS, type GitConfig } from "../src/config.ts";
+import { CHECKPOINT_LABEL } from "../index.ts";
 
 /**
  * pi-git's wiring: four hooks turning Pi's session tree into file undo/redo.
@@ -96,7 +97,7 @@ test("/pi-git exposes configuration verbs only — no checkpoint, restore, or ro
     expect(words).not.toContain(action);
   }
   // Every offered word is a config field's verb or one of its values — nothing else.
-  const allowed = new Set(["mode", "detect", "ttl", "off", "notify", "block"]);
+  const allowed = new Set(["mode", "detect", "guard", "ttl", "off", "notify", "block"]);
   expect(words.filter((w) => !allowed.has(w))).toEqual([]);
 });
 
@@ -544,5 +545,111 @@ test("mode:off skips the sweep entirely", async () => {
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The delegation guard, end to end.
+//
+// The one gap a hook could not close: a subagent edits from its own `pi` process, so
+// `tool_call` never fires for it here. A file that was clean when the delegation began
+// therefore had no origin recorded and survived a rewind untouched — the least
+// supervised edits in the suite were the only ones pi-git could not undo.
+// ---------------------------------------------------------------------------
+
+test("a rewind past a delegation restores a file the subagent edited", async () => {
+  await withConfig({}, async () => {
+    const api = await loadExtension("git");
+    const cwd = mkdtempSync(join(tmpdir(), "pi-git-delegated-"));
+    execFileSync("git", ["init", "-q"], { cwd });
+    const file = join(cwd, "touched-by-subagent.ts");
+    writeFileSync(file, "original\n", "utf8");
+    execFileSync("git", ["add", "-A"], { cwd });
+    execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "init"], { cwd });
+
+    // A turn happens, and *nothing in it touches this file* — which is exactly the case
+    // that used to be lost: it is clean, so it is in no manifest and has no origin.
+    await turn(api, "e1", cwd, []);
+
+    // pi-spawn announces a delegation. pi-git records the working set from the payload's
+    // cwd, because a bus callback is handed `data` and nothing else.
+    api.emitBus("spawn:started", { agent: "worker", cwd });
+    // The guard is detached so it never sits on pi-spawn's critical path.
+    await new Promise((r) => setTimeout(r, 250));
+
+    // The subagent edits in its own process: no tool_call reaches this extension.
+    writeFileSync(file, "rewritten by the subagent\n", "utf8");
+
+    await api.fire(
+      "session_tree",
+      { newLeafId: "e1" },
+      fakeCtx({ cwd, leafEntry: userEntry("e1"), entries: { e1: { id: "e1", parentId: null } } }),
+    );
+    expect(readFileSync(file, "utf8")).toBe("original\n");
+  });
+});
+
+test("the delegation guard honors its config flag and mode:off", async () => {
+  for (const cfg of [{ guardDelegated: false }, { mode: "off" as const }]) {
+    await withConfig(cfg, async () => {
+      const api = await loadExtension("git");
+      const cwd = mkdtempSync(join(tmpdir(), "pi-git-guard-off-"));
+      execFileSync("git", ["init", "-q"], { cwd });
+      const file = join(cwd, "f.ts");
+      writeFileSync(file, "original\n", "utf8");
+      execFileSync("git", ["add", "-A"], { cwd });
+      execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "i"], { cwd });
+
+      await turn(api, "e1", cwd, []);
+      api.emitBus("spawn:started", { agent: "worker", cwd });
+      await new Promise((r) => setTimeout(r, 150));
+      writeFileSync(file, "changed\n", "utf8");
+
+      await api.fire(
+        "session_tree",
+        { newLeafId: "e1" },
+        fakeCtx({ cwd, leafEntry: userEntry("e1"), entries: { e1: { id: "e1", parentId: null } } }),
+      );
+      expect(readFileSync(file, "utf8")).toBe("changed\n");
+    });
+  }
+});
+
+test("a spawn:started with no cwd guards nothing rather than guessing one", async () => {
+  await withConfig({}, async () => {
+    const api = await loadExtension("git");
+    const cwd = mkdtempSync(join(tmpdir(), "pi-git-nocwd-"));
+    await turn(api, "e1", cwd, []);
+    // Must not throw, and must not fall back to process.cwd() — guarding the wrong
+    // repository reports coverage it does not have.
+    expect(() => api.emitBus("spawn:started", { agent: "worker" })).not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// /tree labels — the affordance, not just the apology.
+// ---------------------------------------------------------------------------
+
+test("a checkpointed entry is labelled so /tree shows what will restore", async () => {
+  await withConfig({}, async () => {
+    const api = await loadExtension("git");
+    const cwd = mkdtempSync(join(tmpdir(), "pi-git-label-"));
+    await turn(api, "e1", cwd, [{ path: join(cwd, "a.ts"), content: "x" }]);
+    expect(api.labels.map((l) => l.entryId)).toContain("e1");
+    expect(api.labels[0]!.label).toBe(CHECKPOINT_LABEL);
+  });
+});
+
+test("a label the user set themselves is never overwritten", async () => {
+  // Labels are a user feature — bookmarks they wrote. Replacing "before the auth
+  // refactor" with a marker would be throwing away the note, not adding to it.
+  await withConfig({}, async () => {
+    const api = await loadExtension("git");
+    const cwd = mkdtempSync(join(tmpdir(), "pi-git-label-keep-"));
+    const ctx = fakeCtx({ cwd, leafEntry: userEntry("e1") });
+    (ctx.sessionManager as unknown as { getLabel: (id: string) => string }).getLabel = () =>
+      "before the auth refactor";
+    await api.fire("message_start", { message: { role: "assistant" } }, ctx);
+    expect(api.labels).toEqual([]);
   });
 });
