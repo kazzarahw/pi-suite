@@ -1,6 +1,6 @@
 # `shared/` — the suite's internal library
 
-Everything the seven extensions agree on. Read this to **write or replace an
+Everything the extensions agree on. Read this to **write or replace an
 extension**; the enforceable parts of it are pinned by `test/contract.test.ts` and
 `test/boundaries.test.ts`, so this document describes the rules rather than being their
 source of truth.
@@ -20,6 +20,7 @@ each other. Both are enforced by `test/boundaries.test.ts`.
 | Module | Contents |
 |---|---|
 | `mode.ts` | the universal `off \| notify \| block` enforcement dial |
+| `nudge.ts` | the settle-time nudge decision, and the no-progress guard for `block` |
 | `events.ts` | the `domain:event` vocabulary and payload types |
 | `surface.ts` | the agent-surface SSOT — one entry per extension |
 | `tags.ts` | the `<pi-*>` context-injection format |

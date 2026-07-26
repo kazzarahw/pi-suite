@@ -132,9 +132,9 @@ test("every emitted event name is declared in EVENTS", () => {
 });
 
 test("EVENTS declares one event per emitting domain, and the vocabulary does not shrink", () => {
-  // 13 today: consult 1, lens 2, verify 2, git 2, todo 2, memory 2, spawn 2.
-  expect(EVENT_NAMES.size).toBeGreaterThanOrEqual(13);
-  for (const domain of ["consult", "lens", "verify", "git", "todo", "memory", "spawn"]) {
+  // 15 today: consult 1, lens 2, verify 2, git 2, todo 2, goal 2, memory 2, spawn 2.
+  expect(EVENT_NAMES.size).toBeGreaterThanOrEqual(15);
+  for (const domain of ["consult", "lens", "verify", "git", "todo", "goal", "memory", "spawn"]) {
     expect([...EVENT_NAMES].some((e) => e.startsWith(`${domain}:`))).toBe(true);
   }
 });

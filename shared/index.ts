@@ -15,6 +15,9 @@
 export type { Mode } from "./mode.ts";
 export { MODES, DEFAULT_MODE } from "./mode.ts";
 
+export type { NudgeAction, NudgeGuard } from "./nudge.ts";
+export { nudgeAction, createNudgeGuard } from "./nudge.ts";
+
 export type {
   Diagnostic,
   TodoStatus,

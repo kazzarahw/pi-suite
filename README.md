@@ -1,6 +1,6 @@
 # pi-suite
 
-A small, self-consistent, **agent-facing** extension suite for [Pi](https://pi.dev) — seven extensions built to cooperate *natively*, not seven third-party extensions that happen to share a namespace. One repo, one package, one install.
+A small, self-consistent, **agent-facing** extension suite for [Pi](https://pi.dev) — extensions built to cooperate *natively*, not a handful of third-party extensions that happen to share a namespace. One repo, one package, one install.
 
 ## The suite
 
@@ -8,13 +8,14 @@ A small, self-consistent, **agent-facing** extension suite for [Pi](https://pi.d
 |---|---|---|
 | [`consult/`](./consult) | A second opinion — runs `claude --model` for read-only advice | `consult` |
 | [`git/`](./git) | Automatic file checkpoints; moving through the session tree moves your files with it, forward and back. Works outside a git repository, and across nested ones | *none — pure hooks* |
+| [`goal/`](./goal) | The session's north-star: one objective, kept in context every turn so long work does not drift | `goal_set` |
 | [`lens/`](./lens) | Real-time LSP + linter diagnostics (multi-language) injected after edits, opt-in auto-format, and an automatic test/verify pass | `lens` *(action enum)* |
 | [`memory/`](./memory) | Persistent write-back memory: record durable learnings, recall them across sessions | `memory_recall`, `memory_write` |
 | [`spawn/`](./spawn) | Delegate tasks to isolated subagents, one or many in parallel | `spawn` |
 | [`todo/`](./todo) | The agent's task list, rendered as a live widget | `todo_write` |
 | [`browser/`](./browser) | The web in one tool (wrapping `agent-browser`): search, fetch/read, snapshot with `@ref`s, click/type | `browser` *(action enum)* |
 
-**Seven tools total** — a deliberately tight agent surface. The rules that keep it small are in [`shared/README.md`](./shared/README.md): automatic behavior is a hook rather than a tool; many variant actions collapse behind one `action`-enum tool; and read paths are covered by tool-result echoes and context injection instead of extra read tools.
+**Eight tools across eight extensions** — a deliberately tight agent surface, and one that grows slower than the suite does. The rules that keep it small are in [`shared/README.md`](./shared/README.md): automatic behavior is a hook rather than a tool; many variant actions collapse behind one `action`-enum tool; and read paths are covered by tool-result echoes and context injection instead of extra read tools.
 
 Each extension is a **peer**, not a component: any one can be disabled, replaced, or prototyped against without touching the others. The only coupling permitted is `shared/` and the `pi.events` bus — never a direct import between extensions.
 
@@ -24,7 +25,7 @@ Each extension is a **peer**, not a component: any one can be disabled, replaced
 pi install git:github.com/kazzarahw/pi-suite
 ```
 
-That installs all seven. Use `pi config` to enable or disable individual extensions, or narrow them in `settings.json` with package filtering.
+That installs all of them. Use `pi config` to enable or disable individual extensions, or narrow them in `settings.json` with package filtering.
 
 To **drop or replace one in the repo**, edit `SURFACE` in [`shared/surface.ts`](./shared/surface.ts); `package.json`'s `pi.extensions` is derived from it and checked against it. Nothing else needs touching — no test asserts a particular extension count, so the suite stays green with any subset.
 
@@ -32,7 +33,7 @@ To **drop or replace one in the repo**, edit `SURFACE` in [`shared/surface.ts`](
 
 ```
 pi-suite/
-├── package.json          # ONE pi manifest listing all 7 entry points
+├── package.json          # ONE pi manifest listing every entry point
 ├── shared/               # the internal library (see below) + its README
 ├── <name>/               # one dir per extension: index.ts, src/, test/, README.md
 ├── test/                 # repo-wide guards: contract + boundaries
@@ -51,11 +52,12 @@ An **internal module**, imported by relative path — not a package and not a de
 | Module | Contents |
 |---|---|
 | `mode.ts` | the universal `off \| notify \| block` enforcement dial |
+| `nudge.ts` | the settle-time nudge decision, and the no-progress guard for `block` |
 | `events.ts` | the `domain:event` vocabulary and payload types |
 | `tags.ts` | the `<pi-*>` context-injection format |
 | `surface.ts` | the agent-surface SSOT — one entry per extension |
 | `config.ts` | config mechanism; each extension keeps its own validation |
-| `fields.ts` | config field validators, so seven `parse`s agree on what's valid |
+| `fields.ts` | config field validators, so every `parse` agrees on what's valid |
 | `settings-panel.ts` | the shared `/pi-<name>` settings panel |
 | `exec.ts` | the subprocess runner — always resolves, never rejects |
 | `cwd.ts` | `cwdOf(ctx)` — the only permitted working-directory resolution |
@@ -72,7 +74,7 @@ Full contract and the rules for writing an extension: [`shared/README.md`](./sha
 
 ### Load order
 
-Fixed by `SURFACE`, which `package.json` mirrors: `memory, todo, git, consult, spawn, browser, lens`. It is significant — `tool_result` handlers chain as middleware in load order, so the extension that augments other extensions' output must come last. pi-lens declares this with `wrapsToolResult: true` rather than the ordering being folklore, and `test/contract.test.ts` enforces it for whichever extension declares it.
+Fixed by `SURFACE`, which `package.json` mirrors: `memory, todo, goal, git, consult, spawn, browser, lens`. It is significant — `tool_result` handlers chain as middleware in load order, so the extension that augments other extensions' output must come last. pi-lens declares this with `wrapsToolResult: true` rather than the ordering being folklore, and `test/contract.test.ts` enforces it for whichever extension declares it.
 
 ## Development
 
@@ -80,7 +82,7 @@ Fixed by `SURFACE`, which `package.json` mirrors: `memory, todo, git, consult, s
 bun install
 bun test                    # unit, wiring, contract, and boundary tests + the coverage floor
 bunx tsc --noEmit
-./scripts/smoke-install.sh  # clean clone + npm install --omit=dev + load all seven
+./scripts/smoke-install.sh  # clean clone + npm install --omit=dev + load every extension
 ```
 
 CI runs all of these on every push. `bun test` enforces a **per-file** coverage floor
@@ -92,7 +94,7 @@ because an average hides one untested file behind a hundred tested ones.
 Four test layers exist because of specific failures, not as ceremony:
 
 - **Wiring tests** (`<name>/test/wiring.test.ts`) exercise each `index.ts` — hooks, guards, cwd resolution. This layer had no coverage originally, and it is where several defects lived. It pins the `!ctx.hasUI` guard in particular: injecting a message with no interactive UI makes Pi wait forever for a prompt that never arrives.
-- **Contract tests** (`test/contract.test.ts`) assert the live registry matches `shared/surface.ts`, that every emitted event exists in `EVENTS`, and that each extension's own README documents the tools it registers. Docs are checked against the code, never the reverse — earlier versions claimed a wrong tool count and a capability that was dead code.
+- **Contract tests** (`test/contract.test.ts`) assert the live registry matches `shared/surface.ts`, that every emitted event exists in `EVENTS`, and that each extension's own README documents the tools it registers. Docs are checked against the code, never the reverse — earlier versions claimed a wrong tool count and a capability that was dead code. Note that the prose counts on this page are *not* checked, which is exactly why nothing in the code depends on them.
 - **Install smoke test** (`scripts/smoke-install.sh`) reproduces a real install and asserts every declared extension loads. This is the test that would have caught the packaging break that prompted the consolidation.
 - **Structural guards** (`test/boundaries.test.ts`) are source scans, each with a case proving it can fail: no cross-extension imports, no `process.cwd()` outside `shared/cwd.ts`, no second copy of a shared helper, no module unreachable from its `index.ts`, no duplicate imports, and the standard directory shape. Every one of them exists because the thing it forbids already happened once.
 

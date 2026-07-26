@@ -9,7 +9,7 @@
 # that failed to load with "Cannot find package 'pi-shared'".
 #
 # This reproduces a real install exactly — clean clone, production-only deps — and then
-# asserts all seven extensions load and register their tools.
+# asserts every extension in SURFACE loads and registers its tools.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -29,7 +29,7 @@ if [ -d node_modules/pi-shared ]; then
   exit 1
 fi
 
-echo "==> loading all seven extensions"
+echo "==> loading every extension"
 # MUST run the CLONE's copy, from inside the clone. Running $REPO_ROOT's copy would
 # resolve its relative imports against the full dev tree — the clone would never be
 # exercised and the test would pass unconditionally. (It did, until this was fixed.)

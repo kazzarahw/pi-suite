@@ -5,6 +5,7 @@ import { SURFACE } from "../shared/index.ts";
 
 import { FIELDS as GIT_FIELDS } from "../git/src/command.ts";
 import { FIELDS as TODO_FIELDS } from "../todo/src/command.ts";
+import { FIELDS as GOAL_FIELDS } from "../goal/src/command.ts";
 import { FIELDS as LENS_FIELDS } from "../lens/src/command.ts";
 import { FIELDS as MEMORY_FIELDS } from "../memory/src/command.ts";
 import { FIELDS as SPAWN_FIELDS } from "../spawn/src/command.ts";
@@ -13,6 +14,7 @@ import { fieldsFor as CONSULT_FIELDS } from "../consult/src/command.ts";
 
 import { DEFAULTS as GIT_DEFAULTS } from "../git/src/config.ts";
 import { DEFAULTS as TODO_DEFAULTS } from "../todo/src/config.ts";
+import { DEFAULTS as GOAL_DEFAULTS } from "../goal/src/config.ts";
 import { DEFAULTS as LENS_DEFAULTS } from "../lens/src/config.ts";
 import { DEFAULTS as MEMORY_DEFAULTS } from "../memory/src/config.ts";
 import { DEFAULTS as SPAWN_DEFAULTS } from "../spawn/src/config.ts";
@@ -33,6 +35,7 @@ import { DEFAULTS as CONSULT_DEFAULTS } from "../consult/src/config.ts";
 const TABLES: Array<{ dir: string; fields: ReadonlyArray<{ key: string }>; defaults: any }> = [
   { dir: "git", fields: GIT_FIELDS, defaults: GIT_DEFAULTS },
   { dir: "todo", fields: TODO_FIELDS, defaults: TODO_DEFAULTS },
+  { dir: "goal", fields: GOAL_FIELDS, defaults: GOAL_DEFAULTS },
   { dir: "lens", fields: LENS_FIELDS, defaults: LENS_DEFAULTS },
   { dir: "memory", fields: MEMORY_FIELDS, defaults: MEMORY_DEFAULTS },
   { dir: "spawn", fields: SPAWN_FIELDS, defaults: SPAWN_DEFAULTS },
@@ -143,9 +146,20 @@ for (const ext of SURFACE) {
 }
 
 /**
+ * The tests below name specific commands, because what they assert is a property of one
+ * command's shape rather than of every command. Naming is fine; *assuming present* is
+ * not — disabling an extension must not turn a claim about it into a crash. So the lists
+ * are filtered against `SURFACE`, and an absent extension simply has nothing asserted
+ * about it. (`SURFACE.find(...)!` on a name that has been removed is a TypeError thrown
+ * at collection time, which takes the whole file down rather than one test.)
+ */
+const present = (dirs: readonly string[]): string[] =>
+  dirs.filter((d) => SURFACE.some((e) => e.dir === d));
+
+/**
  * A command with no bare-value field has no other reading for a lone word, so it says so.
  */
-for (const dir of ["lens", "memory", "spawn", "browser"]) {
+for (const dir of present(["lens", "memory", "spawn", "browser"])) {
   const command = SURFACE.find((e) => e.dir === dir)!.command;
   test(`[${dir}] /${command} names an unknown verb as such`, async () => {
     const api = await loadExtension(dir);
@@ -159,7 +173,7 @@ for (const dir of ["lens", "memory", "spawn", "browser"]) {
  * A command whose bare-value field is an enum reads a lone word as that field's value,
  * and rejects one that is not a member — `/pi-git notify` is the whole point of the form.
  */
-for (const dir of ["git", "todo"]) {
+for (const dir of present(["git", "todo", "goal"])) {
   const command = SURFACE.find((e) => e.dir === dir)!.command;
   test(`[${dir}] /${command} reads a lone word as the mode and rejects a bad one`, async () => {
     const api = await loadExtension(dir);
@@ -174,7 +188,7 @@ for (const dir of ["git", "todo"]) {
  * configured `allowedModels` drive completions but were never enforced. Accepting an
  * unfamiliar name is the documented behaviour, not a missing check.
  */
-test("[consult] /pi-consult accepts any lone word as a model name", async () => {
+test.if(present(["consult"]).length > 0)("[consult] /pi-consult accepts any lone word as a model name", async () => {
   const api = await loadExtension("consult");
   const rec = recordingCtx("print");
   await api.commands.get("pi-consult")!.handler("some-new-model", rec.ctx);

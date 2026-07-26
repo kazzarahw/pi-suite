@@ -7,12 +7,13 @@
  * that was wrong and a capability that was unreachable. Prose cannot be a contract;
  * this can.
  *
- * Seven tools today, deliberately few. The rules that keep it small: automatic behavior
- * is a hook, not a tool (pi-git registers none); many variant actions collapse behind
- * one `action`-enum tool (`browser`, `lens`); and read paths are covered by tool-result
- * echoes and context injection rather than extra read tools (pi-todo, pi-memory).
+ * Deliberately few tools. The rules that keep it small: automatic behavior is a hook,
+ * not a tool (pi-git registers none); many variant actions collapse behind one
+ * `action`-enum tool (`browser`, `lens`); and read paths are covered by tool-result
+ * echoes and context injection rather than extra read tools (pi-todo, pi-memory,
+ * pi-goal).
  *
- * **Seven is not a property of the suite.** Extensions are peers: any one can be
+ * **The count is not a property of the suite.** Extensions are peers: any one can be
  * disabled, replaced, or prototyped against by editing this list and `package.json`
  * together. Nothing here or in the tests may assume a particular count — see
  * `test/contract.test.ts`, which asserts properties that hold for any subset.
@@ -51,6 +52,7 @@ export interface ExtensionSurface {
 export const SURFACE: readonly ExtensionSurface[] = [
   { dir: "memory", command: "pi-memory", tools: ["memory_recall", "memory_write"] },
   { dir: "todo", command: "pi-todo", tools: ["todo_write"] },
+  { dir: "goal", command: "pi-goal", tools: ["goal_set"] },
   { dir: "git", command: "pi-git", tools: [] },
   { dir: "consult", command: "pi-consult", tools: ["consult"] },
   { dir: "spawn", command: "pi-spawn", tools: ["spawn"] },

@@ -64,6 +64,10 @@ export interface EventPayloads {
   "todo:updated": { todos: TodoItem[] };
   "todo:task-complete": { task: string };
 
+  /** The session's overarching objective, as stated or restated (pi-goal). */
+  "goal:set": { objective: string; criteria?: string };
+  "goal:met": { objective: string };
+
   "memory:wrote": { keys: string[] };
   "memory:recalled": { keys: string[] };
 
@@ -84,6 +88,7 @@ export const EVENTS = {
   verify: { passed: "verify:passed", failed: "verify:failed" },
   git: { checkpoint: "git:checkpoint", rollback: "git:rollback" },
   todo: { updated: "todo:updated", taskComplete: "todo:task-complete" },
+  goal: { set: "goal:set", met: "goal:met" },
   memory: { wrote: "memory:wrote", recalled: "memory:recalled" },
   spawn: { started: "spawn:started", finished: "spawn:finished" },
 } as const satisfies Record<string, Record<string, EventName>>;

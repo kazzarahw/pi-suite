@@ -1,8 +1,8 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { TodoItem } from "../shared/index.ts";
+import { createNudgeGuard, nudgeAction, type TodoItem } from "../shared/index.ts";
 import { loadConfig, saveConfig } from "./src/config.ts";
 import { renderTodos, formatInjection } from "./src/render.ts";
-import { pendingReminder, nudgeAction } from "./src/nudge.ts";
+import { pendingReminder } from "./src/nudge.ts";
 import { appendState, restoreState } from "./src/persist.ts";
 import { buildTodoTool } from "./src/tool.ts";
 import { buildTodoCommand } from "./src/command.ts";
@@ -56,26 +56,17 @@ export default function piTodo(pi: ExtensionAPI): void {
 
   // Nudge on settle: notify = passive reminder next turn; block = auto-continue
   // (guarded so it can't loop forever without progress).
-  let lastNudgeSig = "";
-  let noProgressNudges = 0;
+  const guard = createNudgeGuard();
   pi.on("agent_settled", async (_event, ctx) => {
     const reminder = pendingReminder(todos);
     const action = nudgeAction(loadConfig().mode, ctx.hasUI, reminder !== null);
     if (action === "none" || reminder === null) {
-      lastNudgeSig = "";
-      noProgressNudges = 0;
+      guard.reset();
       return;
     }
     if (action === "continue") {
       // block mode: auto-continue, guarded so it can't loop without progress.
-      const sig = JSON.stringify(todos);
-      if (sig === lastNudgeSig) {
-        noProgressNudges += 1;
-        if (noProgressNudges >= 2) return;
-      } else {
-        noProgressNudges = 0;
-      }
-      lastNudgeSig = sig;
+      if (!guard.allow(JSON.stringify(todos), 2)) return;
       pi.sendMessage(
         { customType: "pi-todo", content: reminder, display: true },
         { deliverAs: "followUp", triggerTurn: true },

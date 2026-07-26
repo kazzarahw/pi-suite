@@ -9,6 +9,7 @@
     "extensions": [
       "./memory/index.ts",
       "./todo/index.ts",
+      "./goal/index.ts",
       "./git/index.ts",
       "./consult/index.ts",
       "./spawn/index.ts",
