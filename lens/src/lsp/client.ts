@@ -86,13 +86,42 @@ function normalizeDiag(uri: string, d: Any): Diagnostic {
   };
 }
 
+/**
+ * Drop markdown code-fence delimiters from hover text, keeping everything they wrap.
+ *
+ * A language server returns `MarkupContent`, i.e. markdown: for a bare signature,
+ * typescript-language-server sends nothing but ```` ```typescript\n…\n``` ````, and for
+ * a documented symbol it sends that plus the JSDoc prose. **Pi prints a tool result's
+ * text verbatim — it does not render markdown** — so every one of those delimiters
+ * reaches the transcript as literal backticks.
+ *
+ * The first attempt at this only unwrapped a *lone* fence, on the theory that a fence
+ * separating code from prose was doing real work. Looking at the rendered transcript
+ * disproved it: with nothing rendering the markdown, the fence separates nothing and a
+ * blank line does the job. So all of them go, and the content and its order survive.
+ */
+export function stripCodeFences(text: string): string {
+  return text
+    .split("\n")
+    .filter((l) => !/^\s*```[A-Za-z0-9_+-]*\s*$/.test(l))
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 function extractHover(result: Any): string | null {
   const c = result?.contents;
   if (!c) return null;
-  if (typeof c === "string") return c.trim() || null;
-  if (Array.isArray(c)) return c.map((x) => (typeof x === "string" ? x : (x?.value ?? ""))).join("\n").trim() || null;
-  if (typeof c.value === "string") return c.value.trim() || null;
-  return null;
+  const raw =
+    typeof c === "string"
+      ? c
+      : Array.isArray(c)
+        ? c.map((x) => (typeof x === "string" ? x : (x?.value ?? ""))).join("\n")
+        : typeof c.value === "string"
+          ? c.value
+          : null;
+  if (raw === null) return null;
+  return stripCodeFences(raw.trim()) || null;
 }
 
 function toLocations(result: Any): Location[] {

@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { createLspClient, LspUnavailableError } from "../src/lsp/client.ts";
+import { createLspClient, LspUnavailableError, stripCodeFences } from "../src/lsp/client.ts";
 import { within } from "../../shared/test/harness.ts";
 import { deadline } from "../../shared/index.ts";
 import { encodeMessage, decodeMessages } from "../src/lsp/framing.ts";
@@ -180,4 +180,35 @@ test("a wedged server does not look like an empty result", async () => {
   const client = createLspClient(io, { requestTimeoutMs: 20 });
   const out = await within(2000, client.references("file:///a.ts", { line: 1, col: 1 }).catch((e: unknown) => e));
   expect(Array.isArray(out)).toBe(false);
+});
+
+/**
+ * A hover is markdown and Pi prints a tool result's text verbatim, so every fence
+ * delimiter would otherwise reach the transcript as literal backticks.
+ */
+test("a hover that is nothing but a code fence keeps only the code", () => {
+  expect(stripCodeFences("```typescript\nfunction greet(name: string): string\n```")).toBe(
+    "function greet(name: string): string",
+  );
+  expect(stripCodeFences("```\nplain\n```")).toBe("plain");
+  expect(stripCodeFences("```c++\nint x;\n```")).toBe("int x;");
+});
+
+/**
+ * The case that made the rule: with nothing rendering the markdown, a fence between a
+ * signature and its JSDoc separates nothing. The blank line already does that.
+ */
+test("a hover mixing code and prose keeps both, in order, without delimiters", () => {
+  expect(
+    stripCodeFences("```typescript\nfunction greet(n: string): string\n```\n\nGreets somebody."),
+  ).toBe("function greet(n: string): string\n\nGreets somebody.");
+});
+
+test("several fenced blocks all survive as content", () => {
+  expect(stripCodeFences("```ts\na\n```\n```ts\nb\n```")).toBe("a\nb");
+});
+
+test("text with no fence at all is returned untouched", () => {
+  expect(stripCodeFences("just a sentence")).toBe("just a sentence");
+  expect(stripCodeFences("")).toBe("");
 });
