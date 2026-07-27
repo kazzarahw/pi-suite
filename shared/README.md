@@ -54,17 +54,28 @@ The spine. Decide a surface by asking **"who triggers this?"**
 
 If the agent or the harness should trigger it, it is a tool or a hook — *not* a command.
 Nobody runs `/checkpoint`; checkpointing is a pi-git hook. Nobody runs `/recall`; that is
-`memory_recall`. The suite ships exactly one command per extension, `/pi-<name>`, and it
-configures.
+`memory(action: "recall")`. The suite ships exactly one command per extension,
+`/pi-<name>`, and it configures.
 
 ## Tools
 
-- **Naming:** `<domain>_<verb>`, snake_case — `todo_write`, `memory_recall`. A bare verb
-  is allowed when an extension exposes exactly one tool: `consult`, `spawn`.
-- **Dispatch tools:** when a domain has many variant actions over a shared target,
-  expose **one** tool with an `action` enum rather than a tool per action — `browser`
-  wraps ~40 agent-browser verbs, `lens` wraps hover/references/definition/rename. Reach
-  for this whenever a per-action design would mint more than ~3–4 near-identical tools.
+- **Naming:** **one tool per extension, named after the extension.** Extension `X`
+  registers tool `X` and command `/pi-X` — `memory`, `todo`, `goal`, `spawn`, `browser`,
+  `lens`. snake_case if a name ever needs two words. `test/contract.test.ts` fails a
+  second tool name, so growing the surface is an argument you have to win, not a drift.
+
+  This replaced three coexisting shapes — `memory_recall`/`memory_write`, a bare `spawn`,
+  and `browser`/`lens` behind an enum — which between them meant there was no rule to
+  state and nothing to check beyond "is it snake_case".
+- **Dispatch:** a domain with more than one verb takes an `action` enum rather than a
+  second tool — `browser` wraps ~40 agent-browser verbs, `lens` wraps
+  hover/references/definition/rename, `memory` wraps recall/write.
+
+  It is not free. Actions with disjoint parameters force every one of them optional, so
+  the provider stops rejecting a malformed call and the tool has to — see
+  `requireWriteFields` in `memory/src/tools.ts`, which names every missing field at once
+  rather than costing a round-trip each. Pay that where the alternative is several
+  near-identical names; a two-verb domain is already worth it.
 - **Enums:** always `StringEnum` (from `@earendil-works/pi-ai`), never
   `Type.Union([Type.Literal(...)])` — Google-provider compatibility.
 - **Params:** typebox schemas, snake_case, **every param has a `description`**. Reuse

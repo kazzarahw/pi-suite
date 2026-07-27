@@ -157,7 +157,8 @@ test("ExecOptions.cwd is honored, which is why the type requires it", async () =
 
 test("the child's stdin is closed, so a tool that reads it does not wait", async () => {
   // `execFile` opens a pipe and leaves it open. Nothing here wants stdin, but several
-  // tools look for it: `claude` spent three seconds of every consult call waiting.
+  // tools look for it: one CLI the suite shelled out to spent three seconds of every
+  // call waiting.
   const r = await defaultExec("sh", ["-c", "cat; echo done"], { cwd: process.cwd(), timeout: 5_000 });
   expect(r.code).toBe(0);
   expect(r.killed).toBe(false);

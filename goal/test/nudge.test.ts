@@ -12,7 +12,7 @@ test("no reminder without an objective, or once it is met", () => {
 test("the reminder names the objective and how to close it out", () => {
   const msg = goalReminder(active, null, null)!;
   expect(msg).toContain("ship the auth refactor");
-  expect(msg).toContain("goal_set");
+  expect(msg).toContain("goal");
   expect(msg).toContain("met");
 });
 

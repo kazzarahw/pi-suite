@@ -15,7 +15,7 @@ export interface MemoryConfig {
    * Distinct from `recallLimit` because they bound different things: `recallLimit`
    * caps one deliberate lookup, this caps a block that rides on *every* LLM call.
    * 50 names-and-descriptions is a few hundred tokens; the overflow is still
-   * reachable by `memory_recall(query)`, which searches the whole store.
+   * reachable by `memory(action: "recall", query)`, which searches the whole store.
    */
   indexLimit: number;
 }

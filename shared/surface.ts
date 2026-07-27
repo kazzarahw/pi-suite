@@ -50,11 +50,10 @@ export interface ExtensionSurface {
  * silently disagree.
  */
 export const SURFACE: readonly ExtensionSurface[] = [
-  { dir: "memory", command: "pi-memory", tools: ["memory_recall", "memory_write"] },
-  { dir: "todo", command: "pi-todo", tools: ["todo_write"] },
-  { dir: "goal", command: "pi-goal", tools: ["goal_set"] },
+  { dir: "memory", command: "pi-memory", tools: ["memory"] },
+  { dir: "todo", command: "pi-todo", tools: ["todo"] },
+  { dir: "goal", command: "pi-goal", tools: ["goal"] },
   { dir: "git", command: "pi-git", tools: [] },
-  { dir: "consult", command: "pi-consult", tools: ["consult"] },
   { dir: "spawn", command: "pi-spawn", tools: ["spawn"] },
   { dir: "browser", command: "pi-browser", tools: ["browser"] },
   { dir: "lens", command: "pi-lens", tools: ["lens"], wrapsToolResult: true },

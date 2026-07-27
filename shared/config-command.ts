@@ -60,10 +60,14 @@ interface FieldBase<T> {
 /**
  * Preset values offered in the panel and in completions.
  *
- * A thunk when the list comes from config rather than from the code — pi-consult's model
- * presets are its own `allowedModels`, which a user edits in the JSON file. Everything
- * else in the suite reads config per call; capturing these once at extension load would
- * make this one field stale for the rest of the session.
+ * A thunk when the list comes from config rather than from the code — for a field whose
+ * presets are themselves a user-editable config key, capturing them once at extension
+ * load would leave the list stale for the rest of the session, while everything else in
+ * the suite reads config per call.
+ *
+ * Every field in the suite passes a literal array today; the thunk is the seam that lets
+ * one not have to. Kept for the same reason an event with no in-repo subscriber is kept:
+ * it is a working extension point of the shared engine, not unfinished code.
  */
 export type Presets<V> = readonly V[] | (() => readonly V[]);
 
@@ -165,9 +169,9 @@ export function parseValue<T>(field: Field<T>, input: string): { value: unknown 
       // A field with no `display` has no rendering for a blank value, which means blank
       // is not a value it can hold — `/pi-browser binpath` with no argument used to
       // store `""` and leave the config naming a binary that cannot be executed. The
-      // correlation is exact and not a coincidence: the two fields in the suite without
-      // a placeholder (`browser.binPath`, `consult.defaultModel`) are precisely the two
-      // whose `ConfigSpec` reads them with `nonEmptyStr`. Fields that DO have one keep
+      // correlation is exact and not a coincidence: the fields in the suite without a
+      // placeholder (`browser.binPath`) are precisely the ones whose `ConfigSpec` reads
+      // them with `nonEmptyStr`. Fields that DO have one keep
       // accepting `""`, because there it means something — pi-lens's autodetect.
       if (!field.display && input === "") {
         return { error: `${verbOf(field)} needs a value` };
@@ -262,8 +266,8 @@ export function defineConfigCommand<T extends object>(
       getArgumentCompletions: (prefix: string): AutocompleteItem[] | null => {
         const words = [...byVerb.keys(), ...extras.keys()];
         // A bare-value command also completes that field's values: `/pi-todo <TAB>`
-        // should offer off/notify/block, and `/pi-consult s<TAB>` should offer sonnet —
-        // both are things a user types straight after the command name.
+        // should offer off/notify/block, and a string field's presets complete the same
+        // way — both are things a user types straight after the command name.
         if (opts.bareValueField) {
           const field = fields.find((f) => f.key === opts.bareValueField);
           if (field?.kind === "enum") words.push(...field.values);

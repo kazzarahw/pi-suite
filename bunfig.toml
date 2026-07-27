@@ -13,8 +13,8 @@
 # `functions` is lower because the metric is misleading here: three index.ts files sit at
 # 40-50% functions with 100% lines, the "uncovered functions" being the one-line
 # dependency thunks each passes to its builders (`loadConfig: () => loadConfig()`), which
-# only fire when a tool runs — and running pi-browser's or pi-consult's tool means
-# spawning a real `agent-browser` or `claude`.
+# only fire when a tool runs — and running pi-browser's tool means spawning a real
+# `agent-browser`.
 #
 # All three keys must be present. Bun's object form does not default the ones you omit:
 # a partial table fails every run regardless of actual coverage, silently and with the

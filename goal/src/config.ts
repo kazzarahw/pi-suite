@@ -12,7 +12,7 @@ export interface GoalConfig {
    *
    * pi-todo can detect no-progress because its signature is its own work product: the
    * list moves as the work moves. pi-goal's state is a *declaration* that only changes
-   * when the agent calls `goal_set`, so there is nothing here that tracking could
+   * when the agent calls `goal`, so there is nothing here that tracking could
    * honestly measure. A quota is the shape that actually terminates, and saying so is
    * better than a "while unmet" promise the mechanism cannot keep.
    */

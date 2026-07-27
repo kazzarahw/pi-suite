@@ -10,15 +10,19 @@ Memories are markdown files (frontmatter + body) stored **global** (`~/.pi/agent
 
 ## Tools
 
+One `memory` tool, two actions:
+
 ```
-memory_recall({ query? , name? })          // full text by keyword or exact name
-memory_write({ name, description, content, type, scope })
+memory({ action: "recall", query? , name? })   // full text by keyword or exact name
+memory({ action: "write", name, description, content, type, scope })
 ```
 - **`type`** — `user | feedback | project | reference`.
 - **`scope`** — `global` (all projects) or `project` (this repo). A `project` write creates
   `<cwd>/.pi/memory/` inside your repository; the first write that creates it says so, since
   meeting it later as an unexplained untracked directory is not the same as being told.
-- `memory_write` **refuses content containing likely secrets** (API keys, tokens, private keys).
+- `write` **refuses content containing likely secrets** (API keys, tokens, private keys).
+- `write`'s fields are required at call time rather than by the schema — the two actions
+  need disjoint parameters, so a missing one comes back as an error naming all of them.
 
 Emits `memory:wrote { keys }` / `memory:recalled { keys }`.
 
@@ -45,14 +49,14 @@ lookup; `indexLimit` caps a block that rides on **every** LLM call, which is why
 a bound at all — the index used to be an unbounded map over the whole store, so a few
 hundred memories bought a few hundred lines of prompt on every call for the rest of the
 session. When it is capped the block says how many it left out, and
-`memory_recall(query)` still searches all of them.
+`memory(action: "recall", query)` still searches all of them.
 
 ## Project trust
 
 Memories under `<cwd>/.pi/memory` are **repository content**, and the index is prepended
 to every LLM call — so an untrusted project does not get to write the agent's standing
 context. When [`ctx.isProjectTrusted()`](https://pi.dev) is false, the project scope is
-skipped for both the injection and `memory_recall`; global memories are unaffected.
+skipped for both the injection and `recall`; global memories are unaffected.
 
 Pi's own trust model gates the project resources Pi knows about — `.pi/settings.json`,
 `.pi/extensions`, `.pi/skills`, and friends. It has never heard of `.pi/memory`, which

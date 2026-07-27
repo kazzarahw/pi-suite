@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { fakeCtx } from "../../shared/test/harness.ts";
-import { buildGoalTool } from "../src/tool.ts";
+import { buildGoalTool, describeCall } from "../src/tool.ts";
 import type { Goal } from "../src/state.ts";
 
 function harness(initial: Goal | null = null) {
@@ -24,12 +24,12 @@ function harness(initial: Goal | null = null) {
 
 test("the tool is named and described per the suite's contract", () => {
   const { tool } = harness();
-  expect(tool.name).toBe("goal_set");
+  expect(tool.name).toBe("goal");
   expect(tool.description.length).toBeGreaterThan(20);
   expect(tool.promptSnippet).toBeTruthy();
 });
 
-test("goal_set records the objective, persists it, and echoes it", async () => {
+test("goal records the objective, persists it, and echoes it", async () => {
   const h = harness();
   const result = (await h.run({ objective: "ship the auth refactor" })) as {
     content: Array<{ text: string }>;
@@ -42,7 +42,7 @@ test("goal_set records the objective, persists it, and echoes it", async () => {
   expect(result.details.goal.objective).toBe("ship the auth refactor");
 });
 
-test("goal_set paints the widget", async () => {
+test("goal paints the widget", async () => {
   const h = harness();
   const ctx = fakeCtx();
   await h.run({ objective: "ship it" }, ctx);
@@ -93,4 +93,13 @@ test("the tool works without a UI", async () => {
   const h = harness();
   const ctx = fakeCtx({ hasUI: false });
   await expect(h.run({ objective: "ship it" }, ctx)).resolves.toBeDefined();
+});
+
+// The row a user watching actually reads. Pure, so it needs no terminal.
+test("describeCall shows the objective, and marks the call that closes it", () => {
+  expect(describeCall({ objective: "ship the release" } as never)).toBe("ship the release");
+  expect(describeCall({ objective: "  padded  " } as never)).toBe("padded");
+  expect(describeCall({ objective: "ship it", status: "met" } as never)).toBe("ship it (met)");
+  // A blank objective is refused by execute; the row must not invent a target for it.
+  expect(describeCall({ objective: "   " } as never)).toBe("");
 });

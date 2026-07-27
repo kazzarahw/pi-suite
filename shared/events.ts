@@ -50,8 +50,6 @@ export interface TodoItem {
  * happens to ship today.
  */
 export interface EventPayloads {
-  "consult:answered": { model: string; topic: string };
-
   "lens:clean": { file: string };
   "lens:issues": { file: string; diagnostics: Diagnostic[] };
   /** `cwd` is the project the command ran in — see the self-contained rule above. */
@@ -116,7 +114,6 @@ export type Emitter = <E extends EventName>(event: E, data: EventPayloads[E]) =>
  * the string literal so a rename is a single edit and typos are caught.
  */
 export const EVENTS = {
-  consult: { answered: "consult:answered" },
   lens: { clean: "lens:clean", issues: "lens:issues" },
   verify: { passed: "verify:passed", failed: "verify:failed" },
   git: { checkpoint: "git:checkpoint", rollback: "git:rollback" },

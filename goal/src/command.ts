@@ -27,7 +27,7 @@ export function buildGoalCommand(deps: CommandDeps) {
   // Clearing the objective is an action on session state, not a setting — it has no
   // value to display or cycle, so it stays a verb rather than joining the field table.
   // Setting the objective is deliberately *not* here: that is the agent's job, via
-  // `goal_set`. The command configures and overrides; it does not author.
+  // `goal`. The command configures and overrides; it does not author.
   const clear: ExtraVerb = {
     verb: "clear",
     usage: "clear",
@@ -48,7 +48,7 @@ export function buildGoalCommand(deps: CommandDeps) {
 
   return defineConfigCommand("goal", FIELDS, deps, {
     extraVerbs: [clear],
-    subtitle: () => `${describe()} · the agent sets this with goal_set`,
+    subtitle: () => `${describe()} · the agent sets this with goal`,
     readoutExtra: () => `objective: ${describe()}`,
     bareValueField: "mode",
   });

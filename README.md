@@ -6,16 +6,15 @@ A small, self-consistent, **agent-facing** extension suite for [Pi](https://pi.d
 
 | Extension | What it does | Agent tools |
 |---|---|---|
-| [`consult/`](./consult) | A second opinion — runs `claude --model` for read-only advice | `consult` |
 | [`git/`](./git) | Automatic file checkpoints; moving through the session tree moves your files with it, forward and back. Works outside a git repository, and across nested ones | *none — pure hooks* |
-| [`goal/`](./goal) | The session's north-star: one objective, kept in context every turn so long work does not drift | `goal_set` |
+| [`goal/`](./goal) | The session's north-star: one objective, kept in context every turn so long work does not drift | `goal` |
 | [`lens/`](./lens) | Real-time LSP + linter diagnostics (multi-language) injected after edits, opt-in auto-format, and an automatic test/verify pass | `lens` *(action enum)* |
-| [`memory/`](./memory) | Persistent write-back memory: record durable learnings, recall them across sessions | `memory_recall`, `memory_write` |
+| [`memory/`](./memory) | Persistent write-back memory: record durable learnings, recall them across sessions | `memory` *(action enum)* |
 | [`spawn/`](./spawn) | Delegate tasks to isolated subagents, one or many in parallel | `spawn` |
-| [`todo/`](./todo) | The agent's task list, rendered as a live widget | `todo_write` |
+| [`todo/`](./todo) | The agent's task list, rendered as a live widget | `todo` |
 | [`browser/`](./browser) | The web in one tool (wrapping `agent-browser`): search, fetch/read, snapshot with `@ref`s, click/type | `browser` *(action enum)* |
 
-**Eight tools across eight extensions** — a deliberately tight agent surface, and one that grows slower than the suite does. The rules that keep it small are in [`shared/README.md`](./shared/README.md): automatic behavior is a hook rather than a tool; many variant actions collapse behind one `action`-enum tool; and read paths are covered by tool-result echoes and context injection instead of extra read tools.
+**One tool per extension, named after the extension** — `memory`, `todo`, `goal`, `spawn`, `browser`, `lens`, each alongside its `/pi-<name>` command, and pi-git with none at all. That is the whole surface, and it is the rule rather than a coincidence: `test/contract.test.ts` fails an extension that registers a second tool name. The rules that keep it small are in [`shared/README.md`](./shared/README.md): automatic behavior is a hook rather than a tool; a domain with several verbs dispatches on an `action` enum instead of minting a name per verb; and read paths are covered by tool-result echoes and context injection instead of extra read tools.
 
 Each extension is a **peer**, not a component: any one can be disabled, replaced, or prototyped against without touching the others. The only coupling permitted is `shared/` and the `pi.events` bus — never a direct import between extensions.
 
@@ -75,7 +74,7 @@ Full contract and the rules for writing an extension: [`shared/README.md`](./sha
 
 ### Load order
 
-Fixed by `SURFACE`, which `package.json` mirrors: `memory, todo, goal, git, consult, spawn, browser, lens`. It is significant — `tool_result` handlers chain as middleware in load order, so the extension that augments other extensions' output must come last. pi-lens declares this with `wrapsToolResult: true` rather than the ordering being folklore, and `test/contract.test.ts` enforces it for whichever extension declares it.
+Fixed by `SURFACE`, which `package.json` mirrors: `memory, todo, goal, git, spawn, browser, lens`. It is significant — `tool_result` handlers chain as middleware in load order, so the extension that augments other extensions' output must come last. pi-lens declares this with `wrapsToolResult: true` rather than the ordering being folklore, and `test/contract.test.ts` enforces it for whichever extension declares it.
 
 ## Development
 

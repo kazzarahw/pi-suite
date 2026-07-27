@@ -1,10 +1,11 @@
 import { Type, type Static } from "typebox";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { pathToFileURL } from "node:url";
-import type { AgentToolResult, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { AgentToolResult, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import type { LspManager } from "./lsp/manager.ts";
 import { REQUEST_TIMEOUT_MS } from "./lsp/client.ts";
 import { cwdOf, deadline } from "../../shared/index.ts";
+import { renderToolCall } from "../../shared/tool-render.ts";
 import type { Location } from "./diagnostics.ts";
 
 const parameters = Type.Object({
@@ -26,6 +27,16 @@ export interface LensToolDeps {
 
 const fmtLocations = (locs: Location[]): string =>
   locs.length > 0 ? locs.map((l) => `${l.file}:${l.line}:${l.col}`).join("\n") : "(none found)";
+
+/**
+ * The interesting half of a lens call, as one line: `hover src/foo.ts:12:5`.
+ * Pure, so the wording is testable without a terminal.
+ */
+export function describeCall(params: LensParams): string {
+  const at = params.path ? ` ${params.path}:${params.line}:${params.col}` : "";
+  const to = params.action === "rename" && params.new_name ? ` → ${params.new_name}` : "";
+  return `${params.action}${at}${to}`;
+}
 
 export function buildLensTool(deps: LensToolDeps) {
   return {
@@ -83,6 +94,9 @@ export function buildLensTool(deps: LensToolDeps) {
           throw new Error(`[pi-lens] unknown action "${params.action}"`);
       }
       return { content: [{ type: "text", text }], details: { action: params.action } };
+    },
+    renderCall(args: LensParams, theme: Theme, context?: { lastComponent?: unknown }) {
+      return renderToolCall("lens", describeCall(args), theme, context?.lastComponent);
     },
   };
 }

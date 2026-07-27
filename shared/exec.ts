@@ -1,8 +1,8 @@
 /**
  * The suite's single subprocess runner.
  *
- * Collapses what were four near-identical per-extension copies (pi-lens, pi-git,
- * pi-browser, pi-consult). The contract every caller relies on: this **always
+ * Collapses what were four near-identical per-extension copies (pi-lens, pi-git, and
+ * pi-browser among them). The contract every caller relies on: this **always
  * resolves, never rejects** — a missing binary, a non-zero exit, or an aborted
  * signal all come back as a result with a non-zero `code`. Callers therefore
  * never need a try/catch to avoid hanging, which is the property pi-lens's
@@ -19,9 +19,9 @@ export interface ExecOptions {
    * A child spawned without one inherits the extension host's `process.cwd()`, which
    * is not Pi's session cwd. That is the same defect `shared/cwd.ts` exists to prevent,
    * but `test/boundaries.test.ts`'s source scan cannot catch it: inheriting by
-   * *omission* matches no text. Three call sites were in that blind spot — pi-consult
-   * ran `claude -p` against the wrong project's files, pi-spawn's subagents *edited*
-   * the wrong project, and pi-browser wrote screenshots into it.
+   * *omission* matches no text. Three call sites were in that blind spot — pi-spawn's
+   * subagents *edited* the wrong project, pi-browser wrote screenshots into it, and a
+   * since-removed extension ran its CLI against the wrong project's files.
    *
    * Optional-with-a-default would have re-opened the hole, so it is required and the
    * type checker enumerates the call sites. Pass `cwdOf(ctx)`; a caller that genuinely
@@ -113,9 +113,9 @@ export const defaultExec: ExecFn = (cmd, args, opts) =>
     //
     // `execFile` opens a pipe and leaves it open, so a child that reads stdin waits on
     // input that is never coming. Nothing this suite runs wants any — every one of them
-    // takes its input from argv — but several *look*, and the wait is not free: `claude`
-    // spent three seconds of every consult call on "no stdin data received in 3s,
-    // proceeding without it" before doing the work.
+    // takes its input from argv — but several *look*, and the wait is not free: one CLI
+    // the suite used to shell out to spent three seconds of every call on "no stdin data
+    // received in 3s, proceeding without it" before doing the work.
     //
     // Here rather than at a call site because it is a property of the runner's contract:
     // this thing always resolves, and a child blocked on a pipe nobody will write to is
@@ -127,10 +127,12 @@ export const defaultExec: ExecFn = (cmd, args, opts) =>
  * Is `bin` present in any `PATH` directory?
  *
  * Lives beside the runner because it answers the question every caller of it eventually
- * asks — *would this even start?* — and because two extensions now need it. pi-lens
- * probes its toolchain to draw a health line and to skip language servers that are not
- * installed; pi-consult checks for `claude` before spawning it, so a missing CLI reports
- * as a missing CLI rather than as whatever a failed spawn happens to put on stderr.
+ * asks — *would this even start?* — and because it was needed in two places at once.
+ * pi-lens probes its toolchain to draw a health line and to skip language servers that
+ * are not installed; a since-removed extension checked for its CLI before spawning it,
+ * so a missing CLI reported as a missing CLI rather than as whatever a failed spawn
+ * happens to put on stderr. Only pi-lens calls it today, but the home is still where a
+ * second caller belongs — see the boundary guard in `test/boundaries.test.ts`.
  *
  * Unix semantics, and deliberately not an `exec` of `which`: this runs on a settings
  * panel render and once per language server, where spawning a process to ask would cost

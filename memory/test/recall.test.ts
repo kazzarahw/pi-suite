@@ -29,6 +29,21 @@ test("formatIndexInjection is names+descriptions only, wrapped in <pi-memory>", 
 
 test("formatRecall includes full bodies", () => {
   const rec = formatRecall([m("a-fact", "a desc", "the full body")]);
-  expect(rec).toContain("<pi-memory>");
+  expect(rec).toContain("a-fact");
   expect(rec).toContain("the full body");
+});
+
+/**
+ * A tool result is not a context injection.
+ *
+ * The tags mark output the harness pushed in unasked, so the model does not read it as
+ * user text. A recall is a tool result: already attributed, already labelled by Pi with
+ * the tool that produced it. Wrapping it only meant the user read `<pi-memory>` in their
+ * transcript, because Pi's default `renderResult` prints the text verbatim.
+ */
+test("formatRecall is plain text — injection tags are for injections", () => {
+  const rec = formatRecall([m("a-fact", "a desc", "the full body")]);
+  expect(rec).not.toContain("<pi-memory>");
+  expect(rec).not.toContain("</pi-memory>");
+  expect(rec.startsWith("## a-fact")).toBe(true);
 });

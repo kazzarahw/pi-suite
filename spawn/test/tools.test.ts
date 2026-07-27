@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { buildSpawnTool, type SpawnDeps } from "../src/tools.ts";
+import { buildSpawnTool, describeCall, type SpawnDeps } from "../src/tools.ts";
 import type { AgentDef } from "../src/agents.ts";
 import type { SpawnResult } from "../src/runner.ts";
 
@@ -270,4 +270,19 @@ test("the tool hands each job the session cwd, and announces it on the bus", asy
   for (const e of events) {
     expect((e.data as { cwd?: string }).cwd).toBe("/tmp/pi-spawn-session-cwd");
   }
+});
+
+// The row a user watching actually reads. Pure, so it needs no terminal.
+test("describeCall names the agents, collapsing repeats into a count", () => {
+  expect(describeCall({ tasks: [{ agent: "reviewer", task: "t" }] })).toBe("reviewer");
+  expect(
+    describeCall({
+      tasks: [
+        { agent: "scout", task: "t" },
+        { agent: "worker", task: "t" },
+        { agent: "worker", task: "t" },
+      ],
+    }),
+  ).toBe("scout, worker \u00d72");
+  expect(describeCall({ tasks: [] })).toBe("");
 });

@@ -1,12 +1,12 @@
 import { test, expect } from "bun:test";
-import { buildTodoTool } from "../src/tool.ts";
+import { buildTodoTool, describeCall } from "../src/tool.ts";
 import type { TodoItem } from "../../shared/index.ts";
 
 function fakeCtx() {
   return { ui: { setWidget() {} } };
 }
 
-test("todo_write updates state, echoes the list, persists, and emits todo:updated", async () => {
+test("todo updates state, echoes the list, persists, and emits todo:updated", async () => {
   let state: TodoItem[] = [];
   const events: Array<{ event: string; data: unknown }> = [];
   const persisted: TodoItem[][] = [];
@@ -33,7 +33,7 @@ test("todo_write updates state, echoes the list, persists, and emits todo:update
   expect(persisted).toHaveLength(1);
 });
 
-test("todo_write emits todo:task-complete with the content of newly-done items", async () => {
+test("todo emits todo:task-complete with the content of newly-done items", async () => {
   let state: TodoItem[] = [];
   const events: Array<{ event: string; data: unknown }> = [];
   const tool = buildTodoTool({
@@ -51,4 +51,22 @@ test("todo_write emits todo:task-complete with the content of newly-done items",
 
   const completions = events.filter((e) => e.event === "todo:task-complete");
   expect(completions).toEqual([{ event: "todo:task-complete", data: { task: "a" } }]);
+});
+
+// The row a user watching actually reads. Pure, so it needs no terminal.
+test("describeCall summarises the list rather than dumping it", () => {
+  expect(
+    describeCall({
+      todos: [
+        { content: "a", status: "done" },
+        { content: "b", status: "in_progress" },
+        { content: "c", status: "pending" },
+      ],
+    } as never),
+  ).toBe("3 items \u00b7 1 done");
+  expect(describeCall({ todos: [{ content: "solo", status: "pending" }] } as never)).toBe(
+    "1 item \u00b7 0 done",
+  );
+  // The full-list-replace model means an empty array is a real call: it clears the list.
+  expect(describeCall({ todos: [] } as never)).toBe("clear");
 });

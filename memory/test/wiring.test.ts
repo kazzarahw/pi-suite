@@ -1,9 +1,24 @@
 import { test, expect } from "bun:test";
-import { mkdtempSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, existsSync, mkdirSync, writeFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadExtension, fakeCtx } from "../../shared/test/harness.ts";
 import { saveConfig, DEFAULTS, type MemoryConfig } from "../src/config.ts";
+
+/**
+ * The memory files under the directory the test process was launched from.
+ *
+ * The negative control for "the handler wrote where the payload said, and nowhere
+ * else" used to be `existsSync(cwd/.pi/memory) === false`. That holds only until
+ * somebody uses pi-memory's project scope on the pi-suite repo itself, which is
+ * exactly what dogfooding it does — after which the suite's own build failed on a
+ * memory the user had deliberately written. A snapshot compares what the handler
+ * changed instead of assuming the directory is not there.
+ */
+function launchDirMemories(): string[] {
+  const dir = join(process.cwd(), ".pi", "memory");
+  return existsSync(dir) ? readdirSync(dir).sort() : [];
+}
 
 function withConfig<T>(cfg: Partial<MemoryConfig>, fn: (agentDir: string) => Promise<T>): Promise<T> {
   const prev = process.env.PI_CODING_AGENT_DIR;
@@ -16,9 +31,9 @@ function withConfig<T>(cfg: Partial<MemoryConfig>, fn: (agentDir: string) => Pro
   });
 }
 
-test("memory registers both tools and /pi-memory", async () => {
+test("memory registers one memory tool and /pi-memory", async () => {
   const api = await loadExtension("memory");
-  expect([...api.tools.keys()].sort()).toEqual(["memory_recall", "memory_write"]);
+  expect([...api.tools.keys()]).toEqual(["memory"]);
   expect([...api.commands.keys()]).toEqual(["pi-memory"]);
 });
 
@@ -32,9 +47,9 @@ test("context injection prepends the memory index once a memory exists", async (
   await withConfig({}, async () => {
     const api = await loadExtension("memory");
     const ctx = fakeCtx({ cwd: mkdtempSync(join(tmpdir(), "pi-memory-proj-")) });
-    await api.tools.get("memory_write")!.execute(
+    await api.tools.get("memory")!.execute(
       "1",
-      { name: "a-fact", description: "a durable fact", content: "body", type: "project", scope: "global" } as never,
+      { action: "write", name: "a-fact", description: "a durable fact", content: "body", type: "project", scope: "global" } as never,
       undefined,
       undefined,
       ctx,
@@ -55,9 +70,9 @@ test("mode:off suppresses context injection", async () => {
   await withConfig({ mode: "off" }, async () => {
     const api = await loadExtension("memory");
     const ctx = fakeCtx();
-    await api.tools.get("memory_write")!.execute(
+    await api.tools.get("memory")!.execute(
       "1",
-      { name: "b-fact", description: "d", content: "body", type: "project", scope: "global" } as never,
+      { action: "write", name: "b-fact", description: "d", content: "body", type: "project", scope: "global" } as never,
       undefined,
       undefined,
       ctx,
@@ -90,6 +105,7 @@ test("verify:failed auto-captures under the cwd in the payload", async () => {
   await withConfig({ autoCapture: true }, async () => {
     const api = await loadExtension("memory");
     const project = mkdtempSync(join(tmpdir(), "pi-memory-session-"));
+    const before = launchDirMemories();
 
     // No context hook fired first: the payload alone is sufficient.
     api.emitBus("verify:failed", { cmd: "bun test", failures: ["test a failed"], cwd: project });
@@ -98,8 +114,12 @@ test("verify:failed auto-captures under the cwd in the payload", async () => {
     expect(wrote.length).toBe(1);
     expect(JSON.stringify(wrote[0]!.data)).toContain("gotcha-verify-");
     expect(existsSync(join(project, ".pi", "memory"))).toBe(true);
-    // The repo it was launched from must be untouched.
-    expect(existsSync(join(process.cwd(), ".pi", "memory"))).toBe(false);
+    // The repo it was launched from must be untouched. Compared against a snapshot
+    // rather than asserted empty: this repository is also where the suite gets
+    // dogfooded, so `.pi/memory` legitimately exists here as soon as anyone uses
+    // pi-memory's project scope on it. Asserting absence made a user's own memory
+    // fail the build.
+    expect(launchDirMemories()).toEqual(before);
   });
 });
 
@@ -150,9 +170,9 @@ test("/pi-memory delete removes the named memory from the invoking project", asy
     const api = await loadExtension("memory");
     const project = mkdtempSync(join(tmpdir(), "pi-memory-del-"));
     const ctx = fakeCtx({ cwd: project });
-    await api.tools.get("memory_write")!.execute(
+    await api.tools.get("memory")!.execute(
       "1",
-      { name: "doomed", description: "d", content: "body", type: "project", scope: "project" } as never,
+      { action: "write", name: "doomed", description: "d", content: "body", type: "project", scope: "project" } as never,
       undefined,
       undefined,
       ctx,
@@ -182,9 +202,9 @@ test("/pi-memory delete with no name reports usage rather than deleting", async 
     const api = await loadExtension("memory");
     const project = mkdtempSync(join(tmpdir(), "pi-memory-del-bare-"));
     const ctx = fakeCtx({ cwd: project });
-    await api.tools.get("memory_write")!.execute(
+    await api.tools.get("memory")!.execute(
       "1",
-      { name: "keeper", description: "d", content: "body", type: "project", scope: "project" } as never,
+      { action: "write", name: "keeper", description: "d", content: "body", type: "project", scope: "project" } as never,
       undefined,
       undefined,
       ctx,
@@ -272,15 +292,15 @@ test("the trust decision is not cached across contexts", async () => {
   });
 });
 
-test("memory_recall does not route around the injection's trust gate", async () => {
+test("recall does not route around the injection's trust gate", async () => {
   await withConfig({}, async () => {
     const project = mkdtempSync(join(tmpdir(), "pi-memory-recall-trust-"));
     plantProjectMemory(project, "repo-planted", "instructions from the repository");
     const api = await loadExtension("memory");
 
-    const out = (await api.tools.get("memory_recall")!.execute(
+    const out = (await api.tools.get("memory")!.execute(
       "1",
-      { name: "repo-planted" } as never,
+      { action: "recall", name: "repo-planted" } as never,
       undefined,
       undefined,
       fakeCtx({ cwd: project, isProjectTrusted: false }),

@@ -49,7 +49,7 @@ export interface ApplyResult {
  *   keep them; equally, restating an objective to amend its criteria must not quietly
  *   reopen one already met. Both directions matter, so `status` carries the same way
  *   `criteria` does — an earlier version carried only `criteria`, and the asymmetry made
- *   `goal_set({ objective })` on a met goal a silent regression to `active`. Reopening
+ *   `goal({ objective })` on a met goal a silent regression to `active`. Reopening
  *   is still available; it just has to be said, with an explicit `status: "active"`.
  *   Same shape as pi-todo preserving an item's id when it is resent by content.
  * - **`newlyMet` is idempotent against the state it is given.** Restating an already-met

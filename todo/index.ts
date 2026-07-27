@@ -10,7 +10,7 @@ import { buildTodoCommand } from "./src/command.ts";
 /**
  * pi-todo — the agent's task list.
  *
- * Registers `todo_write` (full-list replace, echoes the list), renders a live
+ * Registers `todo` (full-list replace, echoes the list), renders a live
  * widget, re-injects the list on session start / after compaction, nudges on
  * settle per mode, and emits `todo:updated` / `todo:task-complete`.
  */

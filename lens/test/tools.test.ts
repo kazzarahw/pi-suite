@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { buildLensTool } from "../src/tools.ts";
+import { buildLensTool, describeCall } from "../src/tools.ts";
 import { LspUnavailableError, type LspClient } from "../src/lsp/client.ts";
 import type { LspManager } from "../src/lsp/manager.ts";
 
@@ -117,4 +117,18 @@ test("the tool resolves cwd from the context, not from process.cwd()", async () 
   const ctx = { sessionManager: { getCwd: () => "/tmp/session-root" } } as unknown as ExtensionContext;
   await tool.execute("id", { action: "hover", path: "/a.ts", line: 1, col: 1 }, undefined, undefined, ctx);
   expect(seenCwd).toBe("/tmp/session-root");
+});
+
+// The row a user watching actually reads. Pure, so it needs no terminal.
+test("describeCall names the action and the position it is asking about", () => {
+  expect(describeCall({ action: "hover", path: "src/foo.ts", line: 12, col: 5 } as never)).toBe(
+    "hover src/foo.ts:12:5",
+  );
+  expect(
+    describeCall({ action: "rename", path: "a.ts", line: 1, col: 2, new_name: "next" } as never),
+  ).toBe("rename a.ts:1:2 \u2192 next");
+  // A rename with no target name yet (streaming args) must not render a dangling arrow.
+  expect(describeCall({ action: "rename", path: "a.ts", line: 1, col: 2 } as never)).toBe(
+    "rename a.ts:1:2",
+  );
 });

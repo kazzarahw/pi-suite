@@ -1,7 +1,8 @@
 import { Type, type Static } from "typebox";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { TODO_STATUSES, type TodoItem, type Emitter } from "../../shared/index.ts";
-import type { AgentToolResult, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { AgentToolResult, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
+import { renderToolCall } from "../../shared/tool-render.ts";
 import { applyWrite, type TodoInput } from "./state.ts";
 import { renderTodos } from "./render.ts";
 
@@ -32,11 +33,22 @@ export interface TodoDeps {
   persist: (todos: TodoItem[]) => void;
 }
 
-/** Build the `todo_write` tool: full-list replace, echoes the list, emits events. */
+/**
+ * The interesting half of a todo call, as one line: `3 items · 1 done`.
+ * Pure, so the wording is testable without a terminal.
+ */
+export function describeCall(params: TodoWriteParams): string {
+  const items = params.todos ?? [];
+  if (items.length === 0) return "clear";
+  const done = items.filter((t) => t.status === "done").length;
+  return `${items.length} item${items.length === 1 ? "" : "s"} · ${done} done`;
+}
+
+/** Build the `todo` tool: full-list replace, echoes the list, emits events. */
 export function buildTodoTool(deps: TodoDeps) {
   return {
-    name: "todo_write",
-    label: "Todo Write",
+    name: "todo",
+    label: "Todo",
     description:
       "Create or update the task list for the current multi-step work. Send the COMPLETE list every call (it replaces the previous list). Mark an item in_progress when you start it and done when you finish. Returns the updated list.",
     promptSnippet: "Plan and track multi-step work; replace the whole todo list each call.",
@@ -58,6 +70,9 @@ export function buildTodoTool(deps: TodoDeps) {
       ctx?.ui?.setWidget?.("todo", todos.length > 0 ? renderTodos(todos) : undefined);
       const text = todos.length > 0 ? renderTodos(todos).join("\n") : "(todo list cleared)";
       return { content: [{ type: "text", text }], details: { todos } };
+    },
+    renderCall(args: TodoWriteParams, theme: Theme, context?: { lastComponent?: unknown }) {
+      return renderToolCall("todo", describeCall(args), theme, context?.lastComponent);
     },
   };
 }

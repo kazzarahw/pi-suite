@@ -93,12 +93,50 @@ test("the live registry, taken together, is exactly what SURFACE declares", asyn
 // Every tool follows the house naming and description rules (see shared/README.md).
 // ---------------------------------------------------------------------------
 
-test("every tool name is snake_case <domain>_<verb> or a bare verb", async () => {
-  for (const ext of SURFACE) {
+/**
+ * One tool per extension, named after the extension.
+ *
+ * The suite used to mix three naming shapes at once — `memory_recall`/`memory_write`,
+ * a bare `spawn`, and `browser`/`lens` behind an `action` enum — so there was no rule a
+ * user could state, and nothing a test could check beyond "is it snake_case". The rule
+ * now is the whole shape: extension `X` registers tool `X` and command `/pi-X`, and a
+ * domain with more than one verb dispatches on an `action` parameter rather than minting
+ * a second name.
+ *
+ * Stated as a property of each entry, so it holds for any subset of SURFACE — and so
+ * that adding a second tool to an extension has to be a deliberate argument with this
+ * test rather than a quiet drift back to three shapes.
+ */
+for (const ext of SURFACE) {
+  test(`[${ext.dir}] registers at most one tool, named after the extension`, async () => {
     const api = await loadExtension(ext.dir);
-    for (const name of api.tools.keys()) {
-      expect(name).toMatch(/^[a-z]+(_[a-z]+)*$/);
+    const names = [...api.tools.keys()];
+    expect(names.length).toBeLessThanOrEqual(1);
+    for (const name of names) {
+      expect(name).toMatch(/^[a-z]+(_[a-z]+)*$/); // snake_case, still
+      expect(name).toBe(ext.dir);
     }
+  });
+}
+
+/**
+ * A domain with several verbs collapses behind `action`, rather than several tools.
+ *
+ * The counterpart to the rule above: forbidding a second tool name is only coherent if
+ * the multi-verb extensions actually expose their verbs somewhere. Checked from the
+ * schema so a tool that grows a second verb cannot hide it in prose.
+ */
+test("every multi-verb tool exposes its verbs as an `action` enum", async () => {
+  const MULTI_VERB = ["memory", "browser", "lens"];
+  for (const ext of SURFACE) {
+    if (!MULTI_VERB.includes(ext.dir)) continue;
+    const api = await loadExtension(ext.dir);
+    const tool = api.tools.get(ext.dir);
+    if (!tool) continue; // disabled — not this test's business
+    const action = (tool.parameters as { properties?: Record<string, { enum?: string[] }> })
+      .properties?.action;
+    expect(action, `${ext.dir} has no \`action\` parameter`).toBeDefined();
+    expect(action!.enum?.length ?? 0).toBeGreaterThan(1);
   }
 });
 
@@ -251,7 +289,7 @@ test("any extension that wraps tool_result is last in load order", () => {
  */
 test("an extension with a bus subscription loads and works with no publisher present", async () => {
   const api = await loadExtension("memory");
-  expect([...api.tools.keys()].sort()).toEqual(["memory_recall", "memory_write"]);
+  expect([...api.tools.keys()]).toEqual(["memory"]);
   // Subscribed, but nothing has emitted — no throw, and nothing recorded.
   expect(api.emitted).toEqual([]);
 });

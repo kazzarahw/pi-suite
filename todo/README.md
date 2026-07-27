@@ -6,12 +6,12 @@ Part of the [pi-suite](../README.md).
 
 ## What it does
 
-Registers one `todo_write` tool (the Claude-Code full-list-replace model). The list renders as a widget above the editor (`▢` pending, `◐` in progress, `▣` done), is persisted into the session (so it survives `/fork` and compaction), and is re-injected into the agent's context on session start / after compaction. On settle, an optional nudge reminds the agent of open items.
+Registers one `todo` tool (the Claude-Code full-list-replace model). The list renders as a widget above the editor (`▢` pending, `◐` in progress, `▣` done), is persisted into the session (so it survives `/fork` and compaction), and is re-injected into the agent's context on session start / after compaction. On settle, an optional nudge reminds the agent of open items.
 
 ## Tool
 
 ```
-todo_write({ todos: [{ content, status, id? }] })
+todo({ todos: [{ content, status, id? }] })
 ```
 Send the **complete** list every call — it replaces the previous one. `status` is `pending | in_progress | done`. Emits `todo:updated { todos }` and `todo:task-complete { task }` for each item newly marked done.
 

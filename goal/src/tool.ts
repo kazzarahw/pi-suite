@@ -1,9 +1,10 @@
 import { Type, type Static } from "typebox";
 import { StringEnum } from "@earendil-works/pi-ai";
-import type { AgentToolResult, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { AgentToolResult, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { GOAL_STATUSES, applySet, type Goal, type GoalInput } from "./state.ts";
 import { renderGoal, type Context } from "./render.ts";
 import type { Emitter } from "../../shared/index.ts";
+import { renderToolCall } from "../../shared/tool-render.ts";
 
 const parameters = Type.Object({
   objective: Type.String({
@@ -35,11 +36,20 @@ export interface ToolDeps {
   renderContext: () => Context;
 }
 
-/** Build the `goal_set` tool: replaces the objective, echoes it, emits events. */
+/**
+ * The interesting half of a goal call, as one line: the objective itself, which is
+ * the whole point of the call. Pure, so the wording is testable without a terminal.
+ */
+export function describeCall(params: GoalSetParams): string {
+  const objective = params.objective?.trim() ?? "";
+  return params.status === "met" && objective ? `${objective} (met)` : objective;
+}
+
+/** Build the `goal` tool: replaces the objective, echoes it, emits events. */
 export function buildGoalTool(deps: ToolDeps) {
   return {
-    name: "goal_set",
-    label: "Goal Set",
+    name: "goal",
+    label: "Goal",
     description:
       "Record the single overarching objective for this session — the outcome the work is for, one level above the todo list. Call it when the user states what they want, restate it if the objective changes, and call it again with status 'met' once it is achieved. The objective is kept in context for every turn.",
     promptSnippet:
@@ -74,6 +84,9 @@ export function buildGoalTool(deps: ToolDeps) {
       const lines = renderGoal(goal, deps.renderContext());
       ctx?.ui?.setWidget?.("goal", lines);
       return { content: [{ type: "text", text: lines.join("\n") }], details: { goal } };
+    },
+    renderCall(args: GoalSetParams, theme: Theme, context?: { lastComponent?: unknown }) {
+      return renderToolCall("goal", describeCall(args), theme, context?.lastComponent);
     },
   };
 }

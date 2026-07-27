@@ -1,10 +1,11 @@
 import { Type, type Static } from "typebox";
-import type { AgentToolResult, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { AgentToolResult, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import type { AgentDef } from "./agents.ts";
 import { runAgent, type RunAgentInput, type SpawnEvent, type SpawnResult } from "./runner.ts";
 import { runParallel, type Job } from "./pool.ts";
 import { eventToLine } from "./render.ts";
 import { type Emitter, cwdOf, projectTrusted, truncateForAgent } from "../../shared/index.ts";
+import { renderToolCall } from "../../shared/tool-render.ts";
 
 const parameters = Type.Object({
   tasks: Type.Array(
@@ -24,6 +25,20 @@ type SpawnParams = Static<typeof parameters>;
 
 /** Refuse to spawn beyond this nesting depth (fork-bomb guard). */
 const MAX_DEPTH = 2;
+
+/**
+ * The interesting half of a spawn call, as one line: `reviewer`, or
+ * `scout, worker ×2` when several run at once. Pure, so it needs no terminal.
+ */
+export function describeCall(params: SpawnParams): string {
+  const tasks = params.tasks ?? [];
+  if (tasks.length === 0) return "";
+  const counts = new Map<string, number>();
+  for (const t of tasks) counts.set(t.agent, (counts.get(t.agent) ?? 0) + 1);
+  return [...counts]
+    .map(([agent, n]) => (n > 1 ? `${agent} ×${n}` : agent))
+    .join(", ");
+}
 
 export interface SpawnDeps {
   discoverAgents: (cwd: string, includeProject: boolean) => AgentDef[];
@@ -144,6 +159,9 @@ export function buildSpawnTool(deps: SpawnDeps) {
         content: [{ type: "text", text: truncateForAgent(text, { label: "spawn output", keep: "tail" }) }],
         details: { results },
       };
+    },
+    renderCall(args: SpawnParams, theme: Theme, context?: { lastComponent?: unknown }) {
+      return renderToolCall("spawn", describeCall(args), theme, context?.lastComponent);
     },
   };
 }

@@ -42,7 +42,7 @@ export interface VerifyState {
  * it, in the widget and in the settle reminder.
  *
  * It never marks the objective **met**. Whether passing checks satisfy *this* objective
- * is a judgement about intent, which the agent makes with `goal_set({ status: "met" })`.
+ * is a judgement about intent, which the agent makes with `goal({ status: "met" })`.
  * An extension that decided it from a green test run would be answering a different
  * question than the one the goal asked, and closing it on the agent's behalf.
  *

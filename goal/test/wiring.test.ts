@@ -26,7 +26,7 @@ function withConfig<T>(cfg: Partial<GoalConfig>, fn: (api: FakeApi) => Promise<T
 }
 
 const set = (api: FakeApi, params: Record<string, unknown>, ctx = fakeCtx()) =>
-  api.tools.get("goal_set")!.execute("c1", params as never, undefined, undefined, ctx);
+  api.tools.get("goal")!.execute("c1", params as never, undefined, undefined, ctx);
 
 const branchWith = (goal: Goal | null) => [
   { type: "custom", customType: "goal-state", data: { goal } },
@@ -36,9 +36,9 @@ const branchWith = (goal: Goal | null) => [
 // Registration.
 // ---------------------------------------------------------------------------
 
-test("goal registers goal_set and /pi-goal", async () => {
+test("goal registers goal and /pi-goal", async () => {
   const api = await loadExtension("goal");
-  expect([...api.tools.keys()]).toEqual(["goal_set"]);
+  expect([...api.tools.keys()]).toEqual(["goal"]);
   expect([...api.commands.keys()]).toEqual(["pi-goal"]);
 });
 
@@ -238,7 +238,7 @@ test("todo movement does NOT rearm the auto-continue guard", async () => {
 });
 
 // THE termination guard, part two. The auto-continue message asks the agent to call
-// `goal_set` — and carrying omitted fields forward is exactly what makes that restatement
+// `goal` — and carrying omitted fields forward is exactly what makes that restatement
 // byte-identical. An unconditional `guard.reset()` in setState therefore let the nudge
 // rearm the guard that permitted the next nudge, and `block` never terminated. The guard
 // is now never reset on a write at all: `allow()` compares signatures, so an unchanged
@@ -424,7 +424,7 @@ test("a passing verify shows in the widget and is named in the reminder", async 
   await withConfig({}, async () => {
     const api = await loadExtension("goal");
     const ctx = fakeCtx({});
-    await api.tools.get("goal_set")!.execute(
+    await api.tools.get("goal")!.execute(
       "1",
       { objective: "ship the auth refactor", criteria: "tokens rotate cleanly" } as never,
       undefined,
@@ -440,7 +440,7 @@ test("a passing verify shows in the widget and is named in the reminder", async 
     const sent = api.messages.at(-1)!.message as { content: string };
     expect(sent.content).toContain("`bun test` passed");
     // Evidence, put as a question. Whether passing checks satisfy *this* objective is a
-    // judgement about intent, and it stays the agent's to make via goal_set.
+    // judgement about intent, and it stays the agent's to make via goal.
     expect(sent.content).toContain("does that satisfy the criteria?");
   });
 });
@@ -449,7 +449,7 @@ test("the objective is never auto-marked met by a passing verify", async () => {
   await withConfig({}, async () => {
     const api = await loadExtension("goal");
     const ctx = fakeCtx({});
-    await api.tools.get("goal_set")!.execute(
+    await api.tools.get("goal")!.execute(
       "1",
       { objective: "ship the auth refactor" } as never,
       undefined,
@@ -472,7 +472,7 @@ test("a passing verify does not carry over to a new objective", async () => {
     const api = await loadExtension("goal");
     const ctx = fakeCtx({});
     const set = (objective: string) =>
-      api.tools.get("goal_set")!.execute("1", { objective } as never, undefined, undefined, ctx);
+      api.tools.get("goal")!.execute("1", { objective } as never, undefined, undefined, ctx);
 
     await set("first objective");
     api.emitBus("verify:passed", { cmd: "bun test", cwd: process.cwd() });
@@ -489,7 +489,7 @@ test("a passing verify cannot rearm the nudge quota", async () => {
   await withConfig({ mode: "block", maxNudges: 1 }, async () => {
     const api = await loadExtension("goal");
     const ctx = fakeCtx({});
-    await api.tools.get("goal_set")!.execute(
+    await api.tools.get("goal")!.execute(
       "1",
       { objective: "ship it" } as never,
       undefined,

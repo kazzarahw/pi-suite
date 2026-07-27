@@ -1,7 +1,7 @@
 {
   "name": "pi-suite",
   "version": "0.1.0",
-  "description": "A small, self-consistent, agent-facing extension suite for Pi: consult, git, lens, memory, spawn, todo, browser.",
+  "description": "A small, self-consistent, agent-facing extension suite for Pi: browser, git, goal, lens, memory, spawn, todo.",
   "license": "AGPL-3.0",
   "private": true,
   "type": "module",
@@ -11,7 +11,6 @@
       "./todo/index.ts",
       "./goal/index.ts",
       "./git/index.ts",
-      "./consult/index.ts",
       "./spawn/index.ts",
       "./browser/index.ts",
       "./lens/index.ts"

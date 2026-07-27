@@ -37,21 +37,30 @@ export function formatIndexInjection(mems: readonly Memory[], limit: number): st
   if (mems.length === 0) return "";
   const shown = mems.slice(0, limit);
   const omitted = mems.length - shown.length;
-  const header = injectionHeader("memory", "what I remember — call memory_recall(name) for the full text");
+  const header = injectionHeader("memory", 'what I remember — call memory(action: "recall", name) for the full text');
   const lines = shown.map((m) => `- ${m.name} (${m.type}) — ${m.description}`);
   if (omitted > 0) {
     lines.push(
-      `[… ${omitted} more not listed; memory_recall(query) searches all ${mems.length}]`,
+      `[… ${omitted} more not listed; memory(action: "recall", query) searches all ${mems.length}]`,
     );
   }
   // The cap is a count; this is the byte/line backstop for pathological descriptions.
   return injectionBlock("memory", header, truncateForAgent(lines.join("\n"), { label: "memory index" }));
 }
 
-/** Full bodies for a recall. "" when empty. */
+/**
+ * Full bodies for a recall. `""` when empty.
+ *
+ * **Not** wrapped in a `<pi-memory>` block, unlike the index above. The tags exist so
+ * the model can tell harness-injected context from user text — a distinction a *tool
+ * result* does not need, because the model asked for it and Pi labels the row with the
+ * tool that answered. Wrapping it bought nothing and cost the user a screenful of raw
+ * XML in the transcript, since Pi's default `renderResult` prints a result's text
+ * verbatim. Injection tags belong on the `context` hook and on `tool_result`
+ * augmentation of *someone else's* output; not here.
+ */
 export function formatRecall(mems: Memory[]): string {
   if (mems.length === 0) return "";
-  const header = injectionHeader("memory", "recalled");
   const body = mems.map((m) => `## ${m.name}\n${m.body}`).join("\n\n");
-  return injectionBlock("memory", header, truncateForAgent(body, { label: "recalled memories" }));
+  return truncateForAgent(body, { label: "recalled memories" });
 }

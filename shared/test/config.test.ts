@@ -4,7 +4,6 @@ import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
 import { agentDir, configPath, loadConfig, saveConfig, type ConfigSpec } from "../config.ts";
 
-import { SPEC as CONSULT, DEFAULTS as CONSULT_DEFAULTS } from "../../consult/src/config.ts";
 import { SPEC as TODO, DEFAULTS as TODO_DEFAULTS } from "../../todo/src/config.ts";
 import { SPEC as GIT, DEFAULTS as GIT_DEFAULTS } from "../../git/src/config.ts";
 import { SPEC as SPAWN } from "../../spawn/src/config.ts";
@@ -15,7 +14,7 @@ import { SPEC as LENS, DEFAULTS as LENS_DEFAULTS } from "../../lens/src/config.t
 const tmp = (name: string): string => join(mkdtempSync(join(tmpdir(), `pi-suite-cfg-`)), `pi-${name}.json`);
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- the table is heterogeneous by design */
-const SPECS: Array<ConfigSpec<any>> = [CONSULT, TODO, GIT, SPAWN, BROWSER, MEMORY, LENS];
+const SPECS: Array<ConfigSpec<any>> = [TODO, GIT, SPAWN, BROWSER, MEMORY, LENS];
 
 // ---------------------------------------------------------------------------
 // Generic mechanism — every assertion class the seven per-extension suites had,
@@ -78,15 +77,6 @@ test("agentDir falls back to ~/.pi/agent when PI_CODING_AGENT_DIR is unset", () 
 // Each extension keeps its own `parse`, so each keeps its own test.
 // ---------------------------------------------------------------------------
 
-test("[consult] loadConfig backfills missing fields from DEFAULTS", () => {
-  const path = tmp("consult");
-  writeFileSync(path, JSON.stringify({ defaultModel: "haiku" }));
-  expect(loadConfig(CONSULT, path)).toEqual({
-    defaultModel: "haiku",
-    allowedModels: CONSULT_DEFAULTS.allowedModels,
-  });
-});
-
 test("[todo] loadConfig rejects an invalid mode", () => {
   const path = tmp("todo");
   writeFileSync(path, JSON.stringify({ mode: "nope" }));
@@ -130,7 +120,7 @@ test("[lens] loadConfig backfills missing fields and rejects an invalid mode", (
 
 test("SPECS covers every extension that has config", () => {
   expect(SPECS.map((s) => s.name).sort()).toEqual(
-    ["browser", "consult", "git", "lens", "memory", "spawn", "todo"],
+    ["browser", "git", "lens", "memory", "spawn", "todo"],
   );
 });
 

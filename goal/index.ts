@@ -12,7 +12,7 @@ import type { Goal } from "./src/state.ts";
 /**
  * pi-goal — the session's north-star.
  *
- * Registers `goal_set` (one objective, full replace), keeps it in context on every LLM
+ * Registers `goal` (one objective, full replace), keeps it in context on every LLM
  * call so it cannot fall out of the window, renders it as a widget, restores it after a
  * fork or compaction, and in `block` mode auto-continues a bounded number of times. Emits
  * `goal:set` / `goal:met`.
@@ -44,7 +44,7 @@ export default function piGoal(pi: ExtensionAPI): void {
       setState: (g) => {
         // Only a *real* change restarts the age, and nothing here touches the guard.
         //
-        // A `goal_set` that rewrites the objective it already had is a no-op the agent
+        // A `goal` that rewrites the objective it already had is a no-op the agent
         // makes routinely — the nudge below literally asks it to restate the goal, and
         // carrying omitted fields forward is what makes that write byte-identical. An
         // unconditional `guard.reset()` here meant the nudge rearmed the guard that

@@ -29,7 +29,7 @@ test("supplied criteria win over the carried-forward ones", () => {
 
 test("status carries forward too — restating a met objective does not reopen it", () => {
   // The asymmetry this pins: carrying `criteria` but defaulting `status` to "active"
-  // made `goal_set({ objective })` on a met goal a silent regression, re-enabling the
+  // made `goal({ objective })` on a met goal a silent regression, re-enabling the
   // injection and the settle nudges with nothing to signal it.
   const prev: Goal = { objective: "ship it", criteria: "tests pass", status: "met" };
   const { goal, newlyMet } = applySet(prev, { objective: "ship it", criteria: "amended" });

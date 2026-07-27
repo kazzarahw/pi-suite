@@ -3,22 +3,21 @@ import { loadConfig, saveConfig } from "./src/config.ts";
 import { listMemories, deleteMemory, writeMemory, ALL_SCOPES } from "./src/store.ts";
 import { formatIndexInjection } from "./src/recall.ts";
 import { scanSecrets } from "./src/secrets.ts";
-import { buildRecallTool, buildWriteTool } from "./src/tools.ts";
+import { buildMemoryTool } from "./src/tools.ts";
 import { buildMemoryCommand } from "./src/command.ts";
 import { cwdOf, projectTrusted, stableHash, type Emitter } from "../shared/index.ts";
 
 /**
  * pi-memory — persistent, write-back memory.
  *
- * Registers `memory_recall` / `memory_write`, injects the memory *index* into
+ * Registers one `memory` tool (`recall` / `write`), injects the memory *index* into
  * every LLM call (progressive disclosure — bodies load on recall), and can
  * auto-capture a gotcha on `verify:failed`. Emits `memory:wrote` / `memory:recalled`.
  */
 export default function piMemory(pi: ExtensionAPI): void {
   const emit: Emitter = (event, data) => pi.events.emit(event, data);
 
-  pi.registerTool(buildRecallTool({ recallLimit: () => loadConfig().recallLimit, emit }));
-  pi.registerTool(buildWriteTool({ recallLimit: () => loadConfig().recallLimit, emit }));
+  pi.registerTool(buildMemoryTool({ recallLimit: () => loadConfig().recallLimit, emit }));
 
   // Standing context: inject the memory index into each LLM call (ephemeral — the
   // context-injection channel for recall; no queued message, so no print-mode hang).

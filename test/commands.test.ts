@@ -10,7 +10,6 @@ import { FIELDS as LENS_FIELDS } from "../lens/src/command.ts";
 import { FIELDS as MEMORY_FIELDS } from "../memory/src/command.ts";
 import { FIELDS as SPAWN_FIELDS } from "../spawn/src/command.ts";
 import { FIELDS as BROWSER_FIELDS } from "../browser/src/command.ts";
-import { fieldsFor as CONSULT_FIELDS } from "../consult/src/command.ts";
 
 import { DEFAULTS as GIT_DEFAULTS } from "../git/src/config.ts";
 import { DEFAULTS as TODO_DEFAULTS } from "../todo/src/config.ts";
@@ -19,10 +18,9 @@ import { DEFAULTS as LENS_DEFAULTS } from "../lens/src/config.ts";
 import { DEFAULTS as MEMORY_DEFAULTS } from "../memory/src/config.ts";
 import { DEFAULTS as SPAWN_DEFAULTS } from "../spawn/src/config.ts";
 import { DEFAULTS as BROWSER_DEFAULTS } from "../browser/src/config.ts";
-import { DEFAULTS as CONSULT_DEFAULTS } from "../consult/src/config.ts";
 
 /**
- * The seven field tables, checked against the configs they claim to edit.
+ * Every field table, checked against the config it claims to edit.
  *
  * The engine behind them is covered in `shared/test/config-command.test.ts`; what is
  * left per extension is whether its *declaration* is right. A field naming a key its
@@ -40,11 +38,6 @@ const TABLES: Array<{ dir: string; fields: ReadonlyArray<{ key: string }>; defau
   { dir: "memory", fields: MEMORY_FIELDS, defaults: MEMORY_DEFAULTS },
   { dir: "spawn", fields: SPAWN_FIELDS, defaults: SPAWN_DEFAULTS },
   { dir: "browser", fields: BROWSER_FIELDS, defaults: BROWSER_DEFAULTS },
-  {
-    dir: "consult",
-    fields: CONSULT_FIELDS({ loadConfig: () => CONSULT_DEFAULTS }),
-    defaults: CONSULT_DEFAULTS,
-  },
 ];
 
 // A field naming a key its config does not have is already impossible: `Field<T>` types
@@ -62,7 +55,7 @@ for (const { dir, fields } of TABLES) {
  * Fields the panel deliberately does not expose.
  *
  * Not every config key belongs in the UI — some are escape valves for a JSON file rather
- * than knobs, and one is the *source* of another field's presets. Listing them here means
+ * than knobs. Listing them here means
  * a key added later without a field shows up as a failure that has to be answered
  * deliberately, rather than quietly having no way to reach it.
  */
@@ -75,8 +68,6 @@ const INTENTIONALLY_UNEXPOSED: Record<string, string[]> = {
   lens: ["verifyTimeoutMs"],
   // Same, for a delegated job.
   spawn: ["jobTimeoutMs"],
-  // The source of the `defaultModel` presets, not a field of its own.
-  consult: ["allowedModels"],
 };
 
 for (const { dir, fields, defaults } of TABLES) {
@@ -185,14 +176,3 @@ for (const dir of present(["git", "todo", "goal"])) {
   });
 }
 
-/**
- * pi-consult's bare value is free text, because a model alias is not a closed set — the
- * configured `allowedModels` drive completions but were never enforced. Accepting an
- * unfamiliar name is the documented behaviour, not a missing check.
- */
-test.if(present(["consult"]).length > 0)("[consult] /pi-consult accepts any lone word as a model name", async () => {
-  const api = await loadExtension("consult");
-  const rec = recordingCtx("print");
-  await api.commands.get("pi-consult")!.handler("some-new-model", rec.ctx);
-  expect(rec.notices.join("\n")).toContain("some-new-model");
-});

@@ -1,11 +1,11 @@
 import { Type, type Static } from "typebox";
 import { StringEnum } from "@earendil-works/pi-ai";
 import type { AgentToolResult, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
-import { TruncatedText } from "@earendil-works/pi-tui";
 import type { ExecFn } from "../../shared/exec.ts";
 import type { BrowserConfig } from "./config.ts";
 import { runBrowser, type BrowserAction } from "./browser.ts";
 import { cwdOf, truncateForAgent } from "../../shared/index.ts";
+import { renderToolCall } from "../../shared/tool-render.ts";
 
 const ACTIONS = [
   "open", "snapshot", "read", "search", "click", "type", "fill", "press", "hover",
@@ -52,7 +52,8 @@ export interface BrowserToolDeps {
  * one thing a user watching wants to know (what is it doing, and to which page?) was the
  * one thing not on screen, immediately followed by a screenful of page text.
  *
- * Pure, so the wording is testable without a terminal.
+ * Pure, so the wording is testable without a terminal. Every extension has one of these
+ * now; the row itself is composed by `shared/tool-render.ts`.
  */
 export function describeCall(params: BrowserParams): string {
   const detail =
@@ -107,11 +108,8 @@ export function buildBrowserTool(deps: BrowserToolDeps) {
         ctx?.ui?.setStatus?.("browser", undefined);
       }
     },
-    renderCall(args: BrowserParams, theme: Theme) {
-      // TruncatedText, never Text: a custom component that renders wider than the
-      // terminal crashes Pi outright, and a URL is exactly the kind of unbounded string
-      // that does it. See shared/README.md.
-      return new TruncatedText(theme.fg("muted", `browser ${describeCall(args)}`), 1, 0);
+    renderCall(args: BrowserParams, theme: Theme, context?: { lastComponent?: unknown }) {
+      return renderToolCall("browser", describeCall(args), theme, context?.lastComponent);
     },
   };
 }

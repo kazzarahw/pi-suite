@@ -269,13 +269,27 @@ const SINGLE_SOURCE: SingleSource[] = [
     fix: "call agentDir() or projectConfigDir(cwd, …)",
   },
   {
-    // pi-lens owned this one privately, which was fine until pi-consult needed the same
-    // answer before spawning `claude` — and extensions may not import from each other, so
-    // the only options were a shared home or a second copy.
+    // pi-lens owned this one privately, which was fine until a second extension needed
+    // the same answer before spawning its CLI — and extensions may not import from each
+    // other, so the only options were a shared home or a second copy. That extension is
+    // gone and pi-lens is the lone caller again; the rule stays because it is what makes
+    // the next second caller cheap instead of a copy.
     what: "a PATH search for an executable",
     re: /env\.PATH/,
     home: "shared/exec.ts",
     fix: "call whichOnPath()",
+  },
+  {
+    // The inconsistency this rule exists to stop was visible in the product: every
+    // extension but pi-browser took Pi's fallback `renderCall` (the bare tool name), and
+    // pi-browser hand-rolled one that was `muted` where Pi's built-ins are
+    // toolTitle+bold, and padded where the row's Box already pads. Two spellings of the
+    // same row is exactly one more than the suite can have if it is going to read as
+    // part of the harness.
+    what: "a hand-rolled tool-call row",
+    re: /theme\.fg\(\s*"toolTitle"/,
+    home: "shared/tool-render.ts",
+    fix: "call renderToolCall()",
   },
 ];
 
@@ -298,7 +312,8 @@ for (const rule of SINGLE_SOURCE) {
 
 test("the single-source patterns actually match the thing they describe", () => {
   // Guards the guards: a checker that can never fail is not a checker.
-  const [frontmatter, hash, agentDir, pathSearch] = SINGLE_SOURCE as [
+  const [frontmatter, hash, agentDir, pathSearch, toolRow] = SINGLE_SOURCE as [
+    SingleSource,
     SingleSource,
     SingleSource,
     SingleSource,
@@ -308,6 +323,7 @@ test("the single-source patterns actually match the thing they describe", () => 
   expect(hash.re.test("h = (h * 31 + s.charCodeAt(i)) | 0;")).toBe(true);
   expect(agentDir.re.test('return join(homedir(), CONFIG_DIR_NAME, "agent");')).toBe(true);
   expect(pathSearch.re.test('const dirs = (process.env.PATH ?? "").split(delimiter);')).toBe(true);
+  expect(toolRow.re.test('theme.fg("toolTitle", theme.bold(name))')).toBe(true);
   // And that each one's home really does contain it — **as code**, not as prose.
   //
   // The raw-text version of this check was one comment away from vacuous: the rule
@@ -349,8 +365,9 @@ test('a hardcoded ".pi" directory appears nowhere in source', () => {
  * This closes the blind spot in the `process.cwd()` scan above. That scan is textual,
  * and a child spawned with no `cwd` option inherits `process.cwd()` *by omission* —
  * there is no text to find, so the guard that exists precisely to stop this could not
- * see it. Three call sites lived in the gap: pi-consult ran `claude` against the wrong
- * project, pi-browser wrote files into it, and pi-spawn's subagents *edited* it.
+ * see it. Three call sites lived in the gap: pi-browser wrote files into the wrong
+ * project, pi-spawn's subagents *edited* it, and a since-removed extension ran its CLI
+ * against it.
  *
  * `ExecOptions.cwd` being required is the real fix and the compiler enforces it. This
  * covers the modules that legitimately go around `shared/exec.ts` — pi-lens spawns

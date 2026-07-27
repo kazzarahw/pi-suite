@@ -259,8 +259,8 @@ test("a bare-value enum command also completes its values", () => {
 });
 
 test("a bare-value string command completes its presets", () => {
-  // This is how /pi-consult offers its allowedModels; it regressed once when only enum
-  // fields were considered.
+  // A string field's presets reach completions the same way an enum's values do; this
+  // regressed once when only enum fields were considered.
   const h = harness(DEFAULTS, { bareValueField: "cmd" });
   const items = h.command.options.getArgumentCompletions("a") ?? [];
   expect(items.map((i) => i.value)).toContain("a");
