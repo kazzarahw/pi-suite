@@ -75,6 +75,24 @@ export function formatFormatted(path: string, formatter: string): string {
 }
 
 /**
+ * A `<pi-lens>` note that nothing could be checked. Pure.
+ *
+ * Silence is load-bearing: the standing context tells the agent that a tool result with
+ * no diagnostics means the file is clean, which is the whole reason it stops running a
+ * type-checker by hand. A wedged or crashed language server produces the same silence and
+ * would therefore be read as an all-clear — the one reading that turns a broken server
+ * into false confidence. Saying so costs three lines and keeps silence honest.
+ */
+export function formatUnavailable(path: string): string {
+  return injectionBlock(
+    "lens",
+    injectionHeader("lens", `${path} — not checked`),
+    "  ! the language server did not respond; this file was NOT checked.\n" +
+      "  Treat this as unknown, not as clean — verify by hand if it matters.",
+  );
+}
+
+/**
  * The standing note telling the agent pi-lens is running. Pure; `undefined` when off.
  *
  * Without this the agent has no way to know diagnostics arrive on their own. Its only

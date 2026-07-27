@@ -96,10 +96,20 @@ export default function piLens(pi: ExtensionAPI): void {
       signal: ctx?.signal,
     });
 
-    // A language server that never answered has told us nothing. Leave the result alone
-    // and leave the gate where it was: recording "no errors" here would let a verify run
-    // against code nothing had checked.
-    if (gathered.unavailable) return;
+    if (gathered.unavailable) {
+      // A language server that never answered has told us nothing. The gate stays where
+      // it was — recording "no errors" here would let a verify run against code nothing
+      // had checked — and neither `lens:clean` nor `lens:issues` is true, so neither is
+      // emitted.
+      //
+      // The result is still rewritten, which it did not used to be. Returning early threw
+      // away the whole `Gathered`, including a reformat note the formatter had already
+      // earned: it runs before the pull and fails independently of it, so the file could
+      // be rewritten on disk with the agent never told. And since the standing context
+      // now promises that silence means clean, silence on this path would be a lie.
+      ctx?.ui?.setStatus?.("lens", `lens: could not check ${rel.split("/").pop() || rel}`);
+      return composeToolResult(event, feedbackBlocks(rel, gathered));
+    }
 
     gate.noteDiagnostics(gathered.diagnostics, isEdit);
     // Show the user what the agent was just told. The `<pi-lens>` block below goes into

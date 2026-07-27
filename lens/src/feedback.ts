@@ -7,8 +7,15 @@
  * the I/O half takes its dependencies as arguments and the composing half is pure.
  */
 import { runLinters } from "./linters.ts";
+import { whichOnPath } from "./health.ts";
 import { runFormatter, type LanguageToolchain } from "./toolchains.ts";
-import { mergeDiagnostics, formatDiagnostics, formatFormatted, type Diagnostic } from "./diagnostics.ts";
+import {
+  mergeDiagnostics,
+  formatDiagnostics,
+  formatFormatted,
+  formatUnavailable,
+  type Diagnostic,
+} from "./diagnostics.ts";
 import type { ExecFn } from "../../shared/exec.ts";
 import type { LspManager } from "./lsp/manager.ts";
 
@@ -26,6 +33,8 @@ export interface GatherInput {
   manager: LspManager;
   exec: ExecFn;
   signal?: AbortSignal;
+  /** `PATH` probe, injected for tests. Decides whether a linter could have run at all. */
+  which?: (bin: string) => boolean;
 }
 
 export interface Gathered {
@@ -33,9 +42,17 @@ export interface Gathered {
   /** A `<pi-lens>` note that the file was reformatted, or `""`. */
   reformatNote: string;
   /**
-   * True when diagnostics could not be gathered at all — a wedged or crashed language
-   * server. Distinct from an empty list, which means "checked, and clean": reporting the
-   * first as the second would tell the agent its code is fine when nothing looked at it.
+   * True when nothing actually checked this file. Distinct from an empty list, which
+   * means "checked, and clean": reporting the first as the second tells the agent its
+   * code is fine when nothing looked at it.
+   *
+   * Two ways to get here, treated alike because they are indistinguishable downstream:
+   * the language server was reached and misbehaved, or there was never one to reach.
+   * The second is the common case and was the quieter bug — `manager.pull` returns `[]`
+   * for a language whose server is not installed, and its own comment noted that for
+   * diagnostics an unavailable server and a clean file "are the same outcome". They were,
+   * until the standing context began telling the agent that silence means clean. Writing
+   * Go on a machine with no gopls then produced a confident all-clear from nothing.
    */
   unavailable: boolean;
 }
@@ -49,6 +66,7 @@ export interface Gathered {
  */
 export async function gatherFeedback(input: GatherInput): Promise<Gathered> {
   const { file, rel, cwd, toolchain, isEdit, autoFormat, manager, exec, signal } = input;
+  const which = input.which ?? whichOnPath;
 
   let reformatNote = "";
   if (isEdit && autoFormat && toolchain?.formatter) {
@@ -62,9 +80,26 @@ export async function gatherFeedback(input: GatherInput): Promise<Gathered> {
   }
 
   try {
-    const lsp = await manager.pull(file, cwd);
+    // Asked first, and separately from `pull`, because the answer is the difference
+    // between "clean" and "nobody looked". `ready` is memoized per (cwd, command), so the
+    // second resolution inside `pull` is free.
+    const client = await manager.ready(file, cwd, signal).catch(() => null);
+    const lsp = client ? await manager.pull(file, cwd) : [];
+
+    // The same filter `runLinters` applies, plus a PATH probe: a linter that is disabled
+    // for this project, or simply not installed, did not check anything. Mirrored rather
+    // than returned by `runLinters` because that function reports diagnostics only — a
+    // missing binary and a clean file both reach it as an empty list.
+    const linters = (toolchain?.linters ?? []).filter(
+      (spec) => (!spec.enabledFor || spec.enabledFor(cwd)) && which(spec.cmd("x")[0] ?? ""),
+    );
     const lint = toolchain ? await runLinters(file, toolchain.linters, exec, cwd) : [];
-    return { diagnostics: mergeDiagnostics(lsp, lint), reformatNote, unavailable: false };
+
+    return {
+      diagnostics: mergeDiagnostics(lsp, lint),
+      reformatNote,
+      unavailable: client === null && linters.length === 0,
+    };
   } catch {
     return { diagnostics: [], reformatNote, unavailable: true };
   }
@@ -78,7 +113,12 @@ export async function gatherFeedback(input: GatherInput): Promise<Gathered> {
  */
 export function feedbackBlocks(rel: string, gathered: Gathered): string[] {
   const blocks: string[] = [];
-  if (gathered.diagnostics.length > 0) blocks.push(formatDiagnostics(rel, gathered.diagnostics));
+  if (gathered.unavailable) blocks.push(formatUnavailable(rel));
+  else if (gathered.diagnostics.length > 0) blocks.push(formatDiagnostics(rel, gathered.diagnostics));
+  // Outside the branch on purpose. Formatting runs *before* the diagnostics pull and
+  // succeeds or fails independently of it, so a wedged language server does not mean the
+  // file is unchanged — the note used to be dropped along with everything else on that
+  // path, leaving the agent working from a copy the formatter had already rewritten.
   if (gathered.reformatNote) blocks.push(gathered.reformatNote);
   return blocks;
 }

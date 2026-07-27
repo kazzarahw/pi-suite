@@ -24,8 +24,17 @@ const DIAG: Diagnostic = {
 
 const okExec: ExecFn = async () => ({ stdout: "", stderr: "", code: 0, killed: false });
 
-const manager = (pull: () => Promise<Diagnostic[]>): LspManager =>
-  ({ pull, ready: async () => null, shutdownAll: async () => {} }) as unknown as LspManager;
+/**
+ * `hasServer` is what separates "checked, and clean" from "nobody looked": `ready`
+ * returning null is exactly how the real manager reports a language whose server is not
+ * installed, and `pull` answers `[]` in both cases.
+ */
+const manager = (pull: () => Promise<Diagnostic[]>, hasServer = true): LspManager =>
+  ({
+    pull,
+    ready: async () => (hasServer ? ({} as never) : null),
+    shutdownAll: async () => {},
+  }) as unknown as LspManager;
 
 const base = {
   file: "/p/a.ts",
@@ -47,6 +56,43 @@ test("a clean file reports no diagnostics and stays available", async () => {
   const got = await gatherFeedback({ ...base, manager: manager(async () => []) });
   expect(got.diagnostics).toEqual([]);
   expect(got.unavailable).toBe(false);
+});
+
+test("a language with no server installed is unchecked, not clean", async () => {
+  // The quieter half of the same bug. `manager.pull` answers `[]` for a language whose
+  // server is absent, identical to a clean file — harmless until the standing context
+  // began promising the agent that silence means clean. Writing Go on a machine with no
+  // gopls then produced a confident all-clear from nothing having looked.
+  const got = await gatherFeedback({
+    ...base,
+    manager: manager(async () => [], false),
+    which: () => false,
+  });
+  expect(got.unavailable).toBe(true);
+});
+
+test("a linter on PATH counts as coverage even with no language server", async () => {
+  const got = await gatherFeedback({
+    ...base,
+    toolchain: { linters: [{ name: "l", cmd: () => ["shellcheck", "x"], parse: () => [] }] } as never,
+    manager: manager(async () => [], false),
+    which: (bin: string) => bin === "shellcheck",
+  });
+  expect(got.unavailable).toBe(false);
+});
+
+test("a linter that is installed but disabled for this project is not coverage", async () => {
+  // eslint present on PATH with no config for this repo checks nothing, and saying
+  // otherwise would be the same false all-clear by a different route.
+  const got = await gatherFeedback({
+    ...base,
+    toolchain: {
+      linters: [{ name: "l", cmd: () => ["eslint", "x"], parse: () => [], enabledFor: () => false }],
+    } as never,
+    manager: manager(async () => [], false),
+    which: () => true,
+  });
+  expect(got.unavailable).toBe(true);
 });
 
 test("a throwing language server is reported as unavailable, not as clean", async () => {
@@ -119,6 +165,33 @@ test("diagnostics come before the reformat note", () => {
   expect(blocks).toHaveLength(2);
   expect(blocks[0]).toContain("boom");
   expect(blocks[1]).toBe("NOTE");
+});
+
+test("an unchecked file says so, because silence is documented to mean clean", () => {
+  // The standing context tells the agent a result with no diagnostics means the file is
+  // clean — which is why it stops type-checking by hand. A wedged language server
+  // produces identical silence, so on this path silence would read as an all-clear.
+  const blocks = feedbackBlocks("a.ts", gathered({ unavailable: true }));
+  expect(blocks).toHaveLength(1);
+  expect(blocks[0]).toContain("NOT checked");
+  expect(blocks[0]).toContain("not as clean");
+});
+
+test("a reformat note survives a language server that never answered", () => {
+  // Formatting runs before the diagnostics pull and fails independently of it, so an
+  // unavailable server does not mean the file is unchanged. This note used to be dropped
+  // with everything else on that path, leaving the agent holding a copy prettier had
+  // already rewritten.
+  const blocks = feedbackBlocks("a.ts", gathered({ unavailable: true, reformatNote: "NOTE" }));
+  expect(blocks).toEqual([expect.stringContaining("NOT checked"), "NOTE"]);
+});
+
+test("an unchecked file reports no diagnostics it did not gather", () => {
+  // `unavailable` wins over the (necessarily empty) diagnostics list: reporting "0 errors"
+  // beside "not checked" would contradict itself.
+  const blocks = feedbackBlocks("a.ts", gathered({ unavailable: true, diagnostics: [DIAG] }));
+  expect(blocks).toHaveLength(1);
+  expect(blocks[0]).not.toContain("boom");
 });
 
 test("composeToolResult returns undefined when there is nothing to add", () => {
