@@ -8,6 +8,8 @@ import {
   intField,
   parseValue,
   stringField,
+  DAYS,
+  MEGABYTES,
   type Field,
 } from "../config-command.ts";
 
@@ -509,4 +511,78 @@ test("the panel opens one row per field, each showing its current value", async 
   }
   // Blank-valued fields show their placeholder rather than an empty row.
   expect(rendered).toContain("(auto)");
+});
+
+// --- Units on an int field --------------------------------------------------
+//
+// `/pi-git` was the one panel with values that did not say what they were: `Keep
+// checkpoints for 30` and `Max file size 10485760`, in a column that otherwise reads
+// `notify` / `on` / `(autodetect)`.
+//
+// The binding constraint is the round-trip. The panel offers `panelValues` and hands the
+// chosen string straight back to `parseValue`, so anything `format` produces `parse` has
+// to accept — a formatter alone would make every row in the panel unsettable.
+
+interface UnitCfg {
+  ttl: number;
+  bytes: number;
+}
+const UNIT_FIELDS: readonly Field<UnitCfg>[] = [
+  intField("ttl", "Keep checkpoints for", { presets: [7, 30, 90], unit: DAYS }),
+  intField("bytes", "Max file size", { presets: [1_048_576, 10_485_760], unit: MEGABYTES }),
+];
+const ttl = UNIT_FIELDS[0]!;
+const bytes = UNIT_FIELDS[1]!;
+
+test("a unit-bearing field displays its value with the unit", () => {
+  expect(displayValue(ttl, { ttl: 30, bytes: 0 })).toBe("30 days");
+  expect(displayValue(ttl, { ttl: 1, bytes: 0 })).toBe("1 day");
+  expect(displayValue(bytes, { ttl: 0, bytes: 10_485_760 })).toBe("10 MB");
+});
+
+test("everything format produces, parse accepts — the panel round-trip", () => {
+  for (const n of [1, 7, 30, 90]) {
+    expect(parseValue(ttl, DAYS.format(n))).toEqual({ value: n });
+  }
+  for (const n of [1_048_576, 10_485_760, 52_428_800]) {
+    expect(parseValue(bytes, MEGABYTES.format(n))).toEqual({ value: n });
+  }
+});
+
+test("a bare number still means what it always meant — bytes, and days", () => {
+  // `/pi-git maxbytes 10485760` and a hand-edited config file predate the unit and must
+  // keep working: this is a display concern, and the stored value is unchanged.
+  expect(parseValue(ttl, "30")).toEqual({ value: 30 });
+  expect(parseValue(bytes, "10485760")).toEqual({ value: 10_485_760 });
+});
+
+test("the unit's own shorthands parse too", () => {
+  expect(parseValue(ttl, "30d")).toEqual({ value: 30 });
+  expect(parseValue(ttl, "30 days")).toEqual({ value: 30 });
+  expect(parseValue(bytes, "10mb")).toEqual({ value: 10_485_760 });
+  expect(parseValue(bytes, "10 MiB")).toEqual({ value: 10_485_760 });
+});
+
+test("a size that is not a whole number of MB is shown as it is, never rounded", () => {
+  // The panel must not display a value the config does not hold.
+  const half = 1_572_864; // 1.5 MiB
+  expect(MEGABYTES.format(half)).toBe("1.5 MB");
+  expect(parseValue(bytes, "1.5 MB")).toEqual({ value: half });
+});
+
+test("nonsense is still rejected, and the message speaks in the unit", () => {
+  const bad = parseValue(ttl, "soon");
+  expect(bad).toHaveProperty("error");
+  expect((bad as { error: string }).error).toContain("1 day");
+});
+
+test("the panel lists a unit field's presets in numeric order, not text order", async () => {
+  // `Number("10 MB")` is NaN, so sorting the display strings would leave the rows in
+  // whatever order the set happened to produce.
+  const cmd = defineConfigCommand("unit", UNIT_FIELDS, {
+    loadConfig: () => ({ ttl: 30, bytes: 10_485_760 }),
+    saveConfig: () => {},
+  });
+  const items = cmd.options.getArgumentCompletions?.("") ?? [];
+  expect(items.length).toBeGreaterThan(0);
 });

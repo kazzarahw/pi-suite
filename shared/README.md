@@ -85,6 +85,23 @@ Nobody runs `/checkpoint`; checkpointing is a pi-git hook. Nobody runs `/recall`
   tool-result `details`.
 - **Truncate.** Agent-facing output goes through `truncateForAgent`. Pi's docs require
   it, and an untruncated linter run or subagent transcript enters the context whole.
+- **Result text is plain text.** Pi's default `renderResult` prints it **verbatim** — it
+  renders no markdown — so every `##`, every ``` fence, and every `<pi-name>` tag reaches
+  the user's transcript as literal characters. This was found three separate times before
+  it was written down: pi-lens passed a hover's markdown through untouched, pi-memory
+  wrapped a recall in the injection tags and headed each body with `##`, and pi-spawn
+  headed each agent's output the same way. Blank lines separate; nothing else is needed.
+  Injection tags belong on the `context` hook and on `tool_result` augmentation of
+  *someone else's* output, where the model genuinely has to tell them apart from user
+  text — never on your own tool's result, which Pi already labels with the tool that
+  produced it.
+- **Paths in results are relative to the session cwd**, matching what the agent passed in
+  and what it can pass back; a path outside the project stays absolute, which is where
+  the full path is the information. And resolve them against `cwdOf(ctx)` — `pathToFileURL`
+  and friends resolve a bare relative path against the *extension host's* `process.cwd()`,
+  which is the `shared/cwd.ts` defect wearing a different hat, in the same blind spot:
+  resolving by omission matches no text, so the source scan in `test/boundaries.test.ts`
+  cannot see it.
 - **Abort:** thread `ctx.signal` into every async call so Esc cancels cleanly. Where a
   deadline also applies, combine them with `deadline(ms, signal)` rather than threading
   two parameters — a tool that took both once honored neither.

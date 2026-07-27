@@ -58,9 +58,14 @@ export function formatIndexInjection(mems: readonly Memory[], limit: number): st
  * XML in the transcript, since Pi's default `renderResult` prints a result's text
  * verbatim. Injection tags belong on the `context` hook and on `tool_result`
  * augmentation of *someone else's* output; not here.
+ *
+ * The name heads its body as a bare line for the same reason. `## name` was markdown,
+ * and *nothing renders markdown here* — the same verbatim printing that made the tags
+ * visible makes a heading two literal hashes. A blank line already separates one memory
+ * from the next.
  */
 export function formatRecall(mems: Memory[]): string {
   if (mems.length === 0) return "";
-  const body = mems.map((m) => `## ${m.name}\n${m.body}`).join("\n\n");
+  const body = mems.map((m) => `${m.name}\n${m.body}`).join("\n\n");
   return truncateForAgent(body, { label: "recalled memories" });
 }

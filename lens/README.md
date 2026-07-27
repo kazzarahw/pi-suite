@@ -35,6 +35,12 @@ A per-language registry (`ext → { lsp?, linters[], formatter? }`); tools run o
 lens({ action: "hover" | "references" | "definition" | "rename", path, line, col, new_name? })
 ```
 
+`path` is resolved against the **session** cwd, and a path that is not there is an error
+naming it rather than an empty answer — a language server has nothing to say about a file
+it cannot open, and "(no hover info at this position)" is what a real symbol with no docs
+gets. Locations come back relative to the project; anything outside it stays absolute,
+which is exactly where the full path is the information.
+
 ## Configure
 
 `/pi-lens` opens a settings panel (or `mode <m>` / `verify <cmd>` / `autoformat on|off` / `prewarm on|off`). Persisted to `~/.pi/agent/pi-lens.json`:

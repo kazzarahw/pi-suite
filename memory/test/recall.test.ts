@@ -45,5 +45,16 @@ test("formatRecall is plain text — injection tags are for injections", () => {
   const rec = formatRecall([m("a-fact", "a desc", "the full body")]);
   expect(rec).not.toContain("<pi-memory>");
   expect(rec).not.toContain("</pi-memory>");
-  expect(rec.startsWith("## a-fact")).toBe(true);
+  expect(rec.startsWith("a-fact")).toBe(true);
+});
+
+/**
+ * And plain text means markdown too. The same verbatim printing that made `<pi-memory>`
+ * visible makes `## name` two literal hashes; the blank line between memories already
+ * does what the heading was for.
+ */
+test("formatRecall heads each memory with a bare name, not a markdown heading", () => {
+  const rec = formatRecall([m("a-fact", "d", "body one"), m("b-fact", "d", "body two")]);
+  expect(rec).not.toContain("#");
+  expect(rec).toBe("a-fact\nbody one\n\nb-fact\nbody two");
 });

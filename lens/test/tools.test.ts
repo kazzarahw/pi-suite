@@ -4,10 +4,15 @@ import { buildLensTool, describeCall } from "../src/tools.ts";
 import { LspUnavailableError, type LspClient } from "../src/lsp/client.ts";
 import type { LspManager } from "../src/lsp/manager.ts";
 
-/** A lens tool whose manager hands back this (partial) client — or null for "no server". */
+/**
+ * A lens tool whose manager hands back this (partial) client — or null for "no server".
+ *
+ * `exists` is stubbed true because these cases are about what the *server* answers; the
+ * file check has its own tests below.
+ */
 function toolWith(client: Partial<LspClient> | null) {
   const manager = { ready: async () => client } as unknown as LspManager;
-  return buildLensTool({ manager: () => manager });
+  return buildLensTool({ manager: () => manager, exists: () => true });
 }
 type LensTool = ReturnType<typeof buildLensTool>;
 const run = (tool: LensTool, params: Parameters<LensTool["execute"]>[1]) =>
@@ -52,7 +57,7 @@ test("the tool passes its abort signal through to the client", async () => {
       },
     }),
   } as unknown as LspManager;
-  const tool = buildLensTool({ manager: () => manager });
+  const tool = buildLensTool({ manager: () => manager, exists: () => true });
   const ac = new AbortController();
   await tool.execute(
     "id",
@@ -78,7 +83,7 @@ test("the deadline aborts the client's signal even when the caller never cancels
       },
     }),
   } as unknown as LspManager;
-  const tool = buildLensTool({ manager: () => manager, requestTimeoutMs: 20 });
+  const tool = buildLensTool({ manager: () => manager, requestTimeoutMs: 20, exists: () => true });
   await tool.execute("id", { action: "hover", path: "/a.ts", line: 1, col: 1 }, undefined, undefined, {} as unknown as ExtensionContext);
   expect(seen).toBeDefined();
   await new Promise((r) => setTimeout(r, 60));
@@ -95,7 +100,7 @@ test("an unavailable server surfaces as an error, not as an empty result", async
       },
     }),
   } as unknown as LspManager;
-  const tool = buildLensTool({ manager: () => manager });
+  const tool = buildLensTool({ manager: () => manager, exists: () => true });
   const err = await tool
     .execute("id", { action: "references", path: "/a.ts", line: 1, col: 1 }, undefined, undefined, {} as unknown as ExtensionContext)
     .then(() => null)
@@ -113,10 +118,127 @@ test("the tool resolves cwd from the context, not from process.cwd()", async () 
       return { hover: async () => "x" };
     },
   } as unknown as LspManager;
-  const tool = buildLensTool({ manager: () => manager });
+  const tool = buildLensTool({ manager: () => manager, exists: () => true });
   const ctx = { sessionManager: { getCwd: () => "/tmp/session-root" } } as unknown as ExtensionContext;
   await tool.execute("id", { action: "hover", path: "/a.ts", line: 1, col: 1 }, undefined, undefined, ctx);
   expect(seenCwd).toBe("/tmp/session-root");
+});
+
+// --- Which file, and whose cwd --------------------------------------------
+
+/**
+ * THE bug this section exists for.
+ *
+ * `pathToFileURL` resolves a relative path against `process.cwd()` — the extension
+ * host's, not Pi's session cwd. The manager takes `cwd` per call precisely because those
+ * differ, so the server was rooted in the right project while the URI named a file in
+ * the wrong one, and the query came back `(none found)`: not an error, a confident
+ * nothing. Absolute in the assertion because the whole point is that the *session* cwd
+ * decides, and the host's cwd is wherever the test runner happens to be.
+ */
+test("a relative path resolves against the session cwd, not the host's", async () => {
+  let seenUri = "";
+  const manager = {
+    ready: async () => ({
+      hover: async (uri: string) => {
+        seenUri = uri;
+        return "x";
+      },
+    }),
+  } as unknown as LspManager;
+  const tool = buildLensTool({ manager: () => manager, exists: () => true });
+  const ctx = { sessionManager: { getCwd: () => "/tmp/session-root" } } as unknown as ExtensionContext;
+  await tool.execute("id", { action: "hover", path: "src/greet.ts", line: 2, col: 17 }, undefined, undefined, ctx);
+  expect(seenUri).toBe("file:///tmp/session-root/src/greet.ts");
+});
+
+test("the manager is told the resolved path too, so it roots the right server", async () => {
+  let seenPath = "";
+  const manager = {
+    ready: async (path: string) => {
+      seenPath = path;
+      return { hover: async () => "x" };
+    },
+  } as unknown as LspManager;
+  const tool = buildLensTool({ manager: () => manager, exists: () => true });
+  const ctx = { sessionManager: { getCwd: () => "/tmp/session-root" } } as unknown as ExtensionContext;
+  await tool.execute("id", { action: "hover", path: "src/greet.ts", line: 1, col: 1 }, undefined, undefined, ctx);
+  expect(seenPath).toBe("/tmp/session-root/src/greet.ts");
+});
+
+/**
+ * "Nothing checked this" must not arrive as "there is nothing here" — the rule pi-lens
+ * already holds its diagnostics to. A typo'd path used to reach the language server,
+ * which has nothing to say about a file it cannot open, and the answer was the same
+ * placeholder a real symbol with no docs gets.
+ */
+test("a file that is not there says so, rather than reporting no hover info", async () => {
+  const manager = { ready: async () => ({ hover: async () => null }) } as unknown as LspManager;
+  const tool = buildLensTool({ manager: () => manager, exists: () => false });
+  await expect(
+    tool.execute("id", { action: "hover", path: "src/nope.ts", line: 1, col: 1 }, undefined, undefined, {} as unknown as ExtensionContext),
+  ).rejects.toThrow("no such file: src/nope.ts");
+});
+
+test("the missing-file check runs before the server is started", async () => {
+  let started = false;
+  const manager = {
+    ready: async () => {
+      started = true;
+      return { hover: async () => "x" };
+    },
+  } as unknown as LspManager;
+  const tool = buildLensTool({ manager: () => manager, exists: () => false });
+  await expect(
+    tool.execute("id", { action: "hover", path: "gone.ts", line: 1, col: 1 }, undefined, undefined, {} as unknown as ExtensionContext),
+  ).rejects.toThrow("no such file");
+  expect(started).toBe(false);
+});
+
+/**
+ * A language server answers in absolute URIs, so the call row said `src/greet.ts:2:17`
+ * and the result under it repeated the same file as a full path that wrapped. Inside the
+ * project the relative form is shorter and is what `read` takes back.
+ */
+test("locations inside the project render relative to it", async () => {
+  const manager = {
+    ready: async () => ({
+      definition: async () => [{ file: "/tmp/session-root/src/greet.ts", line: 2, col: 17 }],
+    }),
+  } as unknown as LspManager;
+  const tool = buildLensTool({ manager: () => manager, exists: () => true });
+  const ctx = { sessionManager: { getCwd: () => "/tmp/session-root" } } as unknown as ExtensionContext;
+  const r = await tool.execute("id", { action: "definition", path: "src/greet.ts", line: 2, col: 17 }, undefined, undefined, ctx);
+  expect(textOf(r as { content: Array<unknown> })).toBe("src/greet.ts:2:17");
+});
+
+/**
+ * And a location *outside* it stays absolute: a definition that landed in a dependency
+ * or another checkout is exactly where the full path is the information.
+ */
+test("a location outside the project keeps its absolute path", async () => {
+  const manager = {
+    ready: async () => ({
+      definition: async () => [{ file: "/usr/lib/node_modules/x/index.d.ts", line: 9, col: 1 }],
+    }),
+  } as unknown as LspManager;
+  const tool = buildLensTool({ manager: () => manager, exists: () => true });
+  const ctx = { sessionManager: { getCwd: () => "/tmp/session-root" } } as unknown as ExtensionContext;
+  const r = await tool.execute("id", { action: "definition", path: "src/greet.ts", line: 2, col: 17 }, undefined, undefined, ctx);
+  expect(textOf(r as { content: Array<unknown> })).toBe("/usr/lib/node_modules/x/index.d.ts:9:1");
+});
+
+test("a rename summary uses the same project-relative spelling", async () => {
+  const manager = {
+    ready: async () => ({
+      rename: async () => [{ file: "/tmp/session-root/src/greet.ts", edits: [{}, {}] }],
+    }),
+  } as unknown as LspManager;
+  const tool = buildLensTool({ manager: () => manager, exists: () => true });
+  const ctx = { sessionManager: { getCwd: () => "/tmp/session-root" } } as unknown as ExtensionContext;
+  const r = await tool.execute("id", { action: "rename", path: "src/greet.ts", line: 2, col: 17, new_name: "hi" }, undefined, undefined, ctx);
+  expect(textOf(r as { content: Array<unknown> })).toContain("src/greet.ts (2 edit(s))");
+  expect(textOf(r as { content: Array<unknown> })).not.toContain("/tmp/session-root");
 });
 
 // The row a user watching actually reads. Pure, so it needs no terminal.

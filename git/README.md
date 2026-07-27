@@ -40,8 +40,8 @@ Git still has a job, read-only: `git status` enumerates what changed and `git ls
 | `detectDirty` | `true` | also checkpoint what `git status` reports at checkpoint time |
 | `guardOpaqueWrites` | `true` | record the working set before a `bash` command runs — see below |
 | `guardDelegated` | `true` | record the working set before a delegated subagent runs — see below |
-| `checkpointTtlDays` | `30` | how long a session's checkpoints survive; swept on session start |
-| `maxFileBytes` | `10485760` | files larger than this are reported and left out rather than stored |
+| `checkpointTtlDays` | `30` | how long a session's checkpoints survive; swept on session start — the panel reads it as `30 days` |
+| `maxFileBytes` | `10485760` | files larger than this are reported and left out rather than stored — the panel reads and writes it as `10 MB`; the stored value stays bytes |
 | `maxGuardedFiles` | `5000` | cap on either guard's working set; overflow is reported, never silently dropped (JSON file only) |
 
 Does **not** require a git repository.

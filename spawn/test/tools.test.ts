@@ -70,7 +70,10 @@ test("a single task runs solo and returns its output", async () => {
   const deps = baseDeps({ discoverAgents: () => AGENTS, runOne: async (i) => ok(i.agentDef.name) });
   const result = await run(deps, [{ agent: "scout", task: "t" }]);
   expect(result.details.results).toHaveLength(1);
-  expect(textOf(result)).toContain("## scout ✓");
+  // No `##`: Pi prints a result's text verbatim and renders no markdown, so the heading
+  // was two literal hashes in front of the name. The tick already carries the outcome.
+  expect(textOf(result)).toContain("scout ✓");
+  expect(textOf(result)).not.toContain("#");
 });
 
 test("a single task emits started then finished, with a summary", async () => {
@@ -128,7 +131,7 @@ test("a failed job is reported as failed rather than dropped", async () => {
     runOne: async (i) => ({ ...ok(i.agentDef.name), ok: false, output: "" }),
   });
   const result = await run(deps, [{ agent: "scout", task: "t" }]);
-  expect(textOf(result)).toContain("## scout ✗ (failed)");
+  expect(textOf(result)).toContain("scout ✗ (failed)");
   expect(textOf(result)).toContain("(no output)");
 });
 

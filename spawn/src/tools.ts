@@ -152,8 +152,11 @@ export function buildSpawnTool(deps: SpawnDeps) {
         ctx?.ui?.setWidget?.("spawn", undefined);
       }
 
+      // `agent ✓`, not `## agent ✓`. Pi prints a tool result's text verbatim and renders
+      // no markdown, so the heading was two literal hashes in front of the one word
+      // naming who answered; the tick already carries the outcome.
       const text = results
-        .map((r) => `## ${r.agent} ${r.ok ? "✓" : "✗ (failed)"}\n${r.output || "(no output)"}`)
+        .map((r) => `${r.agent} ${r.ok ? "✓" : "✗ (failed)"}\n${r.output || "(no output)"}`)
         .join("\n\n");
       return {
         content: [{ type: "text", text: truncateForAgent(text, { label: "spawn output", keep: "tail" }) }],

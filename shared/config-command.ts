@@ -74,10 +74,36 @@ export type Presets<V> = readonly V[] | (() => readonly V[]);
 const resolvePresets = <V,>(p: Presets<V> | undefined): readonly V[] =>
   typeof p === "function" ? p() : (p ?? []);
 
+/**
+ * How an int field reads, for the fields whose number means nothing on its own.
+ *
+ * `/pi-git` showed `Keep checkpoints for 30` and `Max file size 10485760` — one value
+ * with no unit and one in bytes, in a panel where every other row (`notify`, `on`,
+ * `(autodetect)`) says what it is. A raw byte count is the worst of them: nobody reads
+ * 10485760 as ten megabytes.
+ *
+ * A pair, not a formatter, because the panel round-trips this string: it offers
+ * `panelValues` and hands the chosen one straight back to `parseValue`. Anything
+ * `format` can produce, `parse` must therefore accept. `parse` returning `null` falls
+ * through to the plain-number reading, so `/pi-git ttl 30` keeps working and a config
+ * file edited by hand is untouched — this is a display concern, and the stored value
+ * stays the number it always was.
+ */
+export interface Unit {
+  format(value: number): string;
+  /** The number this display string means, or `null` when it is not one. */
+  parse(input: string): number | null;
+}
+
 export type Field<T> =
   | (FieldBase<T> & { readonly kind: "enum"; readonly values: readonly string[] })
   | (FieldBase<T> & { readonly kind: "bool" })
-  | (FieldBase<T> & { readonly kind: "int"; readonly presets?: Presets<number>; readonly min?: number })
+  | (FieldBase<T> & {
+      readonly kind: "int";
+      readonly presets?: Presets<number>;
+      readonly min?: number;
+      readonly unit?: Unit;
+    })
   | (FieldBase<T> & { readonly kind: "string"; readonly presets?: Presets<string> });
 
 /** A verb that is not a config field — an action, or a field needing bespoke handling. */
@@ -130,6 +156,7 @@ export function displayValue<T>(field: Field<T>, cfg: T): string {
   const raw = cfg[field.key];
   if (field.display && (raw === "" || raw === undefined)) return field.display.placeholder;
   if (field.kind === "bool") return raw ? "on" : "off";
+  if (field.kind === "int" && field.unit && typeof raw === "number") return field.unit.format(raw);
   return String(raw ?? "");
 }
 
@@ -159,11 +186,15 @@ export function parseValue<T>(field: Field<T>, input: string): { value: unknown 
       return { error: `${verbOf(field)} must be on or off (got "${input}")` };
     }
     case "int": {
-      const n = Number(input);
+      // The unit first, so the panel's own `10 MB` parses; a bare number after it, so
+      // the argument form and a hand-edited config keep meaning exactly what they did.
+      const n = field.unit?.parse(input) ?? Number(input);
       const min = field.min ?? 1;
       return Number.isInteger(n) && n >= min
         ? { value: n }
-        : { error: `${verbOf(field)} must be an integer >= ${min} (got "${input}")` };
+        : {
+            error: `${verbOf(field)} must be an integer >= ${field.unit ? field.unit.format(min) : min} (got "${input}")`,
+          };
     }
     case "string":
       // A field with no `display` has no rendering for a blank value, which means blank
@@ -193,7 +224,7 @@ function panelValues<T>(field: Field<T>, cfg: T): string[] {
       presets.push("on", "off");
       break;
     case "int":
-      presets.push(...resolvePresets(field.presets).map(String));
+      presets.push(...resolvePresets(field.presets).map((n) => (field.unit ? field.unit.format(n) : String(n))));
       break;
     case "string":
       presets.push(...resolvePresets(field.presets));
@@ -202,7 +233,11 @@ function panelValues<T>(field: Field<T>, cfg: T): string[] {
   const values = [...new Set([current, ...presets])];
   // Numeric rows read as a jumble unless ordered; everything else keeps declaration
   // order, which is deliberate (modes go off → notify → block, not alphabetically).
-  return field.kind === "int" ? values.sort((a, b) => Number(a) - Number(b)) : values;
+  // Sorted by what the row *means*, not by its text: `Number("10 MB")` is NaN, which
+  // would leave a unit-bearing field in whatever order the set happened to produce.
+  if (field.kind !== "int") return values;
+  const asNumber = (s: string): number => field.unit?.parse(s) ?? Number(s);
+  return values.sort((a, b) => asNumber(a) - asNumber(b));
 }
 
 /** What `pi.registerCommand(name, options)` takes — the shape Pi's registry expects. */
@@ -363,8 +398,42 @@ export const boolField = <T,>(
 export const intField = <T,>(
   key: keyof T & string,
   label: string,
-  extra: Partial<FieldBase<T>> & { presets?: Presets<number>; min?: number } = {},
+  extra: Partial<FieldBase<T>> & { presets?: Presets<number>; min?: number; unit?: Unit } = {},
 ): Field<T> => ({ kind: "int", key, label, ...extra });
+
+/** A count of days: `30 days`, `1 day`. Accepts `30`, `30d`, `30 days`. */
+export const DAYS: Unit = {
+  format: (n) => `${n} day${n === 1 ? "" : "s"}`,
+  parse: (input) => {
+    const m = /^(\d+)\s*(d|days?)?$/i.exec(input.trim());
+    return m ? Number(m[1]) : null;
+  },
+};
+
+/**
+ * A byte count, read and written in MB: `10 MB`.
+ *
+ * Stored as bytes — the config key is `maxFileBytes` and comparing it against a file
+ * size must not go through a display unit. `.5 MB` rather than a rounded `1 MB` for a
+ * value that is not a whole number of them, so the panel can never show a size the
+ * config does not hold.
+ *
+ * A bare number stays bytes, which is what it has always meant in the JSON file and in
+ * `/pi-git maxbytes 10485760`.
+ */
+const MIB = 1_048_576;
+export const MEGABYTES: Unit = {
+  format: (n) => {
+    const mb = n / MIB;
+    return `${Number.isInteger(mb) ? mb : mb.toFixed(1)} MB`;
+  },
+  parse: (input) => {
+    const m = /^([\d.]+)\s*(mb|mib|m)$/i.exec(input.trim());
+    if (!m) return null;
+    const mb = Number(m[1]);
+    return Number.isFinite(mb) ? Math.round(mb * MIB) : null;
+  },
+};
 
 /** `string` field — free text, optionally with presets offered in the panel. */
 export const stringField = <T,>(
