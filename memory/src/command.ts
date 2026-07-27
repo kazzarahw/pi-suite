@@ -22,7 +22,10 @@ export const FIELDS: readonly Field<MemoryConfig>[] = [
   enumField("mode", MODES, "Mode"),
   boolField("autoCapture", "Auto-capture on verify-fail", { verb: "autocapture" }),
   intField("recallLimit", "Recall limit", { verb: "recalllimit", presets: [1, 2, 3, 5, 10] }),
-  intField("indexLimit", "Index limit (injected every call)", {
+  // Kept to the width of its neighbours: `SettingsList` aligns every value against the
+  // longest label, so one parenthetical pushed the whole value column out and the rows
+  // stopped reading as a column at all. What it means belongs in the README, not in a row.
+  intField("indexLimit", "Index limit", {
     verb: "indexlimit",
     presets: [10, 25, 50, 100, 250],
   }),

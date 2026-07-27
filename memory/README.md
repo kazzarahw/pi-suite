@@ -15,7 +15,9 @@ memory_recall({ query? , name? })          // full text by keyword or exact name
 memory_write({ name, description, content, type, scope })
 ```
 - **`type`** — `user | feedback | project | reference`.
-- **`scope`** — `global` (all projects) or `project` (this repo).
+- **`scope`** — `global` (all projects) or `project` (this repo). A `project` write creates
+  `<cwd>/.pi/memory/` inside your repository; the first write that creates it says so, since
+  meeting it later as an unexplained untracked directory is not the same as being told.
 - `memory_write` **refuses content containing likely secrets** (API keys, tokens, private keys).
 
 Emits `memory:wrote { keys }` / `memory:recalled { keys }`.

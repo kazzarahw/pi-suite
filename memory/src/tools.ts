@@ -102,7 +102,17 @@ export function buildWriteTool(deps: MemoryToolDeps) {
         scope: params.scope as Scope,
         body: params.content,
       };
-      writeMemory(mem, cwdOf(ctx));
+      const { createdProjectDir } = writeMemory(mem, cwdOf(ctx));
+      // Said once, on the write that creates the directory. pi-memory putting a `.pi/`
+      // inside the repository is reasonable and is exactly what `project` scope means —
+      // meeting it later as an unexplained untracked directory is not, particularly
+      // beside pi-git's promise that nothing is written into your project.
+      if (createdProjectDir && ctx?.hasUI) {
+        ctx.ui?.notify?.(
+          `[pi-memory] created ${createdProjectDir} for this project's memories — it lives in the repo, so add it to .gitignore if you would rather not commit it.`,
+          "info",
+        );
+      }
       deps.emit("memory:wrote", { keys: [params.name] });
       return {
         content: [{ type: "text", text: `Remembered "${params.name}" (${mem.type}, ${mem.scope}).` }],

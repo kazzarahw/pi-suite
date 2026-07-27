@@ -160,6 +160,20 @@ export function readMemory(name: string, cwd: string, scope: ReadScope): Memory 
   return listMemories(cwd, scope).find((m) => m.name === name) ?? null;
 }
 
+/** What a write did that the caller may need to tell the user about. */
+export interface WriteResult {
+  /**
+   * The project memory directory, when this write is what created it — otherwise `null`.
+   *
+   * A `project`-scope memory lands in `<cwd>/.pi/memory`, which means pi-memory creates a
+   * directory inside the user's repository. It did that silently, and the first anyone
+   * knew of it was an unexplained untracked `.pi/` in `git status` — directly beside
+   * pi-git's promise that nothing is written into your project. Reported once, on the
+   * write that creates it, rather than on every write after.
+   */
+  createdProjectDir: string | null;
+}
+
 /**
  * Write a memory, replacing any existing one of the same name **within its own scope**.
  *
@@ -168,14 +182,18 @@ export function readMemory(name: string, cwd: string, scope: ReadScope): Memory 
  * project note called "build-cmd" is a different fact from a global one, and keeping
  * both is the point of having scopes at all.
  */
-export function writeMemory(m: Memory, cwd: string): void {
+export function writeMemory(m: Memory, cwd: string): WriteResult {
   deleteMemory(m.name, cwd, m.scope);
   const { global, project } = memoryDirs(cwd);
   const dir = m.scope === "project" ? project : global;
+  // Checked before the mkdir, because afterwards there is no way to tell a directory this
+  // call created from one that was already there. See WriteResult.
+  const created = m.scope === "project" && !existsSync(dir) ? dir : null;
   mkdirSync(dir, { recursive: true });
   writeFileSync(fileFor(dir, m.name), serializeMemory(m), "utf8");
   rewriteIndex(dir, m.scope);
   invalidateIndexCache(cwd);
+  return { createdProjectDir: created };
 }
 
 /**
