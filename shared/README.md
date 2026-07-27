@@ -161,13 +161,22 @@ Every automation-capable extension exposes the same three-level `mode`:
 
 | Shape | Extensions | Behavior |
 |---|---|---|
-| **Interdict** | pi-lens | returns `{ block: true }`, and the offending action does not happen |
-| **Insist** | pi-todo, pi-goal | triggers another turn, because the complaint *is* that nothing happened |
+| **Interdict** | *(none today)* | returns `{ block: true }`, and the offending action does not happen |
+| **Insist** | pi-lens, pi-todo, pi-goal | triggers another turn, because the complaint *is* that nothing happened |
 
 Both are "the strongest thing this extension can do about what it found"; an extension
 whose finding is unfinished work has nothing to interdict, so it insists instead. Either
-shape must be **bounded** — pi-lens by a gate it consumes, pi-todo and pi-goal by
-`createNudgeGuard` — since the agent that provoked the escalation may never resolve it.
+shape must be **bounded** — by a gate it consumes, or by `createNudgeGuard` — since the
+agent that provoked the escalation may never resolve it.
+
+This table listed pi-lens as the Interdict example for a release in which `block: true`
+appeared **nowhere in the suite**, so `/pi-lens block` was an accepted, silent no-op. The
+gap was not an unfinished implementation but an impossible one: only `tool_call` can
+refuse, and it fires *before* the write, when the diagnostics to interdict do not exist.
+Post-edit feedback arrives at `tool_result`, which can rewrite a result but not veto it.
+So Interdict stays in the table as a shape a *future* extension may have — one that
+inspects an action rather than its aftermath — and pi-lens is filed where it always
+belonged. Prefer leaving a row empty to naming an extension that does not implement it.
 
 Extensions may add sub-flags, but the top-level `mode` means the same thing everywhere.
 Those with neither an action to interdict nor anything to insist on collapse `block` to

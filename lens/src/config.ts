@@ -5,7 +5,19 @@ import { defineConfig, type ConfigSpec } from "../../shared/config.ts";
 import { bool, oneOf, posNum, str } from "../../shared/fields.ts";
 
 export interface LensConfig {
-  /** off = manual `lens` tool only; notify (default) = inject diagnostics + auto-verify; block = notify in v1 (hard gating deferred). */
+  /**
+   * `off` = manual `lens` tool only. `notify` (default) = inject diagnostics + auto-verify
+   * and report. `block` = the same, plus auto-continue the agent on a failed verify.
+   *
+   * `block` is the **Insist** shape, not Interdict, and that is forced rather than chosen.
+   * Interdicting would mean refusing an edit that introduces an error — but the only hook
+   * that can return `{ block: true }` is `tool_call`, which fires *before* the write, when
+   * the diagnostics being interdicted do not exist yet. There is nothing to refuse at the
+   * one moment refusal is possible. What pi-lens actually finds, at settle, is unfinished
+   * work, and the strongest honest response to that is to insist the agent keep going.
+   * (`shared/README.md` listed pi-lens as the Interdict example for a release in which the
+   * string `block: true` appeared nowhere in the suite.)
+   */
   mode: Mode;
   /** Test/build command; "" = autodetect (see autodetectVerify). */
   verifyCmd: string;

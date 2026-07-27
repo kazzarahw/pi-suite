@@ -22,15 +22,27 @@ export function parseVerify(stdout: string, stderr: string, code: number): Verif
   return { passed, failures: unique, raw };
 }
 
-/** Format a verify result as a `<pi-lens>` block. Pure. */
-export function formatVerify(r: VerifyResult): string {
+/**
+ * Format a verify result as a `<pi-lens>` block. Pure.
+ *
+ * `insist` appends the instruction that `block` mode exists to deliver. Without it the
+ * block is a *report*, and a report arriving unbidden gets acknowledged rather than acted
+ * on — in a live session the agent answered an auto-triggered verify failure with "if
+ * you'd like me to look into what test is failing, just let me know", which is exactly
+ * the outcome triggering a turn was meant to prevent. Reporting is `notify`'s job;
+ * `block` has to ask for something.
+ */
+export function formatVerify(r: VerifyResult, opts: { insist?: boolean } = {}): string {
   const header = injectionHeader("lens", r.passed ? "verify passed" : "verify failed");
   if (r.passed) return injectionBlock("lens", header, "  ✓ tests/build passed");
-  const body =
+  const lines =
     r.failures.length > 0
-      ? r.failures.map((f) => `  ✗ ${f}`).join("\n")
-      : "  ✗ verify failed (non-zero exit; see output)";
-  return injectionBlock("lens", header, body);
+      ? r.failures.map((f) => `  ✗ ${f}`)
+      : ["  ✗ verify failed (non-zero exit; see output)"];
+  if (opts.insist) {
+    lines.push("", "  → Investigate and fix this now. Do not ask whether to; nobody is waiting to answer.");
+  }
+  return injectionBlock("lens", header, lines.join("\n"));
 }
 
 /** What the trust gate decided, and why. */

@@ -162,3 +162,140 @@ test("the untrusted notice is shown once per session, not once per settle", asyn
     expect(ctx.uiCalls.notices.filter((n) => /not trusted/i.test(n.msg))).toHaveLength(1);
   });
 }, 20_000);
+
+// --- Verify delivery -------------------------------------------------------
+//
+// `deliverAs` only ever reaches the *agent*, and a queued message is not drawn until it
+// is delivered. On the turn that broke the build the user therefore saw the agent say
+// "done" and nothing else, and the agent met the failure one turn later, adjacent to the
+// user's next message — where it read the harness block as something the user had pasted
+// and asked permission instead of acting.
+
+/** A project whose autodetected verify command fails. */
+function failingProject(): string {
+  const dir = mkdtempSync(join(tmpdir(), "pi-lens-verify-"));
+  writeFileSync(join(dir, "a.ts"), "const x = 1;\n");
+  writeFileSync(
+    join(dir, "package.json"),
+    JSON.stringify({ name: "t", scripts: { test: 'echo "(fail) broken_test"; exit 1' } }),
+  );
+  return dir;
+}
+
+/** A project whose autodetected verify command passes. */
+function passingProject(): string {
+  const dir = mkdtempSync(join(tmpdir(), "pi-lens-verify-ok-"));
+  writeFileSync(join(dir, "a.ts"), "const x = 1;\n");
+  writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "t", scripts: { test: "exit 0" } }));
+  return dir;
+}
+
+const dirty = (api: Awaited<ReturnType<typeof loadExtension>>, ctx: ReturnType<typeof fakeCtx>) =>
+  api.fire(
+    "tool_result",
+    { toolName: "write", input: { path: "a.ts" }, content: [], details: {}, isError: false },
+    ctx,
+  );
+
+test("a failed verify reaches the user at settle, not on their next message", async () => {
+  const dir = failingProject();
+  await withConfig({ mode: "notify", verifyCmd: "" }, async () => {
+    const api = await loadExtension("lens");
+    const ctx = fakeCtx({ cwd: dir });
+    await dirty(api, ctx);
+    await api.fire("agent_settled", {}, ctx);
+
+    const notice = ctx.uiCalls.notices.find((n) => /FAILED/.test(n.msg));
+    expect(notice).toBeDefined();
+    expect(notice!.level).toBe("warning");
+  });
+}, 30_000);
+
+test("notify mode never compels a turn", async () => {
+  const dir = failingProject();
+  await withConfig({ mode: "notify", verifyCmd: "" }, async () => {
+    const api = await loadExtension("lens");
+    const ctx = fakeCtx({ cwd: dir });
+    await dirty(api, ctx);
+    await api.fire("agent_settled", {}, ctx);
+
+    const sent = api.messages.at(-1);
+    expect(sent).toBeDefined();
+    expect((sent!.options as { deliverAs?: string }).deliverAs).toBe("nextTurn");
+    expect((sent!.options as { triggerTurn?: boolean }).triggerTurn).toBeUndefined();
+    // The user already has it from the notification; rendering it twice teaches them to
+    // ignore both.
+    expect((sent!.message as { display?: boolean }).display).toBe(false);
+  });
+}, 30_000);
+
+test("block mode insists: the failure is delivered as a follow-up that triggers a turn", async () => {
+  const dir = failingProject();
+  await withConfig({ mode: "block", verifyCmd: "" }, async () => {
+    const api = await loadExtension("lens");
+    const ctx = fakeCtx({ cwd: dir });
+    await dirty(api, ctx);
+    await api.fire("agent_settled", {}, ctx);
+
+    const sent = api.messages.at(-1);
+    expect(sent).toBeDefined();
+    expect(sent!.options).toMatchObject({ deliverAs: "followUp", triggerTurn: true });
+  });
+}, 30_000);
+
+test("block mode stops insisting once the same failures stop changing", async () => {
+  // The agent that broke the build may never fix it. Without the guard, "keep going until
+  // green" has no exit condition of its own.
+  const dir = failingProject();
+  await withConfig({ mode: "block", verifyCmd: "" }, async () => {
+    const api = await loadExtension("lens");
+    const ctx = fakeCtx({ cwd: dir });
+    for (let i = 0; i < 4; i++) {
+      await dirty(api, ctx); // a fresh edit each round, so the gate re-arms
+      await api.fire("agent_settled", {}, ctx);
+    }
+    const triggered = api.messages.filter(
+      (m) => (m.options as { triggerTurn?: boolean }).triggerTurn === true,
+    );
+    expect(triggered.length).toBeLessThanOrEqual(2);
+  });
+}, 40_000);
+
+test("a passing verify tells the user and says nothing to the agent", async () => {
+  // Spending a turn's attention to report that nothing happened is how a useful signal
+  // becomes noise.
+  const dir = passingProject();
+  await withConfig({ mode: "notify", verifyCmd: "" }, async () => {
+    const api = await loadExtension("lens");
+    const ctx = fakeCtx({ cwd: dir });
+    await dirty(api, ctx);
+    await api.fire("agent_settled", {}, ctx);
+
+    expect(ctx.uiCalls.notices.some((n) => /passed/.test(n.msg))).toBe(true);
+    expect(api.messages).toEqual([]);
+  });
+}, 30_000);
+
+// --- Standing context ------------------------------------------------------
+
+test("lens declares itself on every call so the agent stops checking by hand", async () => {
+  const dir = passingProject();
+  await withConfig({ mode: "notify", verifyCmd: "" }, async () => {
+    const api = await loadExtension("lens");
+    const result = (await api.fire("context", { messages: [{ role: "user", content: "hi" }] }, fakeCtx({ cwd: dir }))) as
+      | { messages: Array<{ content: string }> }
+      | undefined;
+    expect(result?.messages[0]!.content).toContain("<pi-lens>");
+    expect(result?.messages[0]!.content).toContain("clean");
+    // Prepended, never replacing what was there.
+    expect(result?.messages).toHaveLength(2);
+  });
+});
+
+test("mode off injects no standing context", async () => {
+  await withConfig({ mode: "off" }, async () => {
+    const api = await loadExtension("lens");
+    const result = await api.fire("context", { messages: [{ role: "user", content: "hi" }] }, fakeCtx());
+    expect(result).toBeUndefined();
+  });
+});

@@ -148,3 +148,16 @@ test("a project with no markers detects nothing", () => {
   // Null, not a guess. Running the wrong command is worse than running none.
   expect(autodetectVerify(mkdtempSync(join(tmpdir(), "pi-lens-detect-")))).toBeNull();
 });
+
+test("insist appends an instruction, because a report gets acknowledged rather than acted on", () => {
+  const failed = { passed: false, failures: ["broken_test"], raw: "" };
+  expect(formatVerify(failed)).not.toContain("→");
+  const insisted = formatVerify(failed, { insist: true });
+  expect(insisted).toContain("broken_test");
+  expect(insisted).toContain("Investigate and fix this now");
+});
+
+test("a passing verify is never dressed up as something to act on", () => {
+  const passed = { passed: true, failures: [], raw: "" };
+  expect(formatVerify(passed, { insist: true })).not.toContain("→");
+});
