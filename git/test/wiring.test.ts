@@ -52,6 +52,13 @@ const read = (abs: string): string => readFileSync(abs, "utf8");
 
 const userEntry = (id: string) => ({ type: "message", id, message: { role: "user" } });
 
+/**
+ * pi-git defers its rewind notifications past Pi's own repaint — see
+ * `announceAfterRepaint`, and the reason it has to. Tests reading `uiCalls.notices` must
+ * let the macrotask queue drain first.
+ */
+const settleNotices = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+
 /** Drive one full turn: the agent edits `path`, and the turn's checkpoint is taken. */
 async function turn(
   api: FakeApi,
@@ -97,7 +104,7 @@ test("/pi-git exposes configuration verbs only — no checkpoint, restore, or ro
     expect(words).not.toContain(action);
   }
   // Every offered word is a config field's verb or one of its values — nothing else.
-  const allowed = new Set(["mode", "detect", "guard", "ttl", "off", "notify", "block"]);
+  const allowed = new Set(["mode", "detect", "guard", "guardshell", "ttl", "off", "notify", "block"]);
   expect(words.filter((w) => !allowed.has(w))).toEqual([]);
 });
 
@@ -123,6 +130,169 @@ test("the tool_call hook never blocks a tool", async () => {
       const ctx = fakeCtx({ cwd, leafEntry: userEntry("u1") });
       const result = await api.fire("tool_call", { toolName: "write", input: { path: join(cwd, "a.txt") } }, ctx);
       expect(result).toBeUndefined();
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+});
+
+// --- The opaque-write guard ------------------------------------------------
+//
+// `bash` names no path, so `editedPath` has nothing to record and the pre-command bytes
+// were never captured. `detectDirty` does not close the gap: it runs at *checkpoint*
+// time, by which point the modified content is all there is left to store, and it gets
+// stored as the origin. A rewind then restored the file to the state it was being
+// rewound *from*, and reported success. Shell edits were the one class of change pi-git
+// silently could not undo.
+
+test("a file changed only by bash is restored on rewind", async () => {
+  await withConfig({}, async () => {
+    const api = await loadExtension("git");
+    const cwd = project();
+    try {
+      gitCmd(cwd, "init");
+      gitCmd(cwd, "config", "user.email", "qa@test.local");
+      gitCmd(cwd, "config", "user.name", "QA");
+      const data = write(cwd, "data.txt", "ORIGINAL\n");
+      gitCmd(cwd, "add", "-A");
+      gitCmd(cwd, "commit", "-m", "init");
+
+      const ctx = fakeCtx({ cwd, leafEntry: userEntry("u1") });
+      await api.fire("message_start", { message: { role: "assistant" } }, ctx);
+      // The turn's checkpoint is empty: nothing is dirty and nothing is tracked yet.
+      await api.fire("tool_call", { toolName: "bash", input: { command: "printf x > data.txt" } }, ctx);
+      writeFileSync(data, "CHANGED BY BASH\n", "utf8");
+
+      // Navigation leaves from the turn's last entry, not from the user message — the
+      // two keys are what let backward and forward restore different states.
+      await api.fire("session_before_tree", { preparation: { targetId: "u1" } }, fakeCtx({ cwd, leafId: "a1" }));
+      await api.fire(
+        "session_tree",
+        { newLeafId: "u1", oldLeafId: "a1" },
+        fakeCtx({ cwd, leafEntry: userEntry("u1"), leafId: "u1" }),
+      );
+
+      expect(read(data)).toBe("ORIGINAL\n");
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+});
+
+test("the bash guard is skipped when guardOpaqueWrites is off", async () => {
+  await withConfig({ guardOpaqueWrites: false }, async () => {
+    const api = await loadExtension("git");
+    const cwd = project();
+    try {
+      gitCmd(cwd, "init");
+      gitCmd(cwd, "config", "user.email", "qa@test.local");
+      gitCmd(cwd, "config", "user.name", "QA");
+      const data = write(cwd, "data.txt", "ORIGINAL\n");
+      gitCmd(cwd, "add", "-A");
+      gitCmd(cwd, "commit", "-m", "init");
+
+      const ctx = fakeCtx({ cwd, leafEntry: userEntry("u1") });
+      await api.fire("message_start", { message: { role: "assistant" } }, ctx);
+      await api.fire("tool_call", { toolName: "bash", input: { command: "printf x > data.txt" } }, ctx);
+      writeFileSync(data, "CHANGED BY BASH\n", "utf8");
+
+      await api.fire("session_before_tree", { preparation: { targetId: "u1" } }, fakeCtx({ cwd, leafId: "a1" }));
+      await api.fire(
+        "session_tree",
+        { newLeafId: "u1", oldLeafId: "a1" },
+        fakeCtx({ cwd, leafEntry: userEntry("u1"), leafId: "u1" }),
+      );
+
+      // The documented cost of turning it off, pinned so it stays a choice.
+      expect(read(data)).toBe("CHANGED BY BASH\n");
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+});
+
+test("a bash tool_call never blocks the command", async () => {
+  await withConfig({}, async () => {
+    const api = await loadExtension("git");
+    const cwd = project();
+    try {
+      const ctx = fakeCtx({ cwd, leafEntry: userEntry("u1") });
+      const result = await api.fire("tool_call", { toolName: "bash", input: { command: "ls" } }, ctx);
+      expect(result).toBeUndefined();
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+});
+
+// --- HEAD drift ------------------------------------------------------------
+
+test("a rewind past a commit says so, rather than leaving it to be discovered", async () => {
+  await withConfig({}, async () => {
+    const api = await loadExtension("git");
+    const cwd = project();
+    try {
+      gitCmd(cwd, "init");
+      gitCmd(cwd, "config", "user.email", "qa@test.local");
+      gitCmd(cwd, "config", "user.name", "QA");
+      write(cwd, "a.txt", "one");
+      gitCmd(cwd, "add", "-A");
+      gitCmd(cwd, "commit", "-m", "first");
+
+      const ctx = fakeCtx({ cwd, leafEntry: userEntry("u1"), hasUI: true });
+
+      const file = join(cwd, "a.txt");
+      await api.fire("message_start", { message: { role: "assistant" } }, ctx);
+      await api.fire("tool_call", { toolName: "write", input: { path: file } }, ctx);
+      writeFileSync(file, "two", "utf8");
+
+      // The agent commits its own work mid-session — the case that made a working
+      // restore read as a broken one.
+      gitCmd(cwd, "add", "-A");
+      gitCmd(cwd, "commit", "-m", "agent commit");
+
+      await api.fire("session_before_tree", { preparation: { targetId: "u1" } }, fakeCtx({ cwd, leafId: "a1" }));
+      const back = fakeCtx({ cwd, leafEntry: userEntry("u1"), leafId: "u1", hasUI: true });
+      await api.fire("session_tree", { newLeafId: "u1", oldLeafId: "a1" }, back);
+
+      await settleNotices();
+      const notices = back.uiCalls.notices.map((n) => n.msg);
+      expect(read(file)).toBe("one");
+      expect(notices.some((n) => n.includes("file(s) restored"))).toBe(true);
+      expect(notices.some((n) => n.includes("HEAD moved during this session"))).toBe(true);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+});
+
+test("a rewind with no commit in between says nothing about HEAD", async () => {
+  await withConfig({}, async () => {
+    const api = await loadExtension("git");
+    const cwd = project();
+    try {
+      gitCmd(cwd, "init");
+      gitCmd(cwd, "config", "user.email", "qa@test.local");
+      gitCmd(cwd, "config", "user.name", "QA");
+      write(cwd, "a.txt", "one");
+      gitCmd(cwd, "add", "-A");
+      gitCmd(cwd, "commit", "-m", "first");
+
+      const ctx = fakeCtx({ cwd, leafEntry: userEntry("u1"), hasUI: true });
+
+      const file = join(cwd, "a.txt");
+      await api.fire("message_start", { message: { role: "assistant" } }, ctx);
+      await api.fire("tool_call", { toolName: "write", input: { path: file } }, ctx);
+      writeFileSync(file, "two", "utf8");
+
+      await api.fire("session_before_tree", { preparation: { targetId: "u1" } }, fakeCtx({ cwd, leafId: "a1" }));
+      const back = fakeCtx({ cwd, leafEntry: userEntry("u1"), leafId: "u1", hasUI: true });
+      await api.fire("session_tree", { newLeafId: "u1", oldLeafId: "a1" }, back);
+
+      await settleNotices();
+      const notices = back.uiCalls.notices.map((n) => n.msg);
+      expect(read(file)).toBe("one");
+      expect(notices.some((n) => n.includes("HEAD moved"))).toBe(false);
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }
@@ -293,6 +463,7 @@ test("navigating somewhere with no checkpoint says so instead of silently doing 
     try {
       const ctx = fakeCtx({ cwd, leafId: "unknown-leaf" });
       await api.fire("session_tree", { newLeafId: "unknown-leaf", oldLeafId: null }, ctx);
+      await settleNotices();
       expect(ctx.uiCalls.notices.map((n) => n.msg).join(" ")).toContain("no file checkpoint");
     } finally {
       rmSync(cwd, { recursive: true, force: true });

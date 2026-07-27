@@ -16,6 +16,22 @@ export const EDIT_TOOLS: ReadonlySet<string> = new Set(["write", "edit"]);
 /** Tools that touch a file at all, including reads — pi-lens reports diagnostics on these. */
 export const FILE_TOOLS: ReadonlySet<string> = new Set(["read", "write", "edit"]);
 
+/**
+ * Tools that can change files without naming them in their input.
+ *
+ * `bash` takes a command string — a `sed -i`, a heredoc, a `git apply`, a plain `>`
+ * redirect. `editedPath` has nothing to read, so pi-git's checkpoint hook cannot learn
+ * which file is about to change; and a file first *seen* after the fact gets its already
+ * modified bytes recorded as its origin, which makes the change permanently unrestorable
+ * while a rewind still reports success. pi-git answers by guarding the whole working set
+ * before these run, and this set is what it matches on.
+ *
+ * Deliberately narrow. Membership costs a tree hash the first time it fires, so this
+ * names the tools that genuinely write *and* are genuinely opaque — not everything that
+ * is not a read.
+ */
+export const OPAQUE_WRITE_TOOLS: ReadonlySet<string> = new Set(["bash"]);
+
 /** The shape a file tool's input takes. Both spellings are in use across Pi's tools. */
 interface FileToolInput {
   path?: unknown;

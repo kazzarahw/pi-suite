@@ -7,9 +7,11 @@ Part of the [pi-suite](../README.md).
 ## What it does
 
 - **Records a file's state before `write` or `edit` touches it** (on `tool_call`, the one moment the pre-edit bytes are still on disk). That is what lets a rewind delete a file the agent created rather than guess.
+- **Records the whole working set before `bash` runs** — a shell command names no path, so there is nothing to record after the fact. See [Shell commands](#shell-commands).
 - **Checkpoints at the start of every turn**, keyed to the user-message entry — the state that message was sent in.
 - **Checkpoints again whenever you navigate**, keyed to the leaf you are leaving — the state you would want back if you navigate forward again.
 - **Restores on `/tree` navigation, in both directions**, and on Pi's fork lifecycle (`session_before_fork` → `session_shutdown{reason:"fork"}`).
+- **Says what it did.** A restore reports how many files it wrote and removed, and warns when `HEAD` moved — see [Commits](#commits-the-half-it-cannot-undo).
 
 Emits `git:checkpoint { entryId, reason, files }` and `git:rollback { entryId, reason, written, removed }`.
 
@@ -19,7 +21,7 @@ Content is stored under `~/.pi/agent/checkpoints/`: one manifest per session ent
 
 This used to work through git plumbing — `git add -A` into a temporary index, `write-tree`, `commit-tree`. That has a work-tree boundary, and a session rooted *above* a repository falls off it: `add -A` records the inner repository as a gitlink and captures none of its contents, so a restore reverted the outer file, left the inner one edited, and reported success. Manifest keys are absolute paths; a path has no root, so it has no boundary.
 
-Git still has a job, read-only: `git status` tells pi-git which files changed, so a file that `bash` wrote — never passing through a tool call — is checkpointed too. Outside a repository that source simply contributes nothing and the tool-tracked files still work.
+Git still has a job, read-only: `git status` enumerates what changed and `git ls-files` what could, which is how the guards below cover files no tool call ever named. Outside a repository those sources simply contribute nothing and the tool-tracked files still work.
 
 ## Configure
 
@@ -28,13 +30,53 @@ Git still has a job, read-only: `git status` tells pi-git which files changed, s
 | Setting | Default | Meaning |
 |---|---|---|
 | `mode` | `notify` | `off` disables checkpointing; `notify`/`block` both = checkpoint + restore (nothing to block, so they're equivalent) |
-| `detectDirty` | `true` | also checkpoint what `git status` reports, catching changes made by `bash` |
+| `detectDirty` | `true` | also checkpoint what `git status` reports at checkpoint time |
+| `guardOpaqueWrites` | `true` | record the working set before a `bash` command runs — see below |
 | `guardDelegated` | `true` | record the working set before a delegated subagent runs — see below |
 | `checkpointTtlDays` | `30` | how long a session's checkpoints survive; swept on session start |
 | `maxFileBytes` | `10485760` | files larger than this are reported and left out rather than stored |
-| `maxGuardedFiles` | `5000` | cap on the delegation guard's working set; overflow is reported, never silently dropped (JSON file only) |
+| `maxGuardedFiles` | `5000` | cap on either guard's working set; overflow is reported, never silently dropped (JSON file only) |
 
 Does **not** require a git repository.
+
+## Shell commands
+
+`bash` reaches the `tool_call` hook, but its input is an opaque command string — a
+`sed -i`, a heredoc, a `git apply`, a plain `>` redirect. Nothing in it says which files
+are about to change, so there is no path to record.
+
+`detectDirty` does not close that gap, and used to be documented as though it did. It runs
+at *checkpoint* time, which is always after the fact: by then the modified bytes are the
+only ones left to see, and they get stored as the file's origin. A rewind then restored
+the file to the state it was being rewound *from* — and reported success. Shell edits were
+the one class of change pi-git silently could not undo.
+
+So a `bash` call is treated like a delegation: before the command runs, pi-git records the
+working set — `git ls-files` plus whatever is already dirty. Unlike the delegation guard
+this is **awaited**, because the command runs the moment the hook returns; a detached
+guard would lose the race and record the post-command bytes, which is the bug rather than
+the fix. The first such call in a session pays for one tracked-tree hash; later ones are
+near-free, since the store is content-addressed and an origin is never rewritten.
+
+Outside a repository there is no working set to enumerate, so the guard contributes
+nothing and edits made through a tool are still covered.
+
+## Commits: the half it cannot undo
+
+pi-git restores **files**. It never moves a ref, and that is deliberate — a branch it does
+not own is not its business. But an agent that commits mid-session leaves the two halves
+disagreeing: the bytes go back to the checkpoint, `HEAD` stays at the agent's last commit,
+and `git status` then reports a working tree that reverts its own history.
+
+That reads, reasonably, as *"the rewind did nothing"* — the commits are all still in
+`git log` and the files all look modified — when in fact it did exactly what it promised.
+
+So each checkpoint records the repository's `HEAD` alongside the files, and a restore
+compares. When it moved, pi-git says so and names both commits, along with the two ways
+out (`git reset --hard <was>` to drop them, `git checkout -- .` to keep them and discard
+the restore). Only the repository at the session's own root is recorded; a commit in a
+*nested* repository is not seen, so the warning stays silent about it — silence is never a
+claim that nothing moved, only that this did not observe it.
 
 ## Delegated edits
 

@@ -46,13 +46,46 @@ export type FileState = { hash: string; mode?: number } | { absent: true };
 /** Absolute path → state, for one entry. */
 export type Manifest = Record<string, FileState>;
 
+/**
+ * Repository root → the commit `HEAD` pointed at, absolute paths as keys.
+ *
+ * Recorded because the store restores *files* and nothing else. An agent that commits
+ * mid-session leaves the two halves disagreeing: the bytes go back, the refs do not, and
+ * `git status` reports a tree that silently negates its own history. The store cannot fix
+ * that — moving a ref it does not own is not its business — but it can know it happened,
+ * which is the difference between a confusing rewind and an explained one.
+ */
+export type Heads = Record<string, string>;
+
+/**
+ * One entry's checkpoint: the files, and where the repositories were pointing.
+ *
+ * Written as `{ files, heads }` rather than the bare path→state map it used to be.
+ * `readCheckpoint` still accepts the old shape, because a manifest on disk outlives the
+ * version of the code that wrote it and a rewind that silently found nothing would be
+ * exactly the failure this store exists to prevent.
+ */
+export interface Checkpoint {
+  files: Manifest;
+  /** Absent outside a repository, and on manifests written before heads were recorded. */
+  heads?: Heads;
+}
+
 export interface CheckpointStore {
   /** Record the state of every path, keyed to a session entry. Returns what it recorded. */
-  checkpoint(entryId: string, paths: readonly string[]): Promise<Manifest>;
+  checkpoint(entryId: string, paths: readonly string[], heads?: Heads): Promise<Manifest>;
   /** Record a path's state the first time it is seen; never overwrites an existing origin. */
   rememberOrigin(path: string): Promise<void>;
+  /**
+   * `rememberOrigin` for many paths, reading and writing the origin file once.
+   *
+   * The per-path form re-reads `origin.json` on every call, which is free for the one
+   * path an edit tool names and quadratic for the whole working set. Guarding a tree
+   * before an opaque write needs the batch form to be affordable at all.
+   */
+  rememberOrigins(paths: readonly string[]): Promise<void>;
   /** Put every tracked path back to its state at `entryId` (or its origin). */
-  restore(entryId: string): Promise<{ written: string[]; removed: string[] }>;
+  restore(entryId: string): Promise<{ written: string[]; removed: string[]; heads: Heads }>;
   has(entryId: string): Promise<boolean>;
   /** Every path this session has an origin for. */
   tracked(): readonly string[];
@@ -111,6 +144,24 @@ function readJson<T>(file: string): T | null {
 function writeJson(file: string, value: unknown): void {
   mkdirSync(dirname(file), { recursive: true });
   writeFileSync(file, JSON.stringify(value), "utf8");
+}
+
+/**
+ * Read a checkpoint file in either shape.
+ *
+ * The current shape is `{ files, heads? }`; the original was a bare path→state map. The
+ * two are told apart by the `files` key, which is unambiguous because every key in the
+ * old shape is an absolute path and `"files"` is not one. Old manifests therefore keep
+ * restoring, and simply report no heads — which is the truth about them.
+ */
+function readCheckpoint(file: string): Checkpoint | null {
+  const raw = readJson<Record<string, unknown>>(file);
+  if (!raw || typeof raw !== "object") return null;
+  const files = raw.files;
+  if (files && typeof files === "object") {
+    return { files: files as Manifest, heads: (raw.heads as Heads | undefined) ?? undefined };
+  }
+  return { files: raw as unknown as Manifest };
 }
 
 /** Newest mtime anywhere in a session directory — the basis for its age. */
@@ -208,8 +259,8 @@ export function createStore(sessionId: string, opts: StoreOptions = {}): Checkpo
    * this is what replaces that property. Entry ids are unique, so a manifest found
    * under another session is unambiguously the right one.
    */
-  function findManifest(entryId: string): Manifest | null {
-    const own = readJson<Manifest>(manifestFile(entryId));
+  function findCheckpoint(entryId: string): Checkpoint | null {
+    const own = readCheckpoint(manifestFile(entryId));
     if (own) return own;
     let names: string[];
     try {
@@ -219,7 +270,7 @@ export function createStore(sessionId: string, opts: StoreOptions = {}): Checkpo
     }
     for (const name of names) {
       if (name === BLOBS_DIR || name === session) continue;
-      const found = readJson<Manifest>(join(root, name, `${safeName(entryId)}.json`));
+      const found = readCheckpoint(join(root, name, `${safeName(entryId)}.json`));
       if (found) return found;
     }
     return null;
@@ -236,7 +287,27 @@ export function createStore(sessionId: string, opts: StoreOptions = {}): Checkpo
       writeJson(originFile, origin);
     },
 
-    async checkpoint(entryId, paths) {
+    async rememberOrigins(paths) {
+      const origin = loadOrigin();
+      let changed = false;
+      for (const path of paths) {
+        const key = normalizePath(path);
+        if (key in origin) continue;
+        // Per path, so one unreadable file does not abandon the rest of the tree.
+        let state: FileState | null;
+        try {
+          state = capture(key);
+        } catch {
+          continue;
+        }
+        if (state === null) continue;
+        origin[key] = state;
+        changed = true;
+      }
+      if (changed) writeJson(originFile, origin);
+    },
+
+    async checkpoint(entryId, paths, heads) {
       const origin = loadOrigin();
       let originChanged = false;
       const manifest: Manifest = {};
@@ -258,12 +329,15 @@ export function createStore(sessionId: string, opts: StoreOptions = {}): Checkpo
       }
 
       if (originChanged) writeJson(originFile, origin);
-      writeJson(manifestFile(entryId), manifest);
+      // `heads` omitted rather than written empty when there is no repository: an absent
+      // key means "not recorded", and a `{}` would claim we looked and found no repos.
+      const checkpoint: Checkpoint = heads && Object.keys(heads).length > 0 ? { files: manifest, heads } : { files: manifest };
+      writeJson(manifestFile(entryId), checkpoint);
       return manifest;
     },
 
     async has(entryId) {
-      return findManifest(entryId) !== null;
+      return findCheckpoint(entryId) !== null;
     },
 
     tracked() {
@@ -271,8 +345,9 @@ export function createStore(sessionId: string, opts: StoreOptions = {}): Checkpo
     },
 
     async restore(entryId) {
-      const manifest = findManifest(entryId);
-      if (!manifest) return { written: [], removed: [] };
+      const checkpoint = findCheckpoint(entryId);
+      if (!checkpoint) return { written: [], removed: [], heads: {} };
+      const manifest = checkpoint.files;
 
       const origin = loadOrigin();
       const written: string[] = [];
@@ -324,7 +399,7 @@ export function createStore(sessionId: string, opts: StoreOptions = {}): Checkpo
         written.push(key);
       }
 
-      return { written, removed };
+      return { written, removed, heads: checkpoint.heads ?? {} };
     },
 
     async gc(ttlDays, nowMs) {
@@ -370,9 +445,13 @@ export function createStore(sessionId: string, opts: StoreOptions = {}): Checkpo
         }
         for (const file of files) {
           if (!file.endsWith(".json")) continue;
-          const parsed = readJson<Manifest>(join(dir, file));
+          // Through `readCheckpoint`, never `readJson`: a `{ files, heads }` document
+          // read as a bare manifest yields two objects with no `hash`, so every blob it
+          // references would be counted unreferenced and swept — deleting the content of
+          // live checkpoints. The origin file's bare shape reads correctly either way.
+          const parsed = readCheckpoint(join(dir, file));
           if (!parsed) continue;
-          for (const state of Object.values(parsed)) {
+          for (const state of Object.values(parsed.files)) {
             if (state && "hash" in state) referenced.add(state.hash);
           }
         }

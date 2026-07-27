@@ -57,6 +57,41 @@ export async function isRepo(exec: ExecFn, cwd: string, signal?: AbortSignal): P
 }
 
 /**
+ * Where `cwd`'s repository is pointing: `{ <repo root>: <HEAD commit> }`, or `{}`.
+ *
+ * The store restores files and deliberately never touches a ref. That division is right —
+ * moving a branch pi-git does not own is not its business — but it leaves a gap the user
+ * falls into. An agent that commits mid-session leaves a rewind that puts the bytes back
+ * under a `HEAD` still pointing at the agent's work, so `git status` then reports a tree
+ * that silently reverts its own history. Recording the commit is what lets a restore say
+ * so, instead of leaving it to be discovered later as a mystery diff.
+ *
+ * `{}` outside a repository, and `{}` on an unborn branch: a repository with no commits
+ * has no HEAD to record, and `rev-parse HEAD` fails there rather than returning empty.
+ *
+ * **The repository at `cwd` only.** A commit made in a repository *nested* inside it is
+ * not recorded, so a rewind stays quiet about it. That is a known gap, not a false claim:
+ * the drift message is only ever produced from a difference actually observed, so silence
+ * never asserts that nothing moved. Widening it means enumerating nested roots, which
+ * `dirtyPaths` gets free from `git status` output and this would have to walk for.
+ */
+export async function headRefs(
+  exec: ExecFn,
+  cwd: string,
+  opts: DetectOptions = {},
+): Promise<Record<string, string>> {
+  const { signal } = opts;
+  const top = await runGit(exec, cwd, ["rev-parse", "--show-toplevel"], signal);
+  if (top.code !== 0) return {};
+  const root = top.stdout.trim();
+  if (!root) return {};
+  const head = await runGit(exec, cwd, ["rev-parse", "HEAD"], signal);
+  if (head.code !== 0) return {};
+  const sha = head.stdout.trim();
+  return sha ? { [resolve(root)]: sha } : {};
+}
+
+/**
  * Every path git considers changed under `cwd`, absolute, so the result composes
  * directly with the store's key space. `[]` when `cwd` is not a repository — the
  * caller falls back to the paths it tracked through tool calls.

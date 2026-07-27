@@ -31,13 +31,27 @@ export interface GitConfig {
    */
   guardDelegated: boolean;
   /**
-   * Cap on files the delegation guard records in one pass.
+   * Record the working set before a `bash` command runs.
    *
-   * The first guarded delegation in a large repository hashes and stores the whole
-   * tracked tree; afterwards it is nearly free, because the store is content-addressed
-   * and `rememberOrigin` never rewrites an origin it already has. The cap bounds that
-   * first pass, and exceeding it is *reported* rather than silently truncated — a
-   * partial guard that looks total is worse than no guard.
+   * `bash` takes an opaque command string, so `tool_call` cannot tell which files it is
+   * about to touch. Without this, a file changed only by a shell command — `sed -i`, a
+   * heredoc, `git apply`, a plain `>` redirect — was first seen by the `detectDirty`
+   * sweep *after* the fact, which recorded its already-modified bytes as its origin. A
+   * rewind then "restored" it to the state it was being rewound *from* and reported
+   * success. Shell edits were the one class of change pi-git silently could not undo.
+   *
+   * Costs one tracked-tree hash the first time it fires in a session; afterwards it is
+   * near-free, because the store is content-addressed and origins are never rewritten.
+   */
+  guardOpaqueWrites: boolean;
+  /**
+   * Cap on files the delegation and shell guards record in one pass.
+   *
+   * The first guarded call in a large repository hashes and stores the whole tracked
+   * tree; afterwards it is nearly free, because the store is content-addressed and an
+   * origin is never rewritten once held. The cap bounds that first pass, and exceeding
+   * it is *reported* rather than silently truncated — a partial guard that looks total
+   * is worse than no guard.
    */
   maxGuardedFiles: number;
 }
@@ -48,6 +62,7 @@ export const DEFAULTS: GitConfig = {
   detectDirty: true,
   maxFileBytes: DEFAULT_MAX_FILE_BYTES,
   guardDelegated: true,
+  guardOpaqueWrites: true,
   maxGuardedFiles: 5000,
 };
 
@@ -62,6 +77,7 @@ export const SPEC: ConfigSpec<GitConfig> = {
       detectDirty: bool(p.detectDirty, defaults.detectDirty),
       maxFileBytes: posNum(p.maxFileBytes, defaults.maxFileBytes),
       guardDelegated: bool(p.guardDelegated, defaults.guardDelegated),
+      guardOpaqueWrites: bool(p.guardOpaqueWrites, defaults.guardOpaqueWrites),
       maxGuardedFiles: int(p.maxGuardedFiles, defaults.maxGuardedFiles),
     };
   },

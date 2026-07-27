@@ -46,7 +46,7 @@ export { parseFrontmatter } from "./frontmatter.ts";
 
 export { stableHash } from "./hash.ts";
 
-export { EDIT_TOOLS, FILE_TOOLS, editedPath } from "./tool-input.ts";
+export { EDIT_TOOLS, FILE_TOOLS, OPAQUE_WRITE_TOOLS, editedPath } from "./tool-input.ts";
 
 export type { TruncateOptions } from "./truncate.ts";
 export { truncateForAgent } from "./truncate.ts";

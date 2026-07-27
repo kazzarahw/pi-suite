@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { defaultExec } from "../../shared/exec.ts";
-import { isRepo, dirtyPaths, SCRUBBED_GIT_ENV } from "../src/detect.ts";
+import { isRepo, dirtyPaths, headRefs, SCRUBBED_GIT_ENV } from "../src/detect.ts";
 
 let dir: string;
 
@@ -207,4 +207,39 @@ test("git really does honour the environment we are scrubbing", async () => {
     rmSync(plain, { recursive: true, force: true });
     rmSync(decoy, { recursive: true, force: true });
   }
+});
+
+// --- HEAD ------------------------------------------------------------------
+//
+// pi-git restores files and never moves a ref. Recording where HEAD pointed is what
+// lets a rewind explain the half it structurally cannot put back, instead of leaving
+// the user with a tree that silently reverts its own history.
+
+test("headRefs reports the repository root and its HEAD commit", async () => {
+  initRepo(dir);
+  write(dir, "a.txt", "one");
+  git(dir, "add", "-A");
+  git(dir, "commit", "-m", "first");
+
+  const heads = await headRefs(defaultExec, dir);
+  expect(Object.keys(heads)).toEqual([dir]);
+  expect(heads[dir]).toMatch(/^[0-9a-f]{40}$/);
+
+  const before = heads[dir];
+  write(dir, "a.txt", "two");
+  git(dir, "add", "-A");
+  git(dir, "commit", "-m", "second");
+  expect((await headRefs(defaultExec, dir))[dir]).not.toBe(before);
+});
+
+test("headRefs reports nothing outside a repository", async () => {
+  expect(await headRefs(defaultExec, dir)).toEqual({});
+});
+
+test("headRefs reports nothing on a repository with no commits", async () => {
+  // An unborn branch has no HEAD to record. `{}` says "nothing to compare", which is
+  // what keeps a later restore from inventing a drift message out of an empty string.
+  initRepo(dir);
+  write(dir, "a.txt", "uncommitted");
+  expect(await headRefs(defaultExec, dir)).toEqual({});
 });

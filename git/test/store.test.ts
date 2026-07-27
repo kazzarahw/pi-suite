@@ -93,7 +93,7 @@ test("restore of an unknown entry changes nothing", async () => {
   expect(await s.has("nope")).toBe(false);
   const result = await s.restore("nope");
 
-  expect(result).toEqual({ written: [], removed: [] });
+  expect(result).toEqual({ written: [], removed: [], heads: {} });
   expect(read(f)).toBe("v2");
 });
 
@@ -135,6 +135,48 @@ test("a file that existed before pi-git saw it restores to its origin, not delet
   // the store has no evidence the file was ever absent.
   expect(existsSync(early)).toBe(true);
   expect(read(early)).toBe("edited");
+});
+
+test("rememberOrigins records a whole working set, and never overwrites what it holds", async () => {
+  // The batch form is what makes guarding a tree before an opaque `bash` write
+  // affordable: the per-path form re-reads the origin file once per path.
+  const s = store();
+  const a = write("a.txt", "a-original");
+  const b = write("b.txt", "b-original");
+  const gone = join(proj, "gone.txt"); // absent, and must be recorded as absent
+
+  await s.rememberOrigins([a, b, gone]);
+  expect(new Set(s.tracked())).toEqual(new Set([a, b, gone]));
+
+  // A second pass over changed bytes must not move the origins the first pass fixed.
+  writeFileSync(a, "a-changed", "utf8");
+  writeFileSync(gone, "created", "utf8");
+  await s.rememberOrigins([a, b, gone]);
+
+  // An entry that recorded no paths of its own: every tracked path falls back to its
+  // origin, which is precisely the set this guarded.
+  await s.checkpoint("anchor", []);
+  await s.restore("anchor");
+
+  expect(read(a)).toBe("a-original");
+  expect(read(b)).toBe("b-original");
+  expect(existsSync(gone)).toBe(false); // recorded absent on the first pass, so removed
+});
+
+test("a file changed only by an opaque write is restorable when the set was guarded first", async () => {
+  // The bug this closes: `bash` names no path, so nothing records the pre-command bytes.
+  // The `detectDirty` sweep only sees the file *after* the fact and stores the modified
+  // content as the origin, so a rewind restored the file to the state it was being
+  // rewound from — and reported success.
+  const s = store();
+  const touched = write("data.txt", "ORIGINAL");
+  await s.checkpoint("e1", []); // turn starts clean: nothing dirty, nothing tracked
+
+  await s.rememberOrigins([touched]); // the guard, before the shell command runs
+  writeFileSync(touched, "CHANGED BY BASH", "utf8");
+
+  await s.restore("e1");
+  expect(read(touched)).toBe("ORIGINAL");
 });
 
 test("rememberOrigin never overwrites an origin it already holds", async () => {
@@ -242,6 +284,77 @@ test("checkpointing writes nothing into the project tree", async () => {
   await s.rememberOrigin(f);
   await s.checkpoint("e1", [f]);
   expect(readdirSync(proj).sort()).toEqual(before);
+});
+
+// --- Heads: the half a file-level undo cannot put back ---------------------
+//
+// The store restores files and never touches a ref. An agent that commits mid-session
+// therefore leaves a rewind that puts the bytes back under a HEAD still pointing at the
+// agent's work, and `git status` then reports a tree that reverts its own history. The
+// store cannot fix that; recording where HEAD was is what lets the caller explain it.
+
+test("heads recorded at checkpoint come back from restore", async () => {
+  const s = store();
+  const f = write("a.txt", "x");
+  await s.checkpoint("e1", [f], { "/repo": "abc123" });
+
+  const result = await s.restore("e1");
+  expect(result.heads).toEqual({ "/repo": "abc123" });
+});
+
+test("a checkpoint outside a repository records no heads rather than an empty claim", async () => {
+  const s = store();
+  const f = write("a.txt", "x");
+  await s.checkpoint("e1", [f], {});
+
+  // Absent on disk, so a reader can tell "not recorded" from "recorded as none".
+  const onDisk = JSON.parse(readFileSync(join(root, "s1", "e1.json"), "utf8"));
+  expect(onDisk.heads).toBeUndefined();
+  expect((await s.restore("e1")).heads).toEqual({});
+});
+
+test("a manifest written before heads existed still restores", async () => {
+  // A checkpoint on disk outlives the code that wrote it. The old shape is a bare
+  // path→state map; reading it as the new one would find no files and silently restore
+  // nothing, which is exactly the failure this store exists to prevent.
+  const s = store();
+  const f = write("a.txt", "original");
+  await s.rememberOrigin(f);
+  await s.checkpoint("e1", [f]);
+
+  // Rewrite e1 in the pre-heads format, keeping the same blob reference.
+  const current = JSON.parse(readFileSync(join(root, "s1", "e1.json"), "utf8"));
+  writeFileSync(join(root, "s1", "e1.json"), JSON.stringify(current.files), "utf8");
+
+  writeFileSync(f, "changed", "utf8");
+  const result = await s.restore("e1");
+
+  expect(read(f)).toBe("original");
+  expect(result.heads).toEqual({});
+});
+
+test("gc keeps blobs referenced by a checkpoint in the current format", async () => {
+  // Read as a bare manifest, `{ files, heads }` yields two objects with no `hash`, so
+  // every blob a live checkpoint references would be counted unreferenced and swept.
+  const s = store("keep");
+  const f = write("a.txt", "precious");
+  await s.checkpoint("e1", [f], { "/repo": "abc123" });
+
+  // A second, expired session gives gc something to collect, which is what makes it run
+  // the blob sweep at all.
+  const old = store("stale");
+  await old.checkpoint("e9", [write("junk.txt", "junk")]);
+  const past = new Date(Date.now() - 90 * 86_400_000);
+  for (const name of readdirSync(join(root, "stale"))) {
+    utimesSync(join(root, "stale", name), past, past);
+  }
+  utimesSync(join(root, "stale"), past, past);
+
+  await s.gc(30, Date.now());
+
+  writeFileSync(f, "clobbered", "utf8");
+  await s.restore("e1");
+  expect(read(f)).toBe("precious");
 });
 
 // --- Restore hygiene -------------------------------------------------------

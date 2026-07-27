@@ -16,6 +16,7 @@ export interface CommandDeps {
 export const FIELDS: readonly Field<GitConfig>[] = [
   enumField("mode", MODES, "Mode"),
   boolField("detectDirty", "Detect bash changes", { verb: "detect" }),
+  boolField("guardOpaqueWrites", "Guard shell commands", { verb: "guardshell" }),
   boolField("guardDelegated", "Guard delegated edits", { verb: "guard" }),
   intField("checkpointTtlDays", "Keep checkpoints for", { verb: "ttl", presets: [7, 30, 90] }),
 ];

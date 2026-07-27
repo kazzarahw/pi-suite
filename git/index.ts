@@ -1,11 +1,11 @@
 import { resolve } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { cwdOf, EDIT_TOOLS, editedPath } from "../shared/index.ts";
+import { cwdOf, EDIT_TOOLS, OPAQUE_WRITE_TOOLS, editedPath } from "../shared/index.ts";
 import { defaultExec } from "../shared/exec.ts";
 import { loadConfig, saveConfig, type GitConfig } from "./src/config.ts";
-import type { CheckpointStore } from "./src/store.ts";
+import type { CheckpointStore, Heads } from "./src/store.ts";
 import { createGitSession } from "./src/session.ts";
-import { dirtyPaths, trackedPaths } from "./src/detect.ts";
+import { dirtyPaths, headRefs, trackedPaths } from "./src/detect.ts";
 import {
   currentLeafId,
   currentUserEntryId,
@@ -14,7 +14,9 @@ import {
 } from "./src/checkpoints.ts";
 import {
   checkpointTurn,
-  guardDelegation,
+  describeHeadDrift,
+  describeRestore,
+  guardWorkingSet,
   restoreEntry,
   restoreOnForkShutdown,
   type PendingFork,
@@ -121,9 +123,13 @@ export default function piGit(pi: ExtensionAPI): void {
 
   /**
    * What to capture: every path pi-git already tracks, plus whatever git reports as
-   * changed. The second half is what catches a file `bash` wrote, which never passes
-   * through a tool call. Detection is a supplement — a failure there must not stop the
+   * changed. The second half catches a file that changed while pi-git was not the one
+   * writing it. Detection is a supplement — a failure there must not stop the
    * checkpoint, and outside a repository it simply contributes nothing.
+   *
+   * Note what this does *not* do: seeing a path here for the first time is too late to
+   * know what it held before. That is why `bash` is guarded up front by
+   * `guardWorkingSet`, not left to be discovered by this sweep afterwards.
    */
   async function pathsFor(store: CheckpointStore, cfg: GitConfig, ctx: GitCtx): Promise<string[]> {
     const paths = new Set(store.tracked());
@@ -137,6 +143,67 @@ export default function piGit(pi: ExtensionAPI): void {
       }
     }
     return [...paths];
+  }
+
+  /**
+   * Say something to the user *after* Pi has finished repainting.
+   *
+   * `ctx.ui.notify` appends to Pi's chat container. Its `/tree` handler clears that
+   * container and re-renders from the session the instant `session_tree` resolves, then
+   * writes its own "Navigated to selected point" — so anything notified from inside the
+   * hook is added and wiped within the same tick. That is not a new problem: it is why
+   * pi-git's "no checkpoint for that point" warning, written to be the one thing a failed
+   * rewind said out loud, had never once been visible.
+   *
+   * A macrotask lands after that synchronous repaint. The alternative, `pi.sendMessage`,
+   * does survive — by becoming a session entry, which puts a note meant for the user into
+   * the model's context, and (on `nextTurn`) not until the user speaks again.
+   */
+  function announceAfterRepaint(git: GitCtx, messages: ReadonlyArray<[string, string]>): void {
+    if (!git.hasUI || messages.length === 0) return;
+    setTimeout(() => {
+      for (const [message, level] of messages) {
+        try {
+          git.ui?.notify?.(message, level);
+        } catch {
+          /* a notification is never a reason to break anything */
+        }
+      }
+    }, 0);
+  }
+
+  /** Where the repository points right now. Never a reason to fail a checkpoint. */
+  async function currentHeads(ctx: GitCtx): Promise<Heads> {
+    try {
+      return await headRefs(defaultExec, cwdOf(ctx), { signal: ctx.signal });
+    } catch {
+      return {};
+    }
+  }
+
+  /**
+   * Record the working set before a tool pi-git cannot follow changes it.
+   *
+   * Awaited, unlike the delegation guard: a subagent takes seconds to boot, so racing it
+   * is safe, but `bash` runs the moment this hook returns. A detached guard would lose
+   * that race and record the file's *post*-command bytes as its origin — which is the
+   * bug, not the fix.
+   */
+  async function guardOpaqueWrite(store: CheckpointStore, cfg: GitConfig, ctx: GitCtx): Promise<void> {
+    const cwd = cwdOf(ctx);
+    const paths = new Set(await trackedPaths(defaultExec, cwd, { signal: ctx.signal }));
+    for (const path of await dirtyPaths(defaultExec, cwd, { signal: ctx.signal })) paths.add(path);
+    if (paths.size === 0) return;
+    const { skipped } = await guardWorkingSet(store, [...paths], cfg.maxGuardedFiles);
+    if (skipped > 0) {
+      // Same standard as reportSkips: a partial guard that looks total is the failure
+      // mode, so say what was left out rather than truncating silently.
+      const message =
+        `[pi-git] a shell command ran in a working set of ${paths.size} files; ` +
+        `${skipped} beyond maxGuardedFiles (${cfg.maxGuardedFiles}) are not protected — a rewind will not restore them.`;
+      if (ctx.hasUI) ctx.ui?.notify?.(message, "warning");
+      else console.error(message);
+    }
   }
 
   /**
@@ -165,7 +232,8 @@ export default function piGit(pi: ExtensionAPI): void {
     entryId: string,
     reason: string,
   ): Promise<void> {
-    await checkpointTurn(store, entryId, await pathsFor(store, cfg, ctx), reason, emit);
+    const paths = await pathsFor(store, cfg, ctx);
+    await checkpointTurn(store, entryId, paths, reason, emit, await currentHeads(ctx));
     labelCheckpoint(ctx, entryId);
     reportSkips(ctx);
   }
@@ -173,13 +241,25 @@ export default function piGit(pi: ExtensionAPI): void {
   // Fires *before* the tool runs, with typed input — the only moment the pre-edit
   // bytes are still on disk. This is what lets a restore delete a file the agent
   // created, rather than guessing from its later presence.
+  //
+  // Two shapes, because tools name their target in two ways. An edit tool says which
+  // path it is about to write, so one origin is enough. `bash` says nothing about what
+  // it will touch, so the whole working set is recorded instead — see OPAQUE_WRITE_TOOLS.
   pi.on("tool_call", async (event, ctx) => {
-    if (!EDIT_TOOLS.has(event.toolName)) return;
-    const path = editedPath(event.input);
-    if (!path) return;
-    await withStore(`recording ${path}`, ctx, async (store, _cfg, git) => {
-      await store.rememberOrigin(resolve(cwdOf(git), path));
-    });
+    if (EDIT_TOOLS.has(event.toolName)) {
+      const path = editedPath(event.input);
+      if (!path) return;
+      await withStore(`recording ${path}`, ctx, async (store, _cfg, git) => {
+        await store.rememberOrigin(resolve(cwdOf(git), path));
+      });
+      return;
+    }
+    if (OPAQUE_WRITE_TOOLS.has(event.toolName)) {
+      await withStore("guarding a shell command", ctx, async (store, cfg, git) => {
+        if (!cfg.guardOpaqueWrites) return;
+        await guardOpaqueWrite(store, cfg, git);
+      });
+    }
   });
 
   // Checkpoint the pre-edit state once per turn. The user message only becomes the
@@ -238,15 +318,28 @@ export default function piGit(pi: ExtensionAPI): void {
         const fallback = currentUserEntryId(sm);
         if (fallback && (await store.has(fallback))) target = fallback;
       }
+      const said: Array<[string, string]> = [];
       if (target) {
-        await restoreEntry(store, target, "tree", emit);
-      } else if (git.hasUI) {
+        const summary = await restoreEntry(store, target, "tree", emit);
+        // Say what happened. pi-git used to report only its failures, so a rewind that
+        // rewrote six files looked exactly like one that never ran — and a user checking
+        // `git log`, still seeing every commit the agent made, concluded it had not.
+        if (summary) {
+          const done = describeRestore(summary);
+          if (done) said.push([done, "info"]);
+          // And where the files now disagree with the refs, name the disagreement: that
+          // is the half a file-level undo structurally cannot put back.
+          const drift = describeHeadDrift(summary.heads, await currentHeads(git));
+          if (drift) said.push([drift, "warning"]);
+        }
+      } else {
         // Silence here would read as "there was nothing to undo".
-        git.ui?.notify?.(
+        said.push([
           "[pi-git] no file checkpoint for that point in the session — files left as they are.",
           "warning",
-        );
+        ]);
       }
+      announceAfterRepaint(git, said);
       // The timeline moved; the next turn must checkpoint even if its entry id repeats.
       session.markCheckpointed(null);
     });
@@ -313,13 +406,15 @@ export default function piGit(pi: ExtensionAPI): void {
 
     // Detached on purpose. `pi.events.emit` is synchronous, so awaiting here would put
     // a full-tree hash on pi-spawn's critical path; the subagent takes seconds to
-    // start, and `rememberOrigin` is idempotent, so racing it is safe where blocking on
-    // it is rude. Failures are contained rather than surfacing as an unhandled rejection.
+    // start, and the guard is idempotent, so racing it is safe where blocking on it is
+    // rude. Note the contrast with the `bash` guard above, which must be awaited: there
+    // the write happens the instant the hook returns, so losing the race records the
+    // wrong bytes. Failures are contained rather than becoming an unhandled rejection.
     void (async () => {
       try {
         const paths = new Set(await trackedPaths(defaultExec, cwd));
         for (const path of await dirtyPaths(defaultExec, cwd)) paths.add(path);
-        const { skipped } = await guardDelegation(store, [...paths], cfg.maxGuardedFiles);
+        const { skipped } = await guardWorkingSet(store, [...paths], cfg.maxGuardedFiles);
         if (skipped > 0) {
           // Same standard as reportSkips: a partial guard that looks total is the
           // failure mode, so say what was left out.
