@@ -1,5 +1,11 @@
 import { test, expect } from "bun:test";
-import { browserArgv, runBrowser, looksBlocked } from "../src/browser.ts";
+import {
+  browserArgv,
+  runBrowser,
+  looksBlocked,
+  parseSearchResults,
+  formatSearchResults,
+} from "../src/browser.ts";
 import type { ExecFn } from "../../shared/exec.ts";
 import type { BrowserConfig } from "../src/config.ts";
 
@@ -76,4 +82,76 @@ test("runBrowser search falls back to the next engine when the first is blocked"
 test("runBrowser search requires a query", async () => {
   const exec: ExecFn = async () => ({ stdout: "", stderr: "", code: 0, killed: false });
   await expect(runBrowser("search", {}, { binPath: "agent-browser" }, exec, process.cwd())).rejects.toThrow('"query" is required');
+});
+
+// --- Search extraction -----------------------------------------------------
+//
+// `search` is `read` pointed at an engine, so what came back was the whole page as text.
+// DuckDuckGo's HTML endpoint opens with its region selector: a real three-word search
+// returned 221 lines of which the first 138 were the names of countries, and every one of
+// them went into the transcript and the model's context ahead of anything relevant.
+
+const PAGE = [
+  "All Regions",
+  "",
+  "Argentina",
+  "",
+  "Australia",
+  "",
+  "##",
+  "First Result",
+  "",
+  "example.com/one",
+  "",
+  "The first snippet.",
+  "",
+  "##",
+  "Second Result",
+  "",
+  "example.com/two",
+  "",
+  "The second snippet.",
+  "",
+  "Feedback",
+].join("\n");
+
+test("parseSearchResults keeps the results and drops the page furniture", () => {
+  const results = parseSearchResults(PAGE)!;
+  expect(results).toHaveLength(2);
+  expect(results[0]).toEqual({
+    title: "First Result",
+    url: "example.com/one",
+    snippet: "The first snippet.",
+  });
+  // The trailing Feedback link closes the page; it is not part of the last snippet.
+  expect(results[1]!.snippet).toBe("The second snippet.");
+  expect(JSON.stringify(results)).not.toContain("Argentina");
+});
+
+test("a page with no result markers parses as null, so the caller can fall back to raw", () => {
+  // Degrading to the old noisy output beats reporting no results: a layout change
+  // upstream should cost noise, never answers.
+  expect(parseSearchResults("just some page text\n\nwith no markers")).toBeNull();
+  expect(formatSearchResults("just some page text")).toBeNull();
+});
+
+test("a marker with no url is skipped rather than emitted half-built", () => {
+  expect(parseSearchResults("##\nOnly a title")).toBeNull();
+});
+
+test("formatSearchResults numbers the hits and states what it dropped", () => {
+  const out = formatSearchResults(PAGE, 1)!;
+  expect(out).toContain("1. First Result");
+  expect(out).toContain("example.com/one");
+  expect(out).not.toContain("Second Result");
+  // Silent truncation is the failure mode: a capped list that looks complete.
+  expect(out).toContain("1 more result(s) not shown");
+});
+
+test("search returns extracted results rather than the whole page", async () => {
+  const exec: ExecFn = async () => ({ stdout: PAGE, stderr: "", code: 0, killed: false });
+  const cfg: BrowserConfig = { binPath: "agent-browser" };
+  const out = await runBrowser("search", { query: "x" }, cfg, exec, "/tmp");
+  expect(out).toContain("1. First Result");
+  expect(out).not.toContain("Argentina");
 });

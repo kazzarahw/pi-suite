@@ -8,6 +8,12 @@ Part of the [pi-suite](../README.md).
 
 Registers one `browser` tool whose `action` selects an `agent-browser` verb, so search/fetch/automation are all one tight surface instead of many tools. A persistent daemon keeps the browser **session** alive across calls, so sequential actions act on the same page.
 
+The action and its target show on the tool-call row, and a status line runs for the duration — a page load is the slowest thing in the suite, and it used to run with nothing at all on screen.
+
+## Search
+
+`search` is `read` pointed at a keyless engine (DuckDuckGo's HTML endpoint, then Bing), so what comes back is the whole page as text — including the region selector, which for a three-word query was 138 lines of country names ahead of the first result. Results are now extracted into a numbered `title / url / snippet` list, capped at 8 with the remainder counted rather than quietly dropped. A page that does not parse falls back to the raw text: a layout change upstream should cost noise, never answers.
+
 ## Tool
 
 ```

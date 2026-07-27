@@ -62,6 +62,77 @@ export function looksBlocked(output: string): boolean {
   return t.length < 40 || BLOCK_MARKERS.test(t);
 }
 
+/** One search hit, as the reader's text rendering exposes it. */
+export interface SearchResult {
+  title: string;
+  url: string;
+  snippet: string;
+}
+
+/** How many hits a search reports. Beyond this the tail is dropped, and said to be. */
+export const MAX_SEARCH_RESULTS = 8;
+
+/** The reader marks each result with a bare `##`; everything before the first is furniture. */
+const RESULT_MARKER = "##";
+
+/**
+ * Pull the results out of a search engine's rendered page. Pure. `null` when the page
+ * does not have the expected shape.
+ *
+ * `search` is `read` pointed at an engine, so what came back was the *whole page* as
+ * text. DuckDuckGo's HTML endpoint opens with its region selector: a search for three
+ * words returned 221 lines of which the first 138 were the names of countries, and all of
+ * it went verbatim into the transcript and into the model's context, ahead of anything
+ * relevant, on every search.
+ *
+ * `null` rather than an empty list when no marker is found, so the caller falls back to
+ * the raw text. An engine that changes its layout should degrade to the old noisy
+ * behavior, never to silence — returning nothing would turn a cosmetic change upstream
+ * into a search tool that reports no results.
+ */
+export function parseSearchResults(output: string): SearchResult[] | null {
+  const blocks: string[][] = [];
+  let current: string[] | null = null;
+  for (const line of output.split("\n")) {
+    if (line.trim() === RESULT_MARKER) {
+      current = [];
+      blocks.push(current);
+      continue;
+    }
+    if (current === null) continue; // ahead of the first marker: the page's own chrome
+    const text = line.trim();
+    if (text) current.push(text);
+  }
+  if (blocks.length === 0) return null;
+
+  const results: SearchResult[] = [];
+  for (const block of blocks) {
+    const [title, url, ...rest] = block;
+    if (!title || !url) continue;
+    // A trailing "Feedback" link closes the page and would otherwise be read as part of
+    // the last result's snippet.
+    results.push({ title, url, snippet: rest.filter((l) => l !== "Feedback").join(" ") });
+  }
+  return results.length > 0 ? results : null;
+}
+
+/**
+ * Render search results compactly, or `null` when the page could not be parsed.
+ *
+ * Numbered so the agent can refer to a hit by position, and capped — with the drop
+ * stated rather than silent, the standard the rest of the suite's caps hold to.
+ */
+export function formatSearchResults(output: string, max: number = MAX_SEARCH_RESULTS): string | null {
+  const results = parseSearchResults(output);
+  if (!results) return null;
+  const shown = results.slice(0, max);
+  const lines = shown.map((r, i) => `${i + 1}. ${r.title}\n   ${r.url}${r.snippet ? `\n   ${r.snippet}` : ""}`);
+  if (results.length > shown.length) {
+    lines.push(`(${results.length - shown.length} more result(s) not shown)`);
+  }
+  return lines.join("\n\n");
+}
+
 /** Map an action + args to the `agent-browser` subcommand argv. Pure; throws on a missing required arg. */
 export function browserArgv(action: BrowserAction, args: BrowserArgs): string[] {
   switch (action) {
@@ -142,7 +213,9 @@ export async function runBrowser(
         signal,
       });
       const out = stdout.trim();
-      if (code === 0 && !looksBlocked(out)) return out;
+      // Extracted where the page parses, raw where it does not: a layout change upstream
+      // should cost noise, never results.
+      if (code === 0 && !looksBlocked(out)) return formatSearchResults(out) ?? out;
       if (out) last = out;
     }
     return last || "(search returned no usable results — try the 'open' action on a specific URL)";
