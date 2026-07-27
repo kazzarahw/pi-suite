@@ -25,7 +25,14 @@ Returns the model's advice as text and emits `consult:answered { model, topic }`
 | Setting | Default | Meaning |
 |---|---|---|
 | `defaultModel` | `opus` | model used when the tool call omits one |
-| `allowedModels` | `opus, sonnet, haiku` | completions offered by the command (not enforced) |
+| `allowedModels` | `opus, sonnet, haiku` | presets offered by the command and the panel — **not** an allowlist |
+
+`allowedModels` is a preset list, not a gate: `claude` accepts model names this suite has
+no business enumerating, so an unlisted one still runs. What the panel does do is *say* when
+the configured default is not one of them, and when `claude` is not on `PATH` at all — a
+stale `defaultModel` otherwise fails every call with nothing connecting the failure to a
+setting you forgot you had. The tool checks for the CLI before spawning it, so a missing
+install reports as a missing install rather than as whatever a failed spawn puts on stderr.
 
 ## Install
 

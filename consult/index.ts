@@ -3,6 +3,7 @@ import { loadConfig, saveConfig } from "./src/config.ts";
 import { runConsult } from "./src/consult.ts";
 import { buildConsultTool } from "./src/tool.ts";
 import { buildConsultCommand } from "./src/command.ts";
+import { whichOnPath } from "../shared/exec.ts";
 import type { Emitter } from "../shared/index.ts";
 
 /**
@@ -25,6 +26,7 @@ export default function piConsult(pi: ExtensionAPI): void {
   const command = buildConsultCommand({
     loadConfig: () => loadConfig(),
     saveConfig: (c) => saveConfig(c),
+    which: (bin) => whichOnPath(bin),
   });
   pi.registerCommand(command.name, command.options);
 }

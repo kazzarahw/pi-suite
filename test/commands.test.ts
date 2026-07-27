@@ -42,7 +42,7 @@ const TABLES: Array<{ dir: string; fields: ReadonlyArray<{ key: string }>; defau
   { dir: "browser", fields: BROWSER_FIELDS, defaults: BROWSER_DEFAULTS },
   {
     dir: "consult",
-    fields: CONSULT_FIELDS({ loadConfig: () => CONSULT_DEFAULTS, saveConfig: () => {} }),
+    fields: CONSULT_FIELDS({ loadConfig: () => CONSULT_DEFAULTS }),
     defaults: CONSULT_DEFAULTS,
   },
 ];

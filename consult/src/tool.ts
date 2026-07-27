@@ -24,6 +24,7 @@ export interface ToolDeps {
     prompt: string;
     cwd: string;
     signal?: AbortSignal;
+    modelSource?: "param" | "config";
   }) => Promise<string>;
   emit: Emitter;
 }
@@ -45,7 +46,8 @@ export function buildConsultTool(deps: ToolDeps) {
       ctx: ExtensionContext,
     ): Promise<AgentToolResult<{ model: string }>> {
       const cfg = deps.loadConfig();
-      const model = params.model?.trim() || cfg.defaultModel;
+      const asked = params.model?.trim();
+      const model = asked || cfg.defaultModel;
       ctx?.ui?.setStatus?.("consult", `consulting ${model}…`);
       try {
         const advice = await deps.runConsult({
@@ -53,6 +55,9 @@ export function buildConsultTool(deps: ToolDeps) {
           prompt: params.prompt,
           cwd: cwdOf(ctx),
           signal,
+          // Which of the two sources this model came from, so a failure can name the one
+          // the user can actually change.
+          modelSource: asked ? "param" : "config",
         });
         deps.emit("consult:answered", { model, topic: params.prompt.slice(0, 80) });
         return {
