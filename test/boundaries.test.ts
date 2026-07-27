@@ -268,6 +268,15 @@ const SINGLE_SOURCE: SingleSource[] = [
     home: "shared/config.ts",
     fix: "call agentDir() or projectConfigDir(cwd, …)",
   },
+  {
+    // pi-lens owned this one privately, which was fine until pi-consult needed the same
+    // answer before spawning `claude` — and extensions may not import from each other, so
+    // the only options were a shared home or a second copy.
+    what: "a PATH search for an executable",
+    re: /env\.PATH/,
+    home: "shared/exec.ts",
+    fix: "call whichOnPath()",
+  },
 ];
 
 for (const rule of SINGLE_SOURCE) {
@@ -288,11 +297,17 @@ for (const rule of SINGLE_SOURCE) {
 }
 
 test("the single-source patterns actually match the thing they describe", () => {
-  // Guards the guards: three checkers that can never fail are not checkers.
-  const [frontmatter, hash, agentDir] = SINGLE_SOURCE as [SingleSource, SingleSource, SingleSource];
+  // Guards the guards: a checker that can never fail is not a checker.
+  const [frontmatter, hash, agentDir, pathSearch] = SINGLE_SOURCE as [
+    SingleSource,
+    SingleSource,
+    SingleSource,
+    SingleSource,
+  ];
   expect(frontmatter.re.test(String.raw`text.match(/^---\r?\n([\s\S]*?)---/)`)).toBe(true);
   expect(hash.re.test("h = (h * 31 + s.charCodeAt(i)) | 0;")).toBe(true);
   expect(agentDir.re.test('return join(homedir(), CONFIG_DIR_NAME, "agent");')).toBe(true);
+  expect(pathSearch.re.test('const dirs = (process.env.PATH ?? "").split(delimiter);')).toBe(true);
   // And that each one's home really does contain it — **as code**, not as prose.
   //
   // The raw-text version of this check was one comment away from vacuous: the rule

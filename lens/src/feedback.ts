@@ -7,7 +7,6 @@
  * the I/O half takes its dependencies as arguments and the composing half is pure.
  */
 import { runLinters } from "./linters.ts";
-import { whichOnPath } from "./health.ts";
 import { runFormatter, type LanguageToolchain } from "./toolchains.ts";
 import {
   mergeDiagnostics,
@@ -16,7 +15,7 @@ import {
   formatUnavailable,
   type Diagnostic,
 } from "./diagnostics.ts";
-import type { ExecFn } from "../../shared/exec.ts";
+import { whichOnPath, type ExecFn } from "../../shared/exec.ts";
 import type { LspManager } from "./lsp/manager.ts";
 
 export interface GatherInput {

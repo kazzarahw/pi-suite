@@ -1,3 +1,4 @@
+import { whichOnPath } from "../../../shared/exec.ts";
 import { spawn, type ChildProcess } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
@@ -5,7 +6,7 @@ import { extname } from "node:path";
 import { createLspClient, uriToPath, type LspClient } from "./client.ts";
 import type { ServerSpec } from "./config.ts";
 import { lspServers } from "../toolchains.ts";
-import { whichOnPath } from "../health.ts";
+
 import type { Diagnostic } from "../diagnostics.ts";
 
 /** Max time to wait for a cold server's first project-load/publish before proceeding anyway. */

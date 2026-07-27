@@ -9,6 +9,8 @@
  * diagnostics path depends on.
  */
 import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
+import { join, delimiter as pathDelimiter } from "node:path";
 
 export interface ExecOptions {
   /**
@@ -82,7 +84,7 @@ function buildEnv(extra?: Record<string, string | undefined>): NodeJS.ProcessEnv
 
 export const defaultExec: ExecFn = (cmd, args, opts) =>
   new Promise((resolve) => {
-    execFile(
+    const child = execFile(
       cmd,
       args,
       {
@@ -107,4 +109,35 @@ export const defaultExec: ExecFn = (cmd, args, opts) =>
         resolve({ stdout: stdout ?? "", stderr: err, code, killed: (error as { killed?: boolean } | null)?.killed === true });
       },
     );
+    // Close the child's stdin immediately.
+    //
+    // `execFile` opens a pipe and leaves it open, so a child that reads stdin waits on
+    // input that is never coming. Nothing this suite runs wants any — every one of them
+    // takes its input from argv — but several *look*, and the wait is not free: `claude`
+    // spent three seconds of every consult call on "no stdin data received in 3s,
+    // proceeding without it" before doing the work.
+    //
+    // Here rather than at a call site because it is a property of the runner's contract:
+    // this thing always resolves, and a child blocked on a pipe nobody will write to is
+    // the one way it could fail to.
+    child.stdin?.end();
   });
+
+/**
+ * Is `bin` present in any `PATH` directory?
+ *
+ * Lives beside the runner because it answers the question every caller of it eventually
+ * asks — *would this even start?* — and because two extensions now need it. pi-lens
+ * probes its toolchain to draw a health line and to skip language servers that are not
+ * installed; pi-consult checks for `claude` before spawning it, so a missing CLI reports
+ * as a missing CLI rather than as whatever a failed spawn happens to put on stderr.
+ *
+ * Unix semantics, and deliberately not an `exec` of `which`: this runs on a settings
+ * panel render and once per language server, where spawning a process to ask would cost
+ * more than the answer is worth. Injected as a parameter at every call site so tests
+ * never depend on the machine they run on.
+ */
+export function whichOnPath(bin: string): boolean {
+  const dirs = (process.env.PATH ?? "").split(pathDelimiter).filter(Boolean);
+  return dirs.some((d) => existsSync(join(d, bin)));
+}

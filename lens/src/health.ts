@@ -1,17 +1,9 @@
-import { existsSync } from "node:fs";
-import { join, delimiter } from "node:path";
 import type { LanguageToolchain } from "./toolchains.ts";
 
 /** Availability of one tool binary referenced by the toolchains. */
 export interface ToolStatus {
   bin: string;
   available: boolean;
-}
-
-/** Default `which`: is `bin` present in any `PATH` directory? (Unix; injectable for tests.) */
-export function whichOnPath(bin: string): boolean {
-  const dirs = (process.env.PATH ?? "").split(delimiter).filter(Boolean);
-  return dirs.some((d) => existsSync(join(d, bin)));
 }
 
 /** Probe each distinct tool binary the toolchains reference (LSP + linters + formatters) once. */

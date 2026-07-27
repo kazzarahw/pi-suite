@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { defaultExec } from "../shared/exec.ts";
+import { defaultExec, whichOnPath } from "../shared/exec.ts";
 import {
   cwdOf,
   createNudgeGuard,
@@ -14,7 +14,7 @@ import { loadConfig, saveConfig, autodetectVerify } from "./src/config.ts";
 import { createManager } from "./src/lsp/manager.ts";
 import { toolchainFor, DEFAULT_TOOLCHAINS } from "./src/toolchains.ts";
 import { discoverWarmTargets, listWorkspaceFiles } from "./src/prewarm.ts";
-import { formatHealth, formatHealthCompact, probeAvailability, whichOnPath } from "./src/health.ts";
+import { formatHealth, formatHealthCompact, probeAvailability } from "./src/health.ts";
 import { composeToolResult, feedbackBlocks, gatherFeedback } from "./src/feedback.ts";
 import { createVerifyGate } from "./src/gate.ts";
 import { runVerify, formatVerify, chooseVerifyCommand } from "./src/verify.ts";
