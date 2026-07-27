@@ -21,7 +21,14 @@ export interface Skip {
 
 /** What Pi tells us about the session. Structural, so a test can pass a plain object. */
 export interface SessionSource {
-  sessionManager?: { getSessionId?: () => string };
+  sessionManager?: {
+    getSessionId?: () => string;
+    /**
+     * `undefined` for a session Pi never writes to disk. `SessionManager.inMemory` is
+     * constructed with no session file, which is what `--no-session` builds.
+     */
+    getSessionFile?: () => string | undefined;
+  };
 }
 
 export interface GitSession {
@@ -29,6 +36,18 @@ export interface GitSession {
    * The store for this session, rebuilt only when the session id or the size cap
    * changes. `null` when there is no session to key on — nothing could be restored
    * later, so there is nothing worth recording now.
+   *
+   * Also `null` for an **unwritten** session. A session with no file on disk cannot be
+   * reached by `/tree`, `/fork`, or `--resume`, so every checkpoint taken in one is
+   * unreachable the moment it ends. That is not hypothetical: pi-spawn runs each subagent
+   * as `pi --mode json -p --no-session`, and each of those was building a full checkpoint
+   * directory — blobs, manifests, origins — for a session nobody could ever navigate.
+   * They then sat in the store until the TTL swept them, and every one of them widened
+   * the cross-session scan that `findCheckpoint` falls back to.
+   *
+   * The parent process still guards the delegation, which is where the coverage that
+   * matters actually comes from; this only stops the child from duplicating it into a
+   * directory with no way back.
    */
   store(ctx: SessionSource | undefined, maxFileBytes: number): CheckpointStore | null;
   /**
@@ -60,8 +79,12 @@ export function createGitSession(
 
   return {
     store(ctx, maxFileBytes) {
-      const sessionId = ctx?.sessionManager?.getSessionId?.();
+      const sm = ctx?.sessionManager;
+      const sessionId = sm?.getSessionId?.();
       if (!sessionId) return null;
+      // Only when the host offers the method at all: an older Pi, or a test fake that
+      // does not model it, must keep checkpointing rather than silently stop.
+      if (sm?.getSessionFile && !sm.getSessionFile()) return null;
       if (cached && cached.sessionId === sessionId && cached.maxFileBytes === maxFileBytes) {
         return cached.store;
       }

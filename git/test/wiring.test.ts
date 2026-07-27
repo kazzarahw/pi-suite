@@ -104,7 +104,17 @@ test("/pi-git exposes configuration verbs only — no checkpoint, restore, or ro
     expect(words).not.toContain(action);
   }
   // Every offered word is a config field's verb or one of its values — nothing else.
-  const allowed = new Set(["mode", "detect", "guard", "guardshell", "ttl", "off", "notify", "block"]);
+  const allowed = new Set([
+    "mode",
+    "detect",
+    "guard",
+    "guardshell",
+    "ttl",
+    "maxbytes",
+    "off",
+    "notify",
+    "block",
+  ]);
   expect(words.filter((w) => !allowed.has(w))).toEqual([]);
 });
 

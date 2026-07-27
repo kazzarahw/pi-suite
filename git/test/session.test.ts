@@ -139,3 +139,26 @@ test("marking an entry records it, and null clears it", () => {
   session.markCheckpointed(null);
   expect(session.lastCheckpointed()).toBeNull();
 });
+
+test("an unwritten session gets no store, because nothing could ever navigate back to it", () => {
+  // pi-spawn runs every subagent as `pi --mode json -p --no-session`, and each one was
+  // building a full checkpoint directory — blobs, manifests, origins — for a session
+  // Pi never writes and no `/tree`, `/fork`, or `--resume` can reach. They sat there
+  // until the TTL swept them, widening the cross-session scan the whole time.
+  const s = createGitSession(() => ({}) as unknown as CheckpointStore);
+  const unwritten = { sessionManager: { getSessionId: () => "s1", getSessionFile: () => undefined } };
+  expect(s.store(unwritten, 1024)).toBeNull();
+});
+
+test("a session Pi does write still gets one", () => {
+  const s = createGitSession(() => ({}) as unknown as CheckpointStore);
+  const written = { sessionManager: { getSessionId: () => "s1", getSessionFile: () => "/p/s1.jsonl" } };
+  expect(s.store(written, 1024)).not.toBeNull();
+});
+
+test("a host that does not report a session file keeps checkpointing", () => {
+  // Absence of the method means "this Pi does not tell us", not "there is no file".
+  // Failing closed on it would silently disable pi-git against an older host.
+  const s = createGitSession(() => ({}) as unknown as CheckpointStore);
+  expect(s.store({ sessionManager: { getSessionId: () => "s1" } }, 1024)).not.toBeNull();
+});

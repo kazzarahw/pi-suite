@@ -357,6 +357,49 @@ test("gc keeps blobs referenced by a checkpoint in the current format", async ()
   expect(read(f)).toBe("precious");
 });
 
+// --- The cross-session lookup ---------------------------------------------
+
+test("a forked session still finds a manifest written before the fork", async () => {
+  // The property the old ref-based storage got for free by living in the repository.
+  const f = write("a.txt", "before the fork");
+  await store("parent").checkpoint("e1", [f]);
+  writeFileSync(f, "after", "utf8");
+  // A different session directory, as a fork creates — the entry id is inherited.
+  await store("child").restore("e1");
+  expect(read(f)).toBe("before the fork");
+});
+
+test("the foreign lookup still finds the right entry among many sessions", async () => {
+  // `resolveRestoreTarget` calls has() once per ancestor as it walks up, and the fallback
+  // used to readdir the root and stat a candidate in every other session on each of those
+  // calls — O(ancestors x sessions), against a session count that only grows. It is one
+  // index now, so this asserts the thing the rewrite could plausibly break: that a hit
+  // buried among many sessions is still found, and a miss is still a miss.
+  const f = write("a.txt", "wanted");
+  for (let i = 0; i < 25; i++) await store(`other-${i}`).checkpoint(`x${i}`, [f]);
+  await store("holder").checkpoint("needle", [f]);
+
+  const s = store("mine");
+  for (let i = 0; i < 12; i++) expect(await s.has(`missing-${i}`)).toBe(false);
+  expect(await s.has("needle")).toBe(true);
+  expect(await s.has("x7")).toBe(true);
+
+  writeFileSync(f, "clobbered", "utf8");
+  await s.restore("needle");
+  expect(read(f)).toBe("wanted");
+});
+
+test("origin.json is never mistaken for an entry named 'origin'", async () => {
+  // Every file in a session directory ends in .json, including the origin map. Indexing
+  // it by filename would mint an entry id of "origin" pointing at a bare path->state map.
+  const f = write("a.txt", "v");
+  const parent = store("parent");
+  await parent.rememberOrigin(f);
+  await parent.checkpoint("e1", [f]);
+
+  expect(await store("child").has("origin")).toBe(false);
+});
+
 // --- Restore hygiene -------------------------------------------------------
 
 test("restore removes directories its own deletions emptied", async () => {

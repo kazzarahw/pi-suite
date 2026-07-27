@@ -259,21 +259,67 @@ export function createStore(sessionId: string, opts: StoreOptions = {}): Checkpo
    * this is what replaces that property. Entry ids are unique, so a manifest found
    * under another session is unambiguously the right one.
    */
-  function findCheckpoint(entryId: string): Checkpoint | null {
-    const own = readCheckpoint(manifestFile(entryId));
-    if (own) return own;
+  /**
+   * Entry id → the foreign manifest holding it, built once and kept for this store's life.
+   *
+   * The fallback below used to `readdir` the store root and stat a candidate file in every
+   * other session, per lookup. `resolveRestoreTarget` calls `has()` once per ancestor as
+   * it walks up looking for the nearest checkpoint, so a restore cost
+   * O(ancestors × sessions) directory operations — and the session count only ever grows,
+   * with a directory per subagent run piling on (see `GitSession.store`).
+   *
+   * One pass builds the whole index instead. Caching it is sound for the case it exists to
+   * serve: a fork inherits entries that were written *before* it started, so the manifests
+   * this needs to find are all on disk by the time the forked session first asks. A
+   * manifest written by some other Pi process mid-session is missed, which is the same
+   * answer today's code gives for one written a moment later.
+   */
+  let foreignIndex: Map<string, string> | null = null;
+
+  function buildForeignIndex(): Map<string, string> {
+    const index = new Map<string, string>();
     let names: string[];
     try {
       names = readdirSync(root);
     } catch {
-      return null;
+      return index;
     }
     for (const name of names) {
       if (name === BLOBS_DIR || name === session) continue;
-      const found = readCheckpoint(join(root, name, `${safeName(entryId)}.json`));
-      if (found) return found;
+      const dir = join(root, name);
+      let files: string[];
+      try {
+        files = readdirSync(dir);
+      } catch {
+        continue;
+      }
+      for (const file of files) {
+        if (!file.endsWith(".json") || file === ORIGIN_FILE) continue;
+        // First writer wins: entry ids are unique, so a second hit would be the same
+        // entry seen through a session that forked from the one already recorded.
+        const id = file.slice(0, -".json".length);
+        if (!index.has(id)) index.set(id, join(dir, file));
+      }
     }
-    return null;
+    return index;
+  }
+
+  /**
+   * The manifest for an entry, preferring this session's own.
+   *
+   * A fork starts a new session directory but inherits its parent's entries, ids
+   * included — so without this lookup, rewinding in a forked session to anything
+   * that happened before the fork would find no checkpoint and silently do nothing.
+   * The old ref-based storage lived in the repository and survived a fork for free;
+   * this is what replaces that property. Entry ids are unique, so a manifest found
+   * under another session is unambiguously the right one.
+   */
+  function findCheckpoint(entryId: string): Checkpoint | null {
+    const own = readCheckpoint(manifestFile(entryId));
+    if (own) return own;
+    foreignIndex ??= buildForeignIndex();
+    const file = foreignIndex.get(safeName(entryId));
+    return file ? readCheckpoint(file) : null;
   }
 
   return {

@@ -21,6 +21,13 @@ Content is stored under `~/.pi/agent/checkpoints/`: one manifest per session ent
 
 This used to work through git plumbing — `git add -A` into a temporary index, `write-tree`, `commit-tree`. That has a work-tree boundary, and a session rooted *above* a repository falls off it: `add -A` records the inner repository as a gitlink and captures none of its contents, so a restore reverted the outer file, left the inner one edited, and reported success. Manifest keys are absolute paths; a path has no root, so it has no boundary.
 
+A session Pi never writes to disk gets no checkpoints at all. `/tree`, `/fork`, and
+`--resume` all work from the session file, so a checkpoint taken in a `--no-session` run
+is unreachable the moment it ends — and pi-spawn runs every subagent as
+`pi --mode json -p --no-session`, so each one was building a full store for a session
+nobody could navigate. The parent process still guards the delegation, which is where the
+coverage that matters comes from.
+
 Git still has a job, read-only: `git status` enumerates what changed and `git ls-files` what could, which is how the guards below cover files no tool call ever named. Outside a repository those sources simply contribute nothing and the tool-tracked files still work.
 
 ## Configure
