@@ -106,3 +106,47 @@ test("describeCall names the action and its target", () => {
   // A write's `query` is meaningless; the row must not borrow it as the target.
   expect(describeCall({ action: "write", query: "nope" } as Params)).toBe("write");
 });
+
+// ---------------------------------------------------------------------------
+// The description is a behavioral surface, not documentation.
+//
+// The index injection is a table of contents of what is already stored; nothing in it, or
+// anywhere else, tells an agent to store something new. So the description is the only
+// surface that reaches an agent about writing. Across nine dogfooding sessions `write` was
+// called zero times — including sessions that turned up exactly what memories are for.
+// (Those sessions show zero recalls too, but the store held two test fixtures described as
+// "body" and "test body content", so that number says nothing about recall's trigger.)
+//
+// So the write trigger is pinned. A later edit is free to reword it; one that deletes it
+// should have to notice.
+// ---------------------------------------------------------------------------
+
+test("the description says when to write, unprompted, and when not to", () => {
+  const d = memory.description;
+  // Events an agent can notice happening, rather than a judgement about "durability" —
+  // which is the wording that produced nothing.
+  expect(d).toContain("WITHOUT being asked");
+  expect(d).toContain("corrects you");
+  expect(d).toContain("cost you effort to find");
+  // The floor. A trigger without one turns every session into note-taking.
+  expect(d).toContain("Do NOT write what the repository already records");
+  expect(d).toContain("only true of the task in front of you");
+});
+
+test("the write trigger survives into the system prompt", () => {
+  // The description is only read once the model is already considering the tool; an
+  // unprompted write starts before that.
+  expect(memory.promptSnippet).toContain("write one unprompted");
+});
+
+test("recall's trigger is left alone, since nothing measured it", () => {
+  expect(memory.description).toContain("use it before acting when a memory's description looks relevant");
+});
+
+test("the type enum tells the agent which trigger maps to which type", () => {
+  const type = (memory.parameters as { properties?: Record<string, { description?: string }> })
+    .properties!.type!.description!;
+  expect(type).toContain("feedback = a correction");
+  expect(type).toContain("say why");
+  expect(type).toContain("project = a fact about this repo");
+});

@@ -35,10 +35,16 @@ const parameters = Type.Object({
     Type.String({ description: "One-line summary, used to judge relevance during recall — required for 'write'." }),
   ),
   content: Type.Optional(
-    Type.String({ description: "The memory body (markdown) — required for 'write'. Must not contain secrets." }),
+    Type.String({
+      description:
+        "The memory body (markdown) — required for 'write'. Write what will still be true next session, not what happened in this one. Must not contain secrets.",
+    }),
   ),
   type: Type.Optional(
-    StringEnum(MEMORY_TYPES, { description: "user | feedback | project | reference — required for 'write'." }),
+    StringEnum(MEMORY_TYPES, {
+      description:
+        "Required for 'write'. feedback = a correction or a stated preference about how to work (say why); project = a fact about this repo or the work in flight; user = who they are, their role and setup; reference = a pointer to something external (URL, dashboard, ticket).",
+    }),
   ),
   scope: Type.Optional(
     StringEnum(SCOPES, {
@@ -75,14 +81,34 @@ function requireWriteFields(params: MemoryParams): void {
   }
 }
 
-/** The one `memory` tool: `recall` reads stored memories, `write` persists one. */
+/**
+ * The one `memory` tool: `recall` reads stored memories, `write` persists one.
+ *
+ * **`write`'s description has to say when, because nothing else does.** The index injection
+ * is a table of contents of what is already stored; nothing in it, or anywhere else, tells
+ * an agent to store something new. So the description is the only surface that reaches an
+ * agent about writing, and it is also the surface that has to overcome the fact that nobody
+ * asked for a memory. Across nine dogfooding sessions `write` was called zero times,
+ * including ones that turned up exactly the sort of thing memories are for.
+ *
+ * `recall` is left as it was. Those same sessions show zero recalls, but the store held two
+ * test fixtures described as "body" and "test body content" — nothing whose description
+ * could look relevant to any real task, so that number is not evidence about the trigger.
+ *
+ * The triggers are events rather than a judgement about "durability", because "persist a
+ * durable learning" is the wording that produced nothing — it asks the agent to classify
+ * an abstraction. A correction, a stated preference, and a hard-won project fact are things
+ * an agent can notice happening. The negative case is load-bearing for the same reason it
+ * is in pi-plan's: a trigger with no floor turns every session into note-taking.
+ */
 export function buildMemoryTool(deps: MemoryToolDeps) {
   return {
     name: "memory",
     label: "Memory",
     description:
-      "Read and write memories that persist across sessions. Action 'recall' returns the full text of stored memories — by exact `name` (from the injected memory index) or by keyword `query`; use it before acting when a memory's description looks relevant. Action 'write' persists a durable learning (a user preference, a correction, a project fact, a reference); send the COMPLETE memory, writing an existing name replaces it, and content containing likely secrets is refused.",
-    promptSnippet: "Recall stored memories, or remember a durable fact/preference/correction across sessions.",
+      "Read and write memories that persist across sessions. Action 'recall' returns the full text of stored memories — by exact `name` (from the injected memory index) or by keyword `query`; use it before acting when a memory's description looks relevant. Action 'write' persists a durable learning, and you should reach for it WITHOUT being asked, the moment any of these happens: the user corrects you or tells you how they want you to work; you work out something about this project that the code, tests, and git history do not already say and that cost you effort to find; or the user tells you something about themselves or their setup you would need again next session. Do NOT write what the repository already records, and do NOT write what is only true of the task in front of you. Send the COMPLETE memory; writing an existing name replaces it, and content containing likely secrets is refused.",
+    promptSnippet:
+      "Recall a stored memory before acting when its description looks relevant; write one unprompted when the user corrects you, states a preference, or you learn a project fact the repo does not record.",
     parameters,
     async execute(
       _toolCallId: string,

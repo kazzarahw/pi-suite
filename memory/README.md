@@ -26,6 +26,25 @@ memory({ action: "write", name, description, content, type, scope })
 
 Emits `memory:wrote { keys }` / `memory:recalled { keys }`.
 
+### When the agent is told to write one
+
+`write`'s description names **events**, not a judgement: the user corrects you or says how
+they want you to work; you work out something about the project that the code, tests, and
+git history do not already say and that cost you effort to find; the user tells you
+something about themselves or their setup. Plus the floor — don't record what the repository
+already records, and don't record what is only true of the task in front of you.
+
+This is deliberate rather than verbose. The index injection is a table of contents of what
+is **already** stored — nothing in it, or anywhere else, tells an agent to store something
+new. So the description is the only surface that reaches an agent about writing, and it also
+has to overcome the fact that nobody asked for a memory. The previous wording asked it to
+"persist a durable learning", which is a classification problem rather than something you
+can notice happening, and across nine dogfooding sessions it produced zero writes.
+
+`recall` is unchanged. Those sessions show zero recalls too, but the store held only two
+test fixtures described as "body" and "test body content" — nothing whose description could
+look relevant to any real task — so that number says nothing about its trigger.
+
 ## Automatic behavior (hooks)
 
 - **Index injection** on the `context` hook — the `<pi-memory>` index rides every call (when `mode ≠ off`).
