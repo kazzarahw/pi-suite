@@ -20,7 +20,7 @@ test("injectionBlock wraps header and body in matching tags", () => {
 });
 
 test("injectionBlock opening and closing tags always match", () => {
-  for (const name of ["lens", "memory", "todo"]) {
+  for (const name of ["lens", "memory", "plan"]) {
     const block = injectionBlock(name, "h", "b");
     expect(block.startsWith(`<pi-${name}>\n`)).toBe(true);
     expect(block.endsWith(`\n</pi-${name}>`)).toBe(true);

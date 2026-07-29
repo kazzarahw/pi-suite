@@ -4,16 +4,14 @@ import { loadExtension } from "../shared/test/harness.ts";
 import { SURFACE } from "../shared/index.ts";
 
 import { FIELDS as GIT_FIELDS } from "../git/src/command.ts";
-import { FIELDS as TODO_FIELDS } from "../todo/src/command.ts";
-import { FIELDS as GOAL_FIELDS } from "../goal/src/command.ts";
+import { FIELDS as PLAN_FIELDS } from "../plan/src/command.ts";
 import { FIELDS as LENS_FIELDS } from "../lens/src/command.ts";
 import { FIELDS as MEMORY_FIELDS } from "../memory/src/command.ts";
 import { FIELDS as SPAWN_FIELDS } from "../spawn/src/command.ts";
 import { FIELDS as BROWSER_FIELDS } from "../browser/src/command.ts";
 
 import { DEFAULTS as GIT_DEFAULTS } from "../git/src/config.ts";
-import { DEFAULTS as TODO_DEFAULTS } from "../todo/src/config.ts";
-import { DEFAULTS as GOAL_DEFAULTS } from "../goal/src/config.ts";
+import { DEFAULTS as PLAN_DEFAULTS } from "../plan/src/config.ts";
 import { DEFAULTS as LENS_DEFAULTS } from "../lens/src/config.ts";
 import { DEFAULTS as MEMORY_DEFAULTS } from "../memory/src/config.ts";
 import { DEFAULTS as SPAWN_DEFAULTS } from "../spawn/src/config.ts";
@@ -32,8 +30,7 @@ import { DEFAULTS as BROWSER_DEFAULTS } from "../browser/src/config.ts";
 /* eslint-disable @typescript-eslint/no-explicit-any -- the table is heterogeneous by design */
 const TABLES: Array<{ dir: string; fields: ReadonlyArray<{ key: string }>; defaults: any }> = [
   { dir: "git", fields: GIT_FIELDS, defaults: GIT_DEFAULTS },
-  { dir: "todo", fields: TODO_FIELDS, defaults: TODO_DEFAULTS },
-  { dir: "goal", fields: GOAL_FIELDS, defaults: GOAL_DEFAULTS },
+  { dir: "plan", fields: PLAN_FIELDS, defaults: PLAN_DEFAULTS },
   { dir: "lens", fields: LENS_FIELDS, defaults: LENS_DEFAULTS },
   { dir: "memory", fields: MEMORY_FIELDS, defaults: MEMORY_DEFAULTS },
   { dir: "spawn", fields: SPAWN_FIELDS, defaults: SPAWN_DEFAULTS },
@@ -166,7 +163,7 @@ for (const dir of present(["lens", "memory", "spawn", "browser"])) {
  * A command whose bare-value field is an enum reads a lone word as that field's value,
  * and rejects one that is not a member — `/pi-git notify` is the whole point of the form.
  */
-for (const dir of present(["git", "todo", "goal"])) {
+for (const dir of present(["git", "plan"])) {
   const command = SURFACE.find((e) => e.dir === dir)!.command;
   test(`[${dir}] /${command} reads a lone word as the mode and rejects a bad one`, async () => {
     const api = await loadExtension(dir);

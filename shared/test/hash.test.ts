@@ -2,9 +2,9 @@ import { test, expect } from "bun:test";
 import { stableHash } from "../hash.ts";
 
 /**
- * The short string hash behind pi-todo's item ids and pi-memory's gotcha dedup key.
+ * The short string hash behind pi-memory's gotcha dedup key.
  *
- * "Stable" is the whole contract: pi-todo's ids must survive a session reload and stay
+ * "Stable" is the whole contract: a key must survive a session reload and stay
  * reproducible in tests, and pi-memory's key must collapse repeat captures of the same
  * failure into one memory rather than accumulating near-duplicates.
  */
@@ -36,8 +36,10 @@ test("stays short enough to embed in an id or a filename", () => {
 });
 
 test("is pinned to its current output, so ids do not silently change", () => {
-  // pi-todo ids derived from this are written into session state. Changing the algorithm
-  // would orphan every stored id, so the value is asserted rather than left implicit.
+  // pi-memory's gotcha dedup keys derived from this are written to disk. Changing the
+  // algorithm would orphan every stored key, so the value is asserted rather than left
+  // implicit. (pi-todo derived item ids from this too; pi-plan, which replaced it, uses
+  // ordinals instead — short enough to render on every line and to be typed back.)
   expect(stableHash("hello")).toBe(stableHash("hello"));
   expect(stableHash("a")).toBe((97 >>> 0).toString(36));
 });

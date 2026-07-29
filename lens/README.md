@@ -55,8 +55,8 @@ which is exactly where the full path is the information.
 `block` is the **Insist** shape, not Interdict, and that is forced rather than chosen:
 only `tool_call` can refuse an action, and it fires *before* the write, when the
 diagnostics worth refusing over do not exist yet. What pi-lens finds at settle is
-unfinished work, so it insists — bounded by the same no-progress guard pi-todo and
-pi-goal use, since the agent that broke the build may never fix it.
+unfinished work, so it insists — bounded by the same no-progress guard pi-plan uses,
+since the agent that broke the build may never fix it.
 
 Both `notify` and `block` tell **you** the verify result immediately via a notification;
 they differ only in whether the agent is made to act on a failure now or on your next

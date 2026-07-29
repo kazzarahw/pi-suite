@@ -1,15 +1,14 @@
 {
   "name": "pi-suite",
   "version": "0.1.0",
-  "description": "A small, self-consistent, agent-facing extension suite for Pi: browser, git, goal, lens, memory, spawn, todo.",
+  "description": "A small, self-consistent, agent-facing extension suite for Pi: browser, git, lens, memory, plan, spawn.",
   "license": "AGPL-3.0",
   "private": true,
   "type": "module",
   "pi": {
     "extensions": [
       "./memory/index.ts",
-      "./todo/index.ts",
-      "./goal/index.ts",
+      "./plan/index.ts",
       "./git/index.ts",
       "./spawn/index.ts",
       "./browser/index.ts",

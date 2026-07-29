@@ -127,7 +127,7 @@ for (const ext of SURFACE) {
  * schema so a tool that grows a second verb cannot hide it in prose.
  */
 test("every multi-verb tool exposes its verbs as an `action` enum", async () => {
-  const MULTI_VERB = ["memory", "browser", "lens"];
+  const MULTI_VERB = ["memory", "browser", "lens", "plan"];
   for (const ext of SURFACE) {
     if (!MULTI_VERB.includes(ext.dir)) continue;
     const api = await loadExtension(ext.dir);

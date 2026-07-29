@@ -138,8 +138,8 @@ export interface ConfigCommandOptions<T> {
    */
   readonly readoutExtra?: (cfg: T, ctx: ExtensionCommandContext) => string | undefined;
   /**
-   * Accept a bare value as this field, with no verb: `/pi-todo block` rather than
-   * `/pi-todo mode block`. Only sound when one field could plausibly be meant.
+   * Accept a bare value as this field, with no verb: `/pi-plan block` rather than
+   * `/pi-plan mode block`. Only sound when one field could plausibly be meant.
    */
   readonly bareValueField?: keyof T & string;
 }
@@ -300,7 +300,7 @@ export function defineConfigCommand<T extends object>(
        */
       getArgumentCompletions: (prefix: string): AutocompleteItem[] | null => {
         const words = [...byVerb.keys(), ...extras.keys()];
-        // A bare-value command also completes that field's values: `/pi-todo <TAB>`
+        // A bare-value command also completes that field's values: `/pi-plan <TAB>`
         // should offer off/notify/block, and a string field's presets complete the same
         // way — both are things a user types straight after the command name.
         if (opts.bareValueField) {

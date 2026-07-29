@@ -37,7 +37,7 @@ export default function piLens(pi: ExtensionAPI): void {
   // `cwdOf(ctx)` from the hook that is actually firing.
   const manager = createManager();
   const gate = createVerifyGate();
-  // Bounds `block` mode's auto-continue, exactly as pi-todo and pi-goal bound theirs: the
+  // Bounds `block` mode's auto-continue, exactly as pi-plan bounds its own: the
   // agent that broke the tests may never fix them, and "keep going until green" has no
   // exit condition of its own.
   const guard = createNudgeGuard();

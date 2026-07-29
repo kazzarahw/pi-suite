@@ -4,7 +4,7 @@ import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
 import { agentDir, configPath, loadConfig, saveConfig, type ConfigSpec } from "../config.ts";
 
-import { SPEC as TODO, DEFAULTS as TODO_DEFAULTS } from "../../todo/src/config.ts";
+import { SPEC as PLAN, DEFAULTS as PLAN_DEFAULTS } from "../../plan/src/config.ts";
 import { SPEC as GIT, DEFAULTS as GIT_DEFAULTS } from "../../git/src/config.ts";
 import { SPEC as SPAWN } from "../../spawn/src/config.ts";
 import { SPEC as BROWSER } from "../../browser/src/config.ts";
@@ -14,7 +14,7 @@ import { SPEC as LENS, DEFAULTS as LENS_DEFAULTS } from "../../lens/src/config.t
 const tmp = (name: string): string => join(mkdtempSync(join(tmpdir(), `pi-suite-cfg-`)), `pi-${name}.json`);
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- the table is heterogeneous by design */
-const SPECS: Array<ConfigSpec<any>> = [TODO, GIT, SPAWN, BROWSER, MEMORY, LENS];
+const SPECS: Array<ConfigSpec<any>> = [PLAN, GIT, SPAWN, BROWSER, MEMORY, LENS];
 
 // ---------------------------------------------------------------------------
 // Generic mechanism — every assertion class the seven per-extension suites had,
@@ -77,10 +77,12 @@ test("agentDir falls back to ~/.pi/agent when PI_CODING_AGENT_DIR is unset", () 
 // Each extension keeps its own `parse`, so each keeps its own test.
 // ---------------------------------------------------------------------------
 
-test("[todo] loadConfig rejects an invalid mode", () => {
-  const path = tmp("todo");
-  writeFileSync(path, JSON.stringify({ mode: "nope" }));
-  expect(loadConfig(TODO, path)).toEqual(TODO_DEFAULTS);
+test("[plan] loadConfig rejects an invalid mode and a sub-1 nudge or block quota", () => {
+  const path = tmp("plan");
+  // A quota of zero would mean "never nudge" spelled as a number, and a maxBlocks of zero
+  // would arm the gate with no bound at all — `int`'s min of 1 is what stops both.
+  writeFileSync(path, JSON.stringify({ mode: "nope", maxNudges: 0, maxBlocks: -1 }));
+  expect(loadConfig(PLAN, path)).toEqual(PLAN_DEFAULTS);
 });
 
 test("[git] loadConfig rejects an invalid mode and drops keys the spec no longer knows", () => {
@@ -120,7 +122,7 @@ test("[lens] loadConfig backfills missing fields and rejects an invalid mode", (
 
 test("SPECS covers every extension that has config", () => {
   expect(SPECS.map((s) => s.name).sort()).toEqual(
-    ["browser", "git", "lens", "memory", "spawn", "todo"],
+    ["browser", "git", "lens", "memory", "plan", "spawn"],
   );
 });
 

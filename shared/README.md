@@ -60,7 +60,7 @@ Nobody runs `/checkpoint`; checkpointing is a pi-git hook. Nobody runs `/recall`
 ## Tools
 
 - **Naming:** **one tool per extension, named after the extension.** Extension `X`
-  registers tool `X` and command `/pi-X` — `memory`, `todo`, `goal`, `spawn`, `browser`,
+  registers tool `X` and command `/pi-X` — `memory`, `plan`, `spawn`, `browser`,
   `lens`. snake_case if a name ever needs two words. `test/contract.test.ts` fails a
   second tool name, so growing the surface is an argument you have to win, not a drift.
 
@@ -189,22 +189,29 @@ Every automation-capable extension exposes the same three-level `mode`:
 
 | Shape | Extensions | Behavior |
 |---|---|---|
-| **Interdict** | *(none today)* | returns `{ block: true }`, and the offending action does not happen |
-| **Insist** | pi-lens, pi-todo, pi-goal | triggers another turn, because the complaint *is* that nothing happened |
+| **Interdict** | pi-plan | returns `{ block: true }`, and the offending action does not happen |
+| **Insist** | pi-lens, pi-plan | triggers another turn, because the complaint *is* that nothing happened |
 
-Both are "the strongest thing this extension can do about what it found"; an extension
-whose finding is unfinished work has nothing to interdict, so it insists instead. Either
-shape must be **bounded** — by a gate it consumes, or by `createNudgeGuard` — since the
-agent that provoked the escalation may never resolve it.
+Both are "the strongest thing this extension can do about what it found". Either shape must
+be **bounded** — by a gate it consumes, or by `createNudgeGuard` — since the agent that
+provoked the escalation may never resolve it.
 
-This table listed pi-lens as the Interdict example for a release in which `block: true`
-appeared **nowhere in the suite**, so `/pi-lens block` was an accepted, silent no-op. The
-gap was not an unfinished implementation but an impossible one: only `tool_call` can
-refuse, and it fires *before* the write, when the diagnostics to interdict do not exist.
-Post-edit feedback arrives at `tool_result`, which can rewrite a result but not veto it.
-So Interdict stays in the table as a shape a *future* extension may have — one that
-inspects an action rather than its aftermath — and pi-lens is filed where it always
-belonged. Prefer leaving a row empty to naming an extension that does not implement it.
+**One extension may do both**, and pi-plan is the first that does. The shapes are decided by
+what an extension is *looking at*, not by which box it belongs in. A precondition of an
+action is knowable exactly when `tool_call` fires, so it can be interdicted; an inaction is
+knowable only afterwards, so it can only be insisted on. pi-plan has one of each — it
+refuses an edit made with nothing active, and insists at settle when the plan has stalled —
+and puts both behind the single `mode` dial, because at `block` the user is saying the plan
+is binding, not choosing between two enforcement mechanisms.
+
+This table once listed pi-lens as the Interdict example for a release in which `block: true`
+appeared **nowhere in the suite**, so `/pi-lens block` was an accepted, silent no-op. That
+gap was not an unfinished implementation but an impossible one, and it is still impossible:
+only `tool_call` can refuse, and it fires *before* the write, when the diagnostics to
+interdict do not exist. Post-edit feedback arrives at `tool_result`, which can rewrite a
+result but not veto it. pi-lens is therefore filed under Insist permanently. The lesson the
+episode left is the rule this table now follows: name an extension in a row only when it
+implements that row, and prefer an empty row to a plausible-looking one.
 
 Extensions may add sub-flags, but the top-level `mode` means the same thing everywhere.
 Those with neither an action to interdict nor anything to insist on collapse `block` to

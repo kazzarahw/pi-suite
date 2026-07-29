@@ -2,13 +2,15 @@
  * Settle-time nudging — the decision, and the guard that keeps `block` from looping.
  *
  * Two extensions reach `agent_settled` with the same question: given the mode, is there
- * anything to say, and may I trigger another turn to say it? pi-todo answered it first
- * and pi-goal needs the identical answer, so it lives here rather than being copied —
- * the habit `config.ts`, `fields.ts`, and `config-command.ts` all exist to end.
+ * anything to say, and may I trigger another turn to say it? It lives here rather than
+ * being copied into each — the habit `config.ts`, `fields.ts`, and `config-command.ts`
+ * all exist to end. pi-plan additionally uses the guard below to bound the *other* shape
+ * of `block`, refusing an edit rather than triggering a turn; the termination argument is
+ * identical, which is why one guard serves both.
  *
  * What is *not* here is the reminder text. What counts as unfinished work differs per
- * extension (open todos, an unmet objective), so each keeps its own; only the decision
- * and the loop guard are shared.
+ * extension (a stalled plan, unresolved diagnostics), so each keeps its own; only the
+ * decision and the loop guard are shared.
  */
 import type { Mode } from "./mode.ts";
 
@@ -51,7 +53,8 @@ export interface NudgeGuard {
  * state it is nudging about — the same one twice means the last nudge achieved nothing.
  *
  * `max` is how many consecutive nudges one unchanged signature may produce: `2`
- * (pi-todo's long-standing hardcoded value) is the first nudge plus one retry.
+ * (pi-todo's long-standing hardcoded value, inherited by pi-plan's item guard) is the
+ * first nudge plus one retry.
  *
  * `lastSignature` starts as `null` rather than `""` so that an empty signature — which
  * a caller could legitimately produce — is not mistaken for a repeat of the initial state.

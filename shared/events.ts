@@ -18,19 +18,34 @@ export interface Diagnostic {
 }
 
 /**
- * The todo statuses, in order. Feed into `StringEnum(TODO_STATUSES)` when building
- * pi-todo's tool schema so the wire enum stays in sync with {@link TodoStatus}.
+ * The statuses an **open** plan item can hold, in order. Feed into
+ * `StringEnum(ITEM_STATUSES)` when building pi-plan's tool schema so the wire enum stays
+ * in sync with {@link ItemStatus}.
+ *
+ * There is no `done` here, and that is the point: resolved work stops being an item and
+ * becomes a log entry, so "done" is not a state an item can sit in while lying about it.
+ * pi-todo's third status was exactly that — a claim with nothing behind it.
  */
-export const TODO_STATUSES = ["pending", "in_progress", "done"] as const;
+export const ITEM_STATUSES = ["pending", "active"] as const;
 
-/** Status of a todo item (pi-todo). */
-export type TodoStatus = (typeof TODO_STATUSES)[number];
+/** Status of an open plan item (pi-plan). */
+export type ItemStatus = (typeof ITEM_STATUSES)[number];
 
-/** A single todo item, shared by pi-todo emissions and any subscriber. */
-export interface TodoItem {
+/** One line of the active item's worksheet — scaffolding, discarded when it resolves. */
+export interface Step {
+  content: string;
+  done: boolean;
+}
+
+/** A single open plan item, shared by pi-plan emissions and any subscriber. */
+export interface PlanItem {
   id: string;
   content: string;
-  status: TodoStatus;
+  status: ItemStatus;
+  /** Required to be `active`: the approach committed to before the work started. */
+  approach?: string;
+  /** The worksheet. Present only while active. */
+  steps?: Step[];
 }
 
 /**
@@ -69,12 +84,20 @@ export interface EventPayloads {
   "git:checkpoint": { entryId: string; files: number; reason: string };
   "git:rollback": { entryId: string; written: number; removed: number; reason: string };
 
-  "todo:updated": { todos: TodoItem[] };
-  "todo:task-complete": { task: string };
+  /** The open list, after any write that changed it (pi-plan). Resolved work is not here. */
+  "plan:updated": { items: PlanItem[] };
+  /**
+   * An item resolved. `note` is what the outcome was, or why it was abandoned — required
+   * either way, which is the constraint the extension exists to impose. Self-contained per
+   * the rule above: a subscriber gets the content, not an id it would have to resolve
+   * against a list it cannot see.
+   */
+  "plan:item-done": { content: string; note: string };
+  "plan:item-dropped": { content: string; reason: string };
 
-  /** The session's overarching objective, as stated or restated (pi-goal). */
-  "goal:set": { objective: string; criteria?: string };
-  "goal:met": { objective: string };
+  /** The session's overarching objective, as stated or restated (pi-plan). */
+  "plan:objective": { objective: string; criteria?: string };
+  "plan:met": { objective: string };
 
   "memory:wrote": { keys: string[] };
   "memory:recalled": { keys: string[] };
@@ -117,8 +140,13 @@ export const EVENTS = {
   lens: { clean: "lens:clean", issues: "lens:issues" },
   verify: { passed: "verify:passed", failed: "verify:failed" },
   git: { checkpoint: "git:checkpoint", rollback: "git:rollback" },
-  todo: { updated: "todo:updated", taskComplete: "todo:task-complete" },
-  goal: { set: "goal:set", met: "goal:met" },
+  plan: {
+    updated: "plan:updated",
+    itemDone: "plan:item-done",
+    itemDropped: "plan:item-dropped",
+    objective: "plan:objective",
+    met: "plan:met",
+  },
   memory: { wrote: "memory:wrote", recalled: "memory:recalled" },
   spawn: { started: "spawn:started", finished: "spawn:finished" },
 } as const satisfies Record<string, Record<string, EventName>>;

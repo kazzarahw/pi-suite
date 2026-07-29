@@ -49,9 +49,9 @@ test("a passed-in component is updated in place, not replaced", () => {
 });
 
 test("anything that is not a Text is ignored rather than trusted", () => {
-  const out = renderToolCall("todo", "3 items · 1 done", theme, { notAComponent: true });
+  const out = renderToolCall("plan", "3 items", theme, { notAComponent: true });
   expect(out).toBeInstanceOf(Text);
-  expect(rendered(out)).toContain("3 items · 1 done");
+  expect(rendered(out)).toContain("3 items");
 });
 
 /**

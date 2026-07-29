@@ -1,7 +1,7 @@
 /**
  * One short, stable, non-cryptographic string hash.
  *
- * pi-todo derives item ids from content and pi-memory derives a dedup key for an
+ * pi-memory derives a dedup key for an
  * auto-captured gotcha; both had the same multiply-by-31 loop written out. It is only
  * a few lines, which is exactly why it gets copied instead of shared — and why the two
  * copies could quietly disagree about the modulus or the radix.

@@ -9,9 +9,8 @@
  *
  * Deliberately few tools. The rules that keep it small: automatic behavior is a hook,
  * not a tool (pi-git registers none); many variant actions collapse behind one
- * `action`-enum tool (`browser`, `lens`); and read paths are covered by tool-result
- * echoes and context injection rather than extra read tools (pi-todo, pi-memory,
- * pi-goal).
+ * `action`-enum tool (`browser`, `lens`, `plan`); and read paths are covered by tool-result
+ * echoes and context injection rather than extra read tools (pi-plan, pi-memory).
  *
  * **The count is not a property of the suite.** Extensions are peers: any one can be
  * disabled, replaced, or prototyped against by editing this list and `package.json`
@@ -51,8 +50,7 @@ export interface ExtensionSurface {
  */
 export const SURFACE: readonly ExtensionSurface[] = [
   { dir: "memory", command: "pi-memory", tools: ["memory"] },
-  { dir: "todo", command: "pi-todo", tools: ["todo"] },
-  { dir: "goal", command: "pi-goal", tools: ["goal"] },
+  { dir: "plan", command: "pi-plan", tools: ["plan"] },
   { dir: "git", command: "pi-git", tools: [] },
   { dir: "spawn", command: "pi-spawn", tools: ["spawn"] },
   { dir: "browser", command: "pi-browser", tools: ["browser"] },

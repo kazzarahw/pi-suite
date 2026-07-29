@@ -1,0 +1,283 @@
+import { Type, type Static } from "typebox";
+import { StringEnum } from "@earendil-works/pi-ai";
+import type { AgentToolResult, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
+import type { Emitter } from "../../shared/index.ts";
+import { renderToolCall } from "../../shared/tool-render.ts";
+import {
+  OBJECTIVE_STATUSES,
+  applyDrop,
+  applyFinish,
+  applyItems,
+  applyObjective,
+  applyPromote,
+  applyStart,
+  applyStep,
+  type ObjectiveInput,
+  type ObjectiveStatus,
+  type Plan,
+} from "./state.ts";
+import { renderPlan } from "./render.ts";
+import type { VerifyState } from "./peers.ts";
+
+/**
+ * The verbs, in lifecycle order.
+ *
+ * Nouns (`objective`, `items`) replace state wholesale; verbs (`start`, `step`, `promote`,
+ * `finish`, `drop`) act on one item. `start` and `drop` take an `id` because they name an
+ * item; `step`, `promote`, and `finish` take none, because there is only ever one active
+ * item — which is the constraint the whole extension is built on, showing through in the
+ * shape of the call.
+ */
+const ACTIONS = ["objective", "items", "start", "step", "promote", "finish", "drop"] as const;
+type Action = (typeof ACTIONS)[number];
+
+const parameters = Type.Object({
+  action: StringEnum(ACTIONS, {
+    description:
+      "objective (set the session's goal) | items (replace the open list) | start (activate one item, with an approach) | step (tick or add worksheet steps) | promote (turn a step into its own item) | finish (resolve the active item) | drop (abandon an item with a reason).",
+  }),
+  objective: Type.Optional(
+    Type.String({
+      description:
+        "For 'objective': the single overarching outcome this session is working toward, in one sentence.",
+    }),
+  ),
+  criteria: Type.Optional(
+    Type.String({
+      description:
+        "For 'objective': how you will know it is met. Omit if it speaks for itself; omitting it when restating the same objective keeps whatever was already recorded.",
+    }),
+  ),
+  status: Type.Optional(
+    StringEnum(OBJECTIVE_STATUSES, {
+      description:
+        "For 'objective': 'active' while work continues, 'met' once achieved. Defaults to active for a new objective, and to the current status when restating the existing one.",
+    }),
+  ),
+  items: Type.Optional(
+    Type.Array(
+      Type.Object({
+        content: Type.String({ description: "What the item is, in one line." }),
+        id: Type.Optional(
+          Type.String({ description: "Existing item id to preserve; omit for new items." }),
+        ),
+      }),
+      {
+        description:
+          "For 'items': the COMPLETE list of OPEN work — it replaces the previous list. Resolved items are not in it and must not be re-sent. The active item may not be omitted: finish or drop it instead.",
+      },
+    ),
+  ),
+  id: Type.Optional(
+    Type.String({ description: "For 'start' and 'drop': which open item, by id." }),
+  ),
+  approach: Type.Optional(
+    Type.String({
+      description:
+        "For 'start': how you intend to do this item, decided BEFORE you begin. Required — committing to an approach is what starting an item means.",
+    }),
+  ),
+  steps: Type.Optional(
+    Type.Array(Type.String(), {
+      description:
+        "For 'start', the initial worksheet; for 'step', more steps to append. Scratch work — it is discarded when the item resolves, so a step that turns out to matter should be promoted.",
+    }),
+  ),
+  index: Type.Optional(
+    Type.Integer({
+      description:
+        "For 'step' (with `done`) and 'promote': which worksheet step, zero-based.",
+    }),
+  ),
+  done: Type.Optional(
+    Type.Boolean({ description: "For 'step': tick the step at `index` (true) or untick it (false)." }),
+  ),
+  note: Type.Optional(
+    Type.String({
+      description:
+        "For 'finish': what the outcome actually was. Required — it is what survives the worksheet.",
+    }),
+  ),
+  reason: Type.Optional(
+    Type.String({
+      description:
+        "For 'drop': why this is being abandoned. Required — an item dropped without one is indistinguishable from one silently forgotten.",
+    }),
+  ),
+});
+type PlanParams = Static<typeof parameters>;
+
+export interface PlanToolDeps {
+  getState: () => Plan;
+  setState: (plan: Plan) => void;
+  emit: Emitter;
+  persist: (plan: Plan) => void;
+  /** Read *after* `setState`, so the widget it paints reflects this call. */
+  renderContext: () => VerifyState | null;
+}
+
+/**
+ * Each action's required fields, checked here rather than by the schema.
+ *
+ * This is what the one-tool-per-extension surface costs, and `shared/README.md` says to pay
+ * it deliberately: the actions need disjoint fields, so every one has to be optional in the
+ * schema and the provider can no longer reject a malformed call on our behalf. Throwing is
+ * the mechanism — Pi sets `isError` only when `execute` throws — and naming every missing
+ * field at once beats one round-trip per field. Copied in shape from
+ * `memory/src/tools.ts:requireWriteFields`, which is where the suite settled this.
+ */
+const REQUIRED: Record<Action, ReadonlyArray<keyof PlanParams>> = {
+  objective: ["objective"],
+  items: ["items"],
+  start: ["id", "approach"],
+  step: [], // disjunctive — checked below
+  promote: ["index"],
+  finish: ["note"],
+  drop: ["id", "reason"],
+};
+
+function requireFields(params: PlanParams): void {
+  const action = params.action as Action;
+  const missing = REQUIRED[action].filter((k) => {
+    const v = params[k];
+    return v === undefined || v === "";
+  });
+  if (missing.length > 0) {
+    throw new Error(`[pi-plan] action "${action}" requires ${missing.join(", ")}.`);
+  }
+  // `step` is the one action with a genuine either/or, so it cannot be a field list.
+  if (action === "step") {
+    const ticking = params.index !== undefined && params.done !== undefined;
+    const appending = Array.isArray(params.steps) && params.steps.length > 0;
+    if (!ticking && !appending) {
+      throw new Error(
+        `[pi-plan] action "step" requires either index and done (to tick a step) or steps (to append).`,
+      );
+    }
+  }
+}
+
+/**
+ * The interesting half of a plan call, as one line: `start 2`, `finish`, `4 items`.
+ * Pure, so the wording is testable without a terminal.
+ */
+export function describeCall(params: PlanParams): string {
+  switch (params.action as Action) {
+    case "objective":
+      return params.status === "met" && params.objective
+        ? `${params.objective} (met)`
+        : (params.objective?.trim() ?? "objective");
+    case "items": {
+      const n = params.items?.length ?? 0;
+      return n === 0 ? "clear the list" : `${n} item${n === 1 ? "" : "s"}`;
+    }
+    case "start":
+      return `start ${params.id ?? ""}`.trim();
+    case "step":
+      return params.steps?.length ? `+${params.steps.length} steps` : `step ${params.index ?? ""}`.trim();
+    case "promote":
+      return `promote step ${params.index ?? ""}`.trim();
+    case "finish":
+      return "finish";
+    case "drop":
+      return `drop ${params.id ?? ""}`.trim();
+  }
+}
+
+/** Build the `plan` tool: one action enum over the whole lifecycle. */
+export function buildPlanTool(deps: PlanToolDeps) {
+  return {
+    name: "plan",
+    label: "Plan",
+    description:
+      "Plan and track multi-step work as a strict lifecycle. Set the session objective with 'objective'. Lay out the open work with 'items' (send the COMPLETE open list; it replaces the previous one). Before editing anything, 'start' one item with the approach you are committing to — exactly one item is active at a time. Track scratch work on that item with 'step', and 'promote' a step that turns out to deserve its own item. Resolve it with 'finish' and a note, or 'drop' it with a reason if it turned out to be unnecessary. Resolved work leaves the list and is recorded in the log.",
+    promptSnippet:
+      "Track multi-step work: set an objective, list the work, start one item with an approach before editing, finish or drop it explicitly.",
+    parameters,
+    async execute(
+      _toolCallId: string,
+      params: PlanParams,
+      _signal: AbortSignal | undefined,
+      _onUpdate: unknown,
+      ctx: ExtensionContext,
+    ): Promise<AgentToolResult<{ plan: Plan }>> {
+      requireFields(params);
+      const action = params.action as Action;
+      const prev = deps.getState();
+      let next: Plan;
+
+      switch (action) {
+        case "objective": {
+          const objective = params.objective!.trim();
+          if (!objective) throw new Error("[pi-plan] objective must not be blank");
+          const incoming: ObjectiveInput = { objective };
+          const criteria = params.criteria?.trim();
+          if (criteria) incoming.criteria = criteria;
+          if (params.status) incoming.status = params.status as ObjectiveStatus;
+
+          const result = applyObjective(prev, incoming);
+          next = result.plan;
+          const payload: { objective: string; criteria?: string } = { objective };
+          if (next.objective!.criteria) payload.criteria = next.objective!.criteria;
+          deps.emit("plan:objective", payload);
+          if (result.newlyMet) deps.emit("plan:met", { objective });
+          break;
+        }
+        case "items": {
+          next = applyItems(prev, params.items!).plan;
+          deps.emit("plan:updated", { items: next.items });
+          break;
+        }
+        case "start": {
+          next = applyStart(prev, params.id!, params.approach!, params.steps).plan;
+          deps.emit("plan:updated", { items: next.items });
+          break;
+        }
+        case "step": {
+          const edit =
+            params.index !== undefined && params.done !== undefined
+              ? { index: params.index, done: params.done }
+              : { steps: params.steps! };
+          next = applyStep(prev, edit).plan;
+          deps.emit("plan:updated", { items: next.items });
+          break;
+        }
+        case "promote": {
+          next = applyPromote(prev, params.index!).plan;
+          deps.emit("plan:updated", { items: next.items });
+          break;
+        }
+        case "finish": {
+          const result = applyFinish(prev, params.note!);
+          next = result.plan;
+          deps.emit("plan:item-done", { content: result.entry.content, note: result.entry.note });
+          deps.emit("plan:updated", { items: next.items });
+          break;
+        }
+        case "drop": {
+          const result = applyDrop(prev, params.id!, params.reason!);
+          next = result.plan;
+          deps.emit("plan:item-dropped", {
+            content: result.entry.content,
+            reason: result.entry.note,
+          });
+          deps.emit("plan:updated", { items: next.items });
+          break;
+        }
+      }
+
+      deps.setState(next);
+      deps.persist(next);
+
+      const lines = renderPlan(next, deps.renderContext());
+      ctx?.ui?.setWidget?.("plan", lines.length > 0 ? lines : undefined);
+      // Plain text, per shared/README.md: Pi's default renderResult prints it verbatim, so
+      // markdown and `<pi-plan>` tags would reach the transcript as literal characters.
+      const text = lines.length > 0 ? lines.join("\n") : "(plan is empty)";
+      return { content: [{ type: "text", text }], details: { plan: next } };
+    },
+    renderCall(args: PlanParams, theme: Theme, context?: { lastComponent?: unknown }) {
+      return renderToolCall("plan", describeCall(args), theme, context?.lastComponent);
+    },
+  };
+}

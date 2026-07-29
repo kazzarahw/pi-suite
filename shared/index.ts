@@ -20,13 +20,14 @@ export { nudgeAction, createNudgeGuard } from "./nudge.ts";
 
 export type {
   Diagnostic,
-  TodoStatus,
-  TodoItem,
+  ItemStatus,
+  Step,
+  PlanItem,
   EventPayloads,
   EventName,
   Emitter,
 } from "./events.ts";
-export { EVENTS, TODO_STATUSES } from "./events.ts";
+export { EVENTS, ITEM_STATUSES } from "./events.ts";
 
 export { TAG_PREFIX, tagName, injectionHeader, injectionBlock } from "./tags.ts";
 
