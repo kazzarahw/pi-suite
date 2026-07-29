@@ -67,7 +67,12 @@ export interface EventPayloads {
    * written against the declaration would have read `data.ref` and got `undefined`.
    */
   "git:checkpoint": { entryId: string; files: number; reason: string };
-  "git:rollback": { entryId: string; written: number; removed: number; reason: string };
+  "git:rollback": {
+    entryId: string;
+    written: number;
+    removed: number;
+    reason: string;
+  };
 
   "todo:updated": { todos: TodoItem[] };
   "todo:task-complete": { task: string };
@@ -107,7 +112,10 @@ export type EventName = keyof EventPayloads;
  * Binding the name to its payload makes the claim real: an unknown event name and a
  * payload of the wrong shape are both compile errors at the call site.
  */
-export type Emitter = <E extends EventName>(event: E, data: EventPayloads[E]) => void;
+export type Emitter = <E extends EventName>(
+  event: E,
+  data: EventPayloads[E],
+) => void;
 
 /**
  * Event-name constants, grouped by domain. Reference these instead of typing

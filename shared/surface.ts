@@ -56,6 +56,7 @@ export const SURFACE: readonly ExtensionSurface[] = [
   { dir: "git", command: "pi-git", tools: [] },
   { dir: "spawn", command: "pi-spawn", tools: ["spawn"] },
   { dir: "browser", command: "pi-browser", tools: ["browser"] },
+  { dir: "telegram", command: "pi-telegram", tools: ["telegram"] },
   { dir: "lens", command: "pi-lens", tools: ["lens"], wrapsToolResult: true },
 ] as const;
 
@@ -66,4 +67,6 @@ export const ALL_TOOLS: readonly string[] = SURFACE.flatMap((e) => e.tools);
 export const entryPoint = (dir: string): string => `./${dir}/index.ts`;
 
 /** The `pi.extensions` array `package.json` must declare, derived from {@link SURFACE}. */
-export const MANIFEST: readonly string[] = SURFACE.map((e) => entryPoint(e.dir));
+export const MANIFEST: readonly string[] = SURFACE.map((e) =>
+  entryPoint(e.dir),
+);

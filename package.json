@@ -13,6 +13,7 @@
       "./git/index.ts",
       "./spawn/index.ts",
       "./browser/index.ts",
+      "./telegram/index.ts",
       "./lens/index.ts"
     ]
   },
