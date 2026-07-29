@@ -1,7 +1,7 @@
 {
   "name": "pi-suite",
   "version": "0.1.0",
-  "description": "A small, self-consistent, agent-facing extension suite for Pi: browser, git, lens, memory, plan, spawn.",
+  "description": "A small, self-consistent, agent-facing extension suite for Pi: browser, git, lens, memory, plan, spawn, telegram.",
   "license": "AGPL-3.0",
   "private": true,
   "type": "module",
@@ -12,6 +12,7 @@
       "./git/index.ts",
       "./spawn/index.ts",
       "./browser/index.ts",
+      "./telegram/index.ts",
       "./lens/index.ts"
     ]
   },

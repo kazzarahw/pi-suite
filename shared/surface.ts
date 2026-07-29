@@ -54,6 +54,7 @@ export const SURFACE: readonly ExtensionSurface[] = [
   { dir: "git", command: "pi-git", tools: [] },
   { dir: "spawn", command: "pi-spawn", tools: ["spawn"] },
   { dir: "browser", command: "pi-browser", tools: ["browser"] },
+  { dir: "telegram", command: "pi-telegram", tools: ["telegram"] },
   { dir: "lens", command: "pi-lens", tools: ["lens"], wrapsToolResult: true },
 ] as const;
 

@@ -12,8 +12,9 @@ A small, self-consistent, **agent-facing** extension suite for [Pi](https://pi.d
 | [`plan/`](./plan) | An objective, a flat list of open work, and a strict lifecycle over it: entering an item costs an approach, finishing costs a note, abandoning costs a reason, and exactly one item is active at a time | `plan` *(action enum)* |
 | [`spawn/`](./spawn) | Delegate tasks to isolated subagents, one or many in parallel | `spawn` |
 | [`browser/`](./browser) | The web in one tool (wrapping `agent-browser`): search, fetch/read, snapshot with `@ref`s, click/type | `browser` *(action enum)* |
+| [`telegram/`](./telegram) | Telegram over the Bot API: send a message, read a chat's recent ones, list conversations, or send and wait for the reply | `telegram` *(action enum)* |
 
-**One tool per extension, named after the extension** — `memory`, `plan`, `spawn`, `browser`, `lens`, each alongside its `/pi-<name>` command, and pi-git with none at all. That is the whole surface, and it is the rule rather than a coincidence: `test/contract.test.ts` fails an extension that registers a second tool name. The rules that keep it small are in [`shared/README.md`](./shared/README.md): automatic behavior is a hook rather than a tool; a domain with several verbs dispatches on an `action` enum instead of minting a name per verb; and read paths are covered by tool-result echoes and context injection instead of extra read tools.
+**One tool per extension, named after the extension** — `memory`, `plan`, `spawn`, `browser`, `telegram`, `lens`, each alongside its `/pi-<name>` command, and pi-git with none at all. That is the whole surface, and it is the rule rather than a coincidence: `test/contract.test.ts` fails an extension that registers a second tool name. The rules that keep it small are in [`shared/README.md`](./shared/README.md): automatic behavior is a hook rather than a tool; a domain with several verbs dispatches on an `action` enum instead of minting a name per verb; and read paths are covered by tool-result echoes and context injection instead of extra read tools.
 
 Each extension is a **peer**, not a component: any one can be disabled, replaced, or prototyped against without touching the others. The only coupling permitted is `shared/` and the `pi.events` bus — never a direct import between extensions.
 
@@ -73,7 +74,7 @@ Full contract and the rules for writing an extension: [`shared/README.md`](./sha
 
 ### Load order
 
-Fixed by `SURFACE`, which `package.json` mirrors: `memory, plan, git, spawn, browser, lens`. It is significant — `tool_result` handlers chain as middleware in load order, so the extension that augments other extensions' output must come last. pi-lens declares this with `wrapsToolResult: true` rather than the ordering being folklore, and `test/contract.test.ts` enforces it for whichever extension declares it.
+Fixed by `SURFACE`, which `package.json` mirrors: `memory, plan, git, spawn, browser, telegram, lens`. It is significant — `tool_result` handlers chain as middleware in load order, so the extension that augments other extensions' output must come last. pi-lens declares this with `wrapsToolResult: true` rather than the ordering being folklore, and `test/contract.test.ts` enforces it for whichever extension declares it.
 
 ## Development
 

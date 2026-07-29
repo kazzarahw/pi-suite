@@ -10,11 +10,13 @@ import { SPEC as SPAWN } from "../../spawn/src/config.ts";
 import { SPEC as BROWSER } from "../../browser/src/config.ts";
 import { SPEC as MEMORY, DEFAULTS as MEMORY_DEFAULTS } from "../../memory/src/config.ts";
 import { SPEC as LENS, DEFAULTS as LENS_DEFAULTS } from "../../lens/src/config.ts";
+import { SPEC as TELEGRAM } from "../../telegram/src/config.ts";
+import { SURFACE } from "../surface.ts";
 
 const tmp = (name: string): string => join(mkdtempSync(join(tmpdir(), `pi-suite-cfg-`)), `pi-${name}.json`);
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- the table is heterogeneous by design */
-const SPECS: Array<ConfigSpec<any>> = [PLAN, GIT, SPAWN, BROWSER, MEMORY, LENS];
+const SPECS: Array<ConfigSpec<any>> = [PLAN, GIT, SPAWN, BROWSER, MEMORY, LENS, TELEGRAM];
 
 // ---------------------------------------------------------------------------
 // Generic mechanism — every assertion class the seven per-extension suites had,
@@ -114,15 +116,30 @@ test("[memory] loadConfig rejects a sub-1 recallLimit and an invalid mode, keepi
   expect(loadConfig(MEMORY, path)).toEqual({ ...MEMORY_DEFAULTS, autoCapture: true });
 });
 
+test("[telegram] loadConfig keeps a stored token and rejects a non-string defaultChat", () => {
+  const path = tmp("telegram");
+  writeFileSync(path, JSON.stringify({ token: "123:AAH", defaultChat: 42 }));
+  expect(loadConfig(TELEGRAM, path)).toEqual({ token: "123:AAH", defaultChat: "" });
+});
+
 test("[lens] loadConfig backfills missing fields and rejects an invalid mode", () => {
   const path = tmp("lens");
   writeFileSync(path, JSON.stringify({ mode: "bogus", autoFormat: true }));
   expect(loadConfig(LENS, path)).toEqual({ ...LENS_DEFAULTS, autoFormat: true });
 });
 
+/**
+ * Derived from SURFACE, not listed by hand.
+ *
+ * Both sides of this were literals, so it agreed with itself rather than with the repo:
+ * pi-telegram arrived with a config spec, was never added to SPECS, and the test whose
+ * name is exactly "covers every extension" stayed green while not covering it — every
+ * generic assertion above silently skipped it. Deriving one side is what the manifest
+ * check in `test/contract.test.ts` already does, for the same reason.
+ */
 test("SPECS covers every extension that has config", () => {
   expect(SPECS.map((s) => s.name).sort()).toEqual(
-    ["browser", "git", "lens", "memory", "plan", "spawn"],
+    SURFACE.map((e) => e.dir).sort(),
   );
 });
 
