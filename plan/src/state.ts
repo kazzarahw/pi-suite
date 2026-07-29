@@ -174,6 +174,44 @@ export function applyItems(plan: Plan, incoming: ItemInput[]): { plan: Plan } {
   return { plan: { ...plan, items, seq } };
 }
 
+/**
+ * Append discovered work to the open list.
+ *
+ * `applyItems` is a full replace, which is right for re-planning and **a tax on the most
+ * common revision there is**: learning about one new item costs re-sending every other
+ * one, correctly, from memory. Dogfooding found the open list laid out once and then never
+ * revised across every session that adopted it, and the price of saying so is the most
+ * plausible reason — the cheapest way to record discovered work was to not record it.
+ *
+ * So this is the additive path, and it is deliberately the *only* thing it does. It cannot
+ * remove, reorder, or rewrite; the active item is therefore untouchable by construction,
+ * and the invariant `applyItems` has to check for explicitly is unreachable here.
+ *
+ * Duplicate content is refused rather than appended. A second copy of an open item is a
+ * small lie about how much work is left, and this extension exists to stop those.
+ */
+export function applyAdd(plan: Plan, incoming: ItemInput[]): { plan: Plan; added: PlanItem[] } {
+  if (incoming.length === 0) fail(`action "add" requires at least one item`);
+
+  for (const inc of incoming) {
+    const clash = plan.items.find((i) => i.content === inc.content);
+    if (clash) {
+      fail(
+        `"${inc.content}" is already open as id ${clash.id} — ` +
+          `use action "items" to reword the list, not action "add" to duplicate it`,
+      );
+    }
+  }
+
+  let seq = plan.seq;
+  const added: PlanItem[] = incoming.map((inc) => ({
+    id: String(seq++),
+    content: inc.content,
+    status: "pending" as ItemStatus,
+  }));
+  return { plan: { ...plan, items: [...plan.items, ...added], seq }, added };
+}
+
 // ---------------------------------------------------------------------------
 // The lifecycle.
 // ---------------------------------------------------------------------------

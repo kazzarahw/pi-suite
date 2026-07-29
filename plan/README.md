@@ -45,7 +45,8 @@ plan({ action, … })
 | action | params | |
 |---|---|---|
 | `objective` | `objective`, `criteria?`, `status?` | the north star |
-| `items` | `items: [{content, id?}]` | replace the open list |
+| `items` | `items: [{content, id?}]` | replace the open list — re-planning |
+| `add` | `items: [{content}]` | append work you just discovered |
 | `start` | `id`, `approach`, `steps?` | activate one item — the decompose step |
 | `step` | `index`+`done` \| `steps` | tick, untick, or extend the worksheet |
 | `promote` | `index` | a step turned out to be a real item |
@@ -57,6 +58,14 @@ in it. Ids are preserved by explicit id or by content match, which is what carri
 status, approach, and worksheet across a rewrite — and **the active item may not be
 omitted**: it is finished or dropped explicitly, never dropped silently.
 
+`add` exists because full-replace **priced revision out of reach**. Recording one
+discovered item under `items` costs re-sending every other item correctly from memory, and
+in dogfooding the open list was laid out once and then never revised in any session that
+adopted it. `add` appends and does nothing else — it cannot remove, reorder, or rewrite, so
+the active item is untouchable by construction and the invariant `items` has to check for
+is unreachable. It refuses to duplicate an open item, because a second copy is a small lie
+about how much work is left.
+
 `start` and `drop` take an `id` because they name an item. `step`, `promote`, and `finish`
 take none, because there is only ever one active item.
 
@@ -66,6 +75,25 @@ Reopening is still possible — it just has to be said, with an explicit `status
 
 Emits `plan:objective`, `plan:met` (once, on the transition), `plan:updated`,
 `plan:item-done`, and `plan:item-dropped`.
+
+### Revision is asked about in the tool result
+
+`finish` and `drop` return the usual state echo plus one line asking whether what the agent
+just learned changes what is left — or, when the list empties, whether the objective is
+achieved.
+
+This is a third shape alongside the two in `shared/mode.ts`, and it exists because neither
+of those fits. **Interdict** works on preconditions, knowable when `tool_call` fires;
+**Insist** works on inactions, knowable only afterwards. A plan that should have been
+revised and was not is an inaction, so on that taxonomy it is Insist-only — and Insist
+costs a turn, spends a nudge quota, and is silent at `off`.
+
+So instead of treating revision as its own event, it rides one the agent already performs.
+The result is a better surface than the nudge in every respect that matters: it is
+unambiguously harness output, where a nudge arrives as `{ role: "user" }` and has to
+prefix itself by hand; it lands in-band, as the direct answer to the model's own call; and
+it costs no turn, no quota, and no mode. It is one line, deliberately, because it rides
+every resolution and anything longer becomes wallpaper.
 
 ## Where each piece of state goes
 

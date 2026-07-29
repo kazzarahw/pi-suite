@@ -5,6 +5,7 @@ import type { Emitter } from "../../shared/index.ts";
 import { renderToolCall } from "../../shared/tool-render.ts";
 import {
   OBJECTIVE_STATUSES,
+  applyAdd,
   applyDrop,
   applyFinish,
   applyItems,
@@ -17,24 +18,38 @@ import {
   type Plan,
 } from "./state.ts";
 import { renderPlan } from "./render.ts";
+import { checkpointFor } from "./checkpoint.ts";
 import type { VerifyState } from "./peers.ts";
 
 /**
  * The verbs, in lifecycle order.
  *
- * Nouns (`objective`, `items`) replace state wholesale; verbs (`start`, `step`, `promote`,
- * `finish`, `drop`) act on one item. `start` and `drop` take an `id` because they name an
- * item; `step`, `promote`, and `finish` take none, because there is only ever one active
- * item — which is the constraint the whole extension is built on, showing through in the
- * shape of the call.
+ * Nouns (`objective`, `items`) replace state wholesale; verbs (`add`, `start`, `step`,
+ * `promote`, `finish`, `drop`) act on the list or on one item. `start` and `drop` take an
+ * `id` because they name an item; `step`, `promote`, and `finish` take none, because there
+ * is only ever one active item — which is the constraint the whole extension is built on,
+ * showing through in the shape of the call.
+ *
+ * `add` sits next to `items` because it is the same intent at a lower price: `items`
+ * re-plans, `add` records something discovered. See `applyAdd` on why the difference is
+ * worth an action.
  */
-const ACTIONS = ["objective", "items", "start", "step", "promote", "finish", "drop"] as const;
+const ACTIONS = [
+  "objective",
+  "items",
+  "add",
+  "start",
+  "step",
+  "promote",
+  "finish",
+  "drop",
+] as const;
 type Action = (typeof ACTIONS)[number];
 
 const parameters = Type.Object({
   action: StringEnum(ACTIONS, {
     description:
-      "objective (set the session's goal) | items (replace the open list — call again whenever what is left changes) | start (activate one item, with an approach) | step (tick or add worksheet steps) | promote (turn a step into its own item) | finish (resolve the active item as work you did) | drop (abandon an item that turned out to be unnecessary or was already done, with a reason).",
+      "objective (set the session's goal) | items (replace the whole open list — re-planning) | add (append work you just discovered, without re-sending the list) | start (activate one item, with an approach) | step (tick or add worksheet steps) | promote (turn a step into its own item) | finish (resolve the active item as work you did) | drop (abandon an item that turned out to be unnecessary or was already done, with a reason).",
   }),
   objective: Type.Optional(
     Type.String({
@@ -64,7 +79,7 @@ const parameters = Type.Object({
       }),
       {
         description:
-          "For 'items': the COMPLETE list of OPEN work — it replaces the previous list. Resolved items are not in it and must not be re-sent. The active item may not be omitted: finish or drop it instead.",
+          "For 'items': the COMPLETE list of OPEN work — it replaces the previous list. Resolved items are not in it and must not be re-sent. The active item may not be omitted: finish or drop it instead. For 'add': only the new items, appended to what is already open — prefer this when you discovered work rather than re-planning.",
       },
     ),
   ),
@@ -129,6 +144,7 @@ export interface PlanToolDeps {
 const REQUIRED: Record<Action, ReadonlyArray<keyof PlanParams>> = {
   objective: ["objective"],
   items: ["items"],
+  add: ["items"],
   start: ["id", "approach"],
   step: [], // disjunctive — checked below
   promote: ["index"],
@@ -171,6 +187,10 @@ export function describeCall(params: PlanParams): string {
       const n = params.items?.length ?? 0;
       return n === 0 ? "clear the list" : `${n} item${n === 1 ? "" : "s"}`;
     }
+    case "add": {
+      const n = params.items?.length ?? 0;
+      return `+${n} item${n === 1 ? "" : "s"}`;
+    }
     case "start":
       return `start ${params.id ?? ""}`.trim();
     case "step":
@@ -190,7 +210,7 @@ export function buildPlanTool(deps: PlanToolDeps) {
     name: "plan",
     label: "Plan",
     description:
-      "Plan and track multi-step work as a strict lifecycle. Call it BEFORE you start working — as soon as the task looks like three or more distinct steps, spans more than one file, or the user asked for several things at once. Skip it for a single obvious edit, a question, or a one-line fix. Set the session objective with 'objective'. Lay out the open work with 'items' (send the COMPLETE open list; it replaces the previous one), and call 'items' again the moment you learn something that changes what is left — work you discovered, an item that turned out to be two, an ordering that no longer makes sense. The list is meant to be revised as you learn, not honored as written. Before editing anything, 'start' one item with the approach you are committing to — exactly one item is active at a time. Track scratch work on that item with 'step', and 'promote' a step that turns out to deserve its own item. Resolve it with 'finish' and a note saying what you actually changed, or 'drop' it with a reason — an item you did not have to do is dropped, never finished. Resolved work leaves the list and is recorded in the log.",
+      "Plan and track multi-step work as a strict lifecycle. Call it BEFORE you start working — as soon as the task looks like three or more distinct steps, spans more than one file, or the user asked for several things at once. Skip it for a single obvious edit, a question, or a one-line fix. Set the session objective with 'objective'. Lay out the open work with 'items' (send the COMPLETE open list; it replaces the previous one). The list is meant to be revised as you learn, not honored as written: call 'add' the moment you discover work you did not know about — it appends, so it costs one line — and 'items' again when the shape of what is left has actually changed. Before editing anything, 'start' one item with the approach you are committing to — exactly one item is active at a time. Track scratch work on that item with 'step', and 'promote' a step that turns out to deserve its own item. Resolve it with 'finish' and a note saying what you actually changed, or 'drop' it with a reason — an item you did not have to do is dropped, never finished. Resolved work leaves the list and is recorded in the log.",
     promptSnippet:
       "For work of three or more steps: set an objective, list the work, start one item with an approach before editing, revise the list as you learn, and finish or drop each item explicitly.",
     parameters,
@@ -225,6 +245,11 @@ export function buildPlanTool(deps: PlanToolDeps) {
         }
         case "items": {
           next = applyItems(prev, params.items!).plan;
+          deps.emit("plan:updated", { items: next.items });
+          break;
+        }
+        case "add": {
+          next = applyAdd(prev, params.items!).plan;
           deps.emit("plan:updated", { items: next.items });
           break;
         }
@@ -273,7 +298,11 @@ export function buildPlanTool(deps: PlanToolDeps) {
       ctx?.ui?.setWidget?.("plan", lines.length > 0 ? lines : undefined);
       // Plain text, per shared/README.md: Pi's default renderResult prints it verbatim, so
       // markdown and `<pi-plan>` tags would reach the transcript as literal characters.
-      const text = lines.length > 0 ? lines.join("\n") : "(plan is empty)";
+      const body = lines.length > 0 ? lines.join("\n") : "(plan is empty)";
+      // The result is also the one place revision can be asked about in-band — see
+      // src/checkpoint.ts. Blank-line separated so the state echo stays readable as itself.
+      const checkpoint = checkpointFor(action, next);
+      const text = checkpoint ? `${body}\n\n${checkpoint}` : body;
       return { content: [{ type: "text", text }], details: { plan: next } };
     },
     renderCall(args: PlanParams, theme: Theme, context?: { lastComponent?: unknown }) {

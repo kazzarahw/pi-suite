@@ -13,7 +13,7 @@ import { buildPlanCommand } from "./src/command.ts";
 /**
  * pi-plan — the agent's plan, as a lifecycle rather than a list.
  *
- * Registers `plan` (one action enum over objective / items / start / step / promote /
+ * Registers `plan` (one action enum over objective / items / add / start / step / promote /
  * finish / drop), keeps the objective and the active item in context on every call, renders
  * a live widget, restores after a fork or compaction, nudges on settle, and in `block` mode
  * refuses edits made outside any planned work. Emits `plan:objective`, `plan:met`,

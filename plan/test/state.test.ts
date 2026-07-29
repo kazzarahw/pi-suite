@@ -1,6 +1,7 @@
 import { test, expect } from "bun:test";
 import {
   activeItem,
+  applyAdd,
   applyClear,
   applyDrop,
   applyFinish,
@@ -20,6 +21,52 @@ const withItems = (...contents: string[]): Plan =>
 /** The same, with the first item started. */
 const started = (approach = "read both extensions first", ...contents: string[]): Plan =>
   applyStart(withItems(...contents), "1", approach).plan;
+
+// ---------------------------------------------------------------------------
+// `add` — the additive path, which exists because full-replace priced revision out of
+// reach. Everything it does *not* do is the point: no removal, no reorder, no rewrite.
+// ---------------------------------------------------------------------------
+
+test("add appends without disturbing what is already open", () => {
+  const plan = applyAdd(withItems("a", "b"), [{ content: "c" }]).plan;
+  expect(plan.items.map((i) => i.content)).toEqual(["a", "b", "c"]);
+  expect(plan.items.map((i) => i.id)).toEqual(["1", "2", "3"]);
+});
+
+test("add cannot touch the active item, so the invariant items must check is unreachable", () => {
+  const plan = applyAdd(started("read both first", "a", "b"), [{ content: "c" }]).plan;
+  const active = activeItem(plan)!;
+  expect(active.content).toBe("a");
+  expect(active.approach).toBe("read both first");
+  // `applyItems` throws here when the active item is omitted; `add` has no way to omit it.
+  expect(plan.items).toHaveLength(3);
+});
+
+test("add draws fresh ids from seq, so a resolved id is never reissued", () => {
+  const resolved = applyFinish(started("x", "a", "b"), "did it").plan;
+  expect(applyAdd(resolved, [{ content: "c" }]).plan.items.map((i) => i.id)).toEqual(["2", "3"]);
+});
+
+test("add refuses to duplicate an open item", () => {
+  // A second copy is a small lie about how much work is left.
+  expect(() => applyAdd(withItems("a", "b"), [{ content: "a" }])).toThrow(/already open as id 1/);
+});
+
+test("adding what was already resolved is allowed — it is new work, not a duplicate", () => {
+  // The log is history; re-opening something is a legitimate thing to learn.
+  const resolved = applyFinish(started("x", "a"), "did it").plan;
+  expect(applyAdd(resolved, [{ content: "a" }]).plan.items.map((i) => i.content)).toEqual(["a"]);
+});
+
+test("add refuses an empty list rather than silently doing nothing", () => {
+  expect(() => applyAdd(withItems("a"), [])).toThrow(/at least one item/);
+});
+
+test("add returns what it added, for the caller that needs to name it", () => {
+  const { added } = applyAdd(withItems("a"), [{ content: "b" }, { content: "c" }]);
+  expect(added.map((i) => i.id)).toEqual(["2", "3"]);
+  expect(added.every((i) => i.status === "pending")).toBe(true);
+});
 
 // ---------------------------------------------------------------------------
 // The objective. Ported from pi-goal's state tests — the carry-forward rules were

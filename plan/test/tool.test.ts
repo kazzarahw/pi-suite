@@ -43,6 +43,7 @@ test("every missing field is named at once, not one round-trip at a time", async
   await expect(call({ action: "finish" })).rejects.toThrow(/requires note/);
   await expect(call({ action: "objective" })).rejects.toThrow(/requires objective/);
   await expect(call({ action: "items" })).rejects.toThrow(/requires items/);
+  await expect(call({ action: "add" })).rejects.toThrow(/requires items/);
   await expect(call({ action: "promote" })).rejects.toThrow(/requires index/);
 });
 
@@ -176,12 +177,53 @@ test("describeCall says the interesting half of each action in one line", () => 
   );
   expect(describeCall({ action: "items", items: [{ content: "a" }] } as never)).toBe("1 item");
   expect(describeCall({ action: "items", items: [] } as never)).toBe("clear the list");
+  // `+2 items` against `2 items`: the row has to say appended, not replaced.
+  expect(describeCall({ action: "add", items: [{ content: "a" }, { content: "b" }] } as never)).toBe(
+    "+2 items",
+  );
+  expect(describeCall({ action: "add", items: [{ content: "a" }] } as never)).toBe("+1 item");
   expect(describeCall({ action: "start", id: "2" } as never)).toBe("start 2");
   expect(describeCall({ action: "step", index: 1, done: true } as never)).toBe("step 1");
   expect(describeCall({ action: "step", steps: ["a", "b"] } as never)).toBe("+2 steps");
   expect(describeCall({ action: "promote", index: 0 } as never)).toBe("promote step 0");
   expect(describeCall({ action: "finish" } as never)).toBe("finish");
   expect(describeCall({ action: "drop", id: "3" } as never)).toBe("drop 3");
+});
+
+// ---------------------------------------------------------------------------
+// `add`, and the checkpoint that rides the result.
+// ---------------------------------------------------------------------------
+
+test("add appends and announces the list like any other write", async () => {
+  const h = harness();
+  await h.call({ action: "items", items: [{ content: "a" }] });
+  const result = await h.call({ action: "add", items: [{ content: "b" }] });
+  expect(h.plan().items.map((i) => i.content)).toEqual(["a", "b"]);
+  expect(h.persisted).toHaveLength(2);
+  expect(h.emitted.filter((e) => e.event === "plan:updated")).toHaveLength(2);
+  expect(result.content[0]!.type === "text" && result.content[0]!.text).toContain("b");
+});
+
+test("resolving an item appends the revision checkpoint to the result", async () => {
+  const h = harness();
+  await h.call({ action: "items", items: [{ content: "a" }, { content: "b" }] });
+  await h.call({ action: "start", id: "1", approach: "read it first" });
+  const result = await h.call({ action: "finish", note: "edited parse.js, tests green" });
+
+  const text = (result.content[0] as { text: string }).text;
+  // The state echo is still the state echo…
+  expect(text).toContain("b");
+  // …and the question rides underneath it, separated so neither reads as the other.
+  expect(text).toContain("\n\n[pi-plan] 1 item still open");
+  expect(text).toContain("does what you just learned change any of them?");
+});
+
+test("the checkpoint stays off the calls that are not reflection points", async () => {
+  const h = harness();
+  await h.call({ action: "items", items: [{ content: "a" }, { content: "b" }] });
+  const start = await h.call({ action: "start", id: "1", approach: "x" });
+  // Committing to an approach is not the moment to ask whether the plan changed.
+  expect((start.content[0] as { text: string }).text).not.toContain("[pi-plan]");
 });
 
 // ---------------------------------------------------------------------------
@@ -238,6 +280,7 @@ test("the tool declares the surface the contract test checks for", () => {
   expect(action?.enum).toEqual([
     "objective",
     "items",
+    "add",
     "start",
     "step",
     "promote",
