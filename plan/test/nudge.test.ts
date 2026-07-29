@@ -95,3 +95,34 @@ test("a met objective with items still open still nudges about the items", () =>
   const met = applyObjective(listed(), { objective: "merge todo and goal", status: "met" }).plan;
   expect(planReminder(met)).toContain("none active");
 });
+
+// ---------------------------------------------------------------------------
+// Attribution.
+//
+// A nudge is queued as a custom message, and Pi's `convertToLlm` drops `customType`:
+// the model receives `{ role: "user", content }` holding the bare text, indistinguishable
+// from something the user typed. Dogfooding caught both failure modes that follow —
+// an agent reading a nudge as the next paragraph of the user's message, and an agent in
+// `block` mode obeying a nudge over an explicit instruction to stop.
+//
+// Every branch, because the one that forgets is the one that ships.
+// ---------------------------------------------------------------------------
+
+test("every reminder says it came from pi-plan", () => {
+  const withSteps = applyStart(listed(), "1", "read both first", ["a", "b"]).plan;
+  const noSteps = applyStart(listed(), "1", "x").plan;
+  const objectiveOnly = applyObjective(emptyPlan(), { objective: "merge todo and goal" }).plan;
+
+  for (const plan of [withSteps, noSteps, listed(), objectiveOnly]) {
+    expect(planReminder(plan)!.startsWith("[pi-plan] ")).toBe(true);
+  }
+  // …including the branch that folds in a peer's signal.
+  expect(planReminder(objectiveOnly, { cmd: "bun test" })!.startsWith("[pi-plan] ")).toBe(true);
+});
+
+test("attribution does not displace what the reminder actually says", () => {
+  // A prefix that swallowed the message would pass the test above and be useless.
+  const reminder = planReminder(listed())!;
+  expect(reminder).toBe(`[pi-plan] ${reminder.slice("[pi-plan] ".length)}`);
+  expect(reminder).toContain("2 item(s) open and none active");
+});
