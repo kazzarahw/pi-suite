@@ -90,6 +90,27 @@ test("an active item with no approach is refused rather than trusted", () => {
   expect(decision.reason).toContain("id 1");
 });
 
+test("every refusal leads with the fact that the write did not happen", () => {
+  // From the model's side the tool call has already been made, payload and all, and Pi
+  // renders it that way. Dogfooding watched an agent read a refusal as advice about what
+  // to do next rather than news about what had happened — "the README.md was already
+  // written by the earlier write call" — and go looking for a file that did not exist.
+  // Saying only *why* leaves the agent to infer *whether*, and it inferred wrong.
+  const objectiveOnly = applyObjective(emptyPlan(), { objective: "ship it" }).plan;
+  const noApproach: Plan = {
+    ...listed(),
+    items: [{ id: "1", content: "design the state shape", status: "active" }],
+  };
+
+  for (const plan of [listed(), objectiveOnly, noApproach]) {
+    const reason = gateEdit(plan, "block", "write").reason!;
+    expect(reason.startsWith("[pi-plan] this edit did NOT happen")).toBe(true);
+    expect(reason).toContain("the file is unchanged");
+    // …and the write still needs making once the plan is in order.
+    expect(reason).toContain("Then make this edit again.");
+  }
+});
+
 test("the plan tool itself can never be gated", () => {
   // EDIT_TOOLS holds `write` and `edit`, so the tool that resolves a refusal is not in the
   // set that produces one. Pinned because the alternative is an unrecoverable session.

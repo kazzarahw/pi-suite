@@ -171,6 +171,12 @@ never turns a one-line session into ceremony. And it is bounded by `blocks`, bec
 agent that cannot work out what the gate wants would otherwise be unable to edit anything
 for the rest of the session.
 
+Every refusal **leads with the fact that the write did not happen**, before it says why.
+Blocking stops the write, but from the model's side the tool call has already been made,
+payload and all, and Pi renders it that way — so a refusal that only explains itself leaves
+the agent to infer whether anything landed. In dogfooding one inferred wrong, said "the
+README.md was already written by the earlier write call", and recovered off an `ENOENT`.
+
 ### What the gate does not cover
 
 It gates `write` and `edit` — the `EDIT_TOOLS` set from `shared/tool-input.ts`. **A write

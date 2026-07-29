@@ -30,6 +30,25 @@ export interface GateDecision {
 const ALLOW: GateDecision = { block: false };
 
 /**
+ * What every refusal has to say before it says anything else.
+ *
+ * Returning `{ block: true }` stops the write, but from the model's side the tool call has
+ * already been *made*, with its whole payload — and Pi renders it that way. Dogfooding
+ * caught the consequence exactly: an agent's `write` of a new README was refused, it read
+ * the refusal as advice about what to do next rather than as news about what had happened,
+ * said "the README.md was already written by the earlier write call", and went looking for
+ * a file that did not exist. It recovered off an `ENOENT`, which is the wrong teacher.
+ *
+ * So the outcome leads and the instruction follows. Saying only *why* an action is not
+ * allowed leaves the agent to infer *whether* it happened, and the inference it drew was
+ * the wrong one.
+ */
+const REFUSED = "[pi-plan] this edit did NOT happen — the file is unchanged.";
+
+/** And the part every refusal has to end with, since the write still needs making. */
+const RETRY = "Then make this edit again.";
+
+/**
  * Is there a plan at all?
  *
  * **The arm condition is the whole reason this is usable.** Without it, installing pi-plan
@@ -78,8 +97,8 @@ export function gateEdit(plan: Plan, mode: Mode, toolName: string): GateDecision
     return {
       block: true,
       reason:
-        `[pi-plan] "${active.content}" is active but carries no approach, so nothing was committed to before editing. ` +
-        `Call the plan tool with action "start" again for id ${active.id}, stating the approach.`,
+        `${REFUSED} "${active.content}" is active but carries no approach, so nothing was committed to before editing. ` +
+        `Call the plan tool with action "start" again for id ${active.id}, stating the approach. ${RETRY}`,
     };
   }
 
@@ -87,8 +106,8 @@ export function gateEdit(plan: Plan, mode: Mode, toolName: string): GateDecision
     return {
       block: true,
       reason:
-        `[pi-plan] there is an objective but no plan under it, and nothing is active. ` +
-        `Call the plan tool with action "items" to lay out the work, then action "start" with an approach before editing.`,
+        `${REFUSED} There is an objective but no plan under it, and nothing is active. ` +
+        `Call the plan tool with action "items" to lay out the work, then action "start" with an approach. ${RETRY}`,
     };
   }
 
@@ -96,8 +115,8 @@ export function gateEdit(plan: Plan, mode: Mode, toolName: string): GateDecision
   return {
     block: true,
     reason:
-      `[pi-plan] no item is active, so this edit is not part of any planned work. ` +
+      `${REFUSED} No item is active, so this edit is not part of any planned work. ` +
       `Call the plan tool with action "start", an id (next up is ${next.id}: "${next.content}"), and the approach you are committing to. ` +
-      `Deciding the approach before editing is the point; stating it afterwards is not the same thing.`,
+      `Deciding the approach before editing is the point; stating it afterwards is not the same thing. ${RETRY}`,
   };
 }
