@@ -34,7 +34,7 @@ type Action = (typeof ACTIONS)[number];
 const parameters = Type.Object({
   action: StringEnum(ACTIONS, {
     description:
-      "objective (set the session's goal) | items (replace the open list) | start (activate one item, with an approach) | step (tick or add worksheet steps) | promote (turn a step into its own item) | finish (resolve the active item) | drop (abandon an item with a reason).",
+      "objective (set the session's goal) | items (replace the open list — call again whenever what is left changes) | start (activate one item, with an approach) | step (tick or add worksheet steps) | promote (turn a step into its own item) | finish (resolve the active item as work you did) | drop (abandon an item that turned out to be unnecessary or was already done, with a reason).",
   }),
   objective: Type.Optional(
     Type.String({
@@ -95,13 +95,13 @@ const parameters = Type.Object({
   note: Type.Optional(
     Type.String({
       description:
-        "For 'finish': what the outcome actually was. Required — it is what survives the worksheet.",
+        "For 'finish': what you actually changed, concretely — what you edited and how you know it worked. Required; it is what survives the worksheet. If you cannot name something you changed, this was not a finish: use 'drop' instead and say why.",
     }),
   ),
   reason: Type.Optional(
     Type.String({
       description:
-        "For 'drop': why this is being abandoned. Required — an item dropped without one is indistinguishable from one silently forgotten.",
+        "For 'drop': why this is being abandoned — it turned out to be unnecessary, was already done before you got there, or proved to be the wrong approach. Required — an item dropped without one is indistinguishable from one silently forgotten.",
     }),
   ),
 });
@@ -190,9 +190,9 @@ export function buildPlanTool(deps: PlanToolDeps) {
     name: "plan",
     label: "Plan",
     description:
-      "Plan and track multi-step work as a strict lifecycle. Set the session objective with 'objective'. Lay out the open work with 'items' (send the COMPLETE open list; it replaces the previous one). Before editing anything, 'start' one item with the approach you are committing to — exactly one item is active at a time. Track scratch work on that item with 'step', and 'promote' a step that turns out to deserve its own item. Resolve it with 'finish' and a note, or 'drop' it with a reason if it turned out to be unnecessary. Resolved work leaves the list and is recorded in the log.",
+      "Plan and track multi-step work as a strict lifecycle. Call it BEFORE you start working — as soon as the task looks like three or more distinct steps, spans more than one file, or the user asked for several things at once. Skip it for a single obvious edit, a question, or a one-line fix. Set the session objective with 'objective'. Lay out the open work with 'items' (send the COMPLETE open list; it replaces the previous one), and call 'items' again the moment you learn something that changes what is left — work you discovered, an item that turned out to be two, an ordering that no longer makes sense. The list is meant to be revised as you learn, not honored as written. Before editing anything, 'start' one item with the approach you are committing to — exactly one item is active at a time. Track scratch work on that item with 'step', and 'promote' a step that turns out to deserve its own item. Resolve it with 'finish' and a note saying what you actually changed, or 'drop' it with a reason — an item you did not have to do is dropped, never finished. Resolved work leaves the list and is recorded in the log.",
     promptSnippet:
-      "Track multi-step work: set an objective, list the work, start one item with an approach before editing, finish or drop it explicitly.",
+      "For work of three or more steps: set an objective, list the work, start one item with an approach before editing, revise the list as you learn, and finish or drop each item explicitly.",
     parameters,
     async execute(
       _toolCallId: string,

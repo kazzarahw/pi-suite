@@ -64,7 +64,7 @@ function reminderBody(plan: Plan, verify: VerifyState | null): string | null {
     }
     return (
       `"${active.content}" is active and every step is ticked. ` +
-      `Call the plan tool with action "finish" and a note saying what the outcome was, or action "drop" with a reason if it turned out to be unnecessary.`
+      `Call the plan tool with action "finish" and a note saying what you actually changed, or action "drop" with a reason if it turned out to be unnecessary or was already done.`
     );
   }
 

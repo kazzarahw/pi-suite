@@ -184,6 +184,50 @@ test("describeCall says the interesting half of each action in one line", () => 
   expect(describeCall({ action: "drop", id: "3" } as never)).toBe("drop 3");
 });
 
+// ---------------------------------------------------------------------------
+// The description is a behavioral surface, not documentation.
+//
+// Dogfooding on a mid-sized model found the tool ignored entirely on a genuine
+// multi-step debugging session: the description explained all seven actions and never
+// said *when* to reach for one. It also found `finish` called on an item that turned out
+// to need no work — recording as done something that never happened, which is the exact
+// lie `drop` exists to prevent, and a falsehood that outlives compaction because the log
+// is what gets replayed.
+//
+// Both fixes live in strings, so they are pinned as strings. A future edit that tightens
+// the prose is free to reword these; one that drops the trigger or the finish/drop
+// distinction should have to notice it is doing so.
+// ---------------------------------------------------------------------------
+
+test("the description says when to reach for the tool, not just how to drive it", () => {
+  const { tool } = harness();
+  // A threshold concrete enough to evaluate against a task, and the negative case, so
+  // adopting it is not the answer to every prompt.
+  expect(tool.description).toContain("three or more distinct steps");
+  expect(tool.description.toLowerCase()).toContain("skip it for");
+  // Before, because deciding the approach afterwards is not the same thing.
+  expect(tool.description).toContain("BEFORE you start working");
+  // The trigger has to survive into the system prompt too — the description is only read
+  // once the model is already considering the tool.
+  expect(tool.promptSnippet).toContain("three or more steps");
+});
+
+test("the description tells the agent the list is revisable", () => {
+  const { tool } = harness();
+  expect(tool.description).toContain("revised as you learn");
+});
+
+test("finish demands evidence, and routes the no-work case to drop", () => {
+  const { tool } = harness();
+  const props = (tool.parameters as { properties?: Record<string, { description?: string }> })
+    .properties!;
+  expect(props.note!.description).toContain("what you actually changed");
+  expect(props.note!.description).toContain("use 'drop' instead");
+  // …and the other side of the same decision names the case that was getting finished.
+  expect(props.reason!.description).toContain("already done");
+  expect(tool.description).toContain("dropped, never finished");
+});
+
 test("the tool declares the surface the contract test checks for", () => {
   const { tool } = harness();
   expect(tool.name).toBe("plan");
