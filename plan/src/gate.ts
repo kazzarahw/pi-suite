@@ -48,6 +48,20 @@ const armed = (plan: Plan): boolean => plan.objective !== null || plan.items.len
  * That set exists because pi-git and pi-lens once disagreed about which tools write, and a
  * third opinion is how the next silent gap gets introduced. It contains `write` and `edit`
  * and not `plan`, so this can never gate the tool that resolves it.
+ *
+ * **What it does not cover is a write through `bash`.** `shared/tool-input.ts` names that
+ * case too, as `OPAQUE_WRITE_TOOLS`: a `sed -i`, a heredoc, a `git apply`, or a plain `>`
+ * redirect changes a file without naming it in the input, which is why pi-git snapshots the
+ * entire working set before bash runs rather than trying to read a path out of it. Gating it
+ * here would mean one of two worse things — refusing bash wholesale, which is unusable when
+ * bash is also the reads, the tests, and the git; or guessing from the command string
+ * whether it writes, which fails open on the shapes that matter and fails closed on the ones
+ * that do not.
+ *
+ * So `block` is a **discipline aid, not an enforcement guarantee**. It makes editing outside
+ * the plan take a deliberate detour; it does not make it impossible. That distinction is
+ * worth the paragraph: an undocumented gap reads as a promise the code does not keep, and
+ * this one is a deliberate scope decision rather than an unfinished implementation.
  */
 export function gateEdit(plan: Plan, mode: Mode, toolName: string): GateDecision {
   if (mode !== "block") return ALLOW;

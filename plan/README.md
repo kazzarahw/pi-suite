@@ -108,7 +108,7 @@ stopped* is the expensive thing to relearn.
 |---|---|
 | `off` | tool and widget only — no injection, no nudge, no gate |
 | `notify` *(default)* | inject the plan every call, plus a passive reminder on the next turn |
-| `block` | auto-continue the turn while work is outstanding, **and** refuse edits made with nothing active |
+| `block` | auto-continue the turn while work is outstanding, **and** refuse `write`/`edit` calls made with nothing active (see the scope limit below) |
 
 | Setting | Default | |
 |---|---|---|
@@ -137,6 +137,23 @@ plan is not a violated plan; it is someone who has not started one, so installin
 never turns a one-line session into ceremony. And it is bounded by `blocks`, because an
 agent that cannot work out what the gate wants would otherwise be unable to edit anything
 for the rest of the session.
+
+### What the gate does not cover
+
+It gates `write` and `edit` — the `EDIT_TOOLS` set from `shared/tool-input.ts`. **A write
+through `bash` is out of scope**: a `sed -i`, a heredoc, a `git apply`, or a plain `>`
+redirect changes a file without naming it in the tool input, and the gate never fires. That
+is the same blind spot `shared/tool-input.ts` calls `OPAQUE_WRITE_TOOLS`, and the reason
+pi-git snapshots the whole working set before bash runs instead of reading a path out of it.
+
+This is a scope decision, not an omission. Gating bash would mean either refusing it
+wholesale — unusable, since bash is also the reads, the tests, and the git — or guessing
+from the command string whether it writes, which fails open on exactly the shapes that
+matter.
+
+So `block` is a **discipline aid rather than an enforcement guarantee**. It makes editing
+outside the plan take a deliberate detour; it does not make it impossible. If you need the
+harder version, Pi's own permission system is the layer that can actually enforce it.
 
 `/pi-plan clear` forgets the objective and the open list, and **keeps the log** — `clear`
 means *the plan was wrong, re-plan*, and what was already tried and abandoned is exactly
