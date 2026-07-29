@@ -84,7 +84,10 @@ const parameters = Type.Object({
     ),
   ),
   id: Type.Optional(
-    Type.String({ description: "For 'start' and 'drop': which open item, by id." }),
+    Type.String({
+      description:
+        "For 'start' and 'drop': which open item — its id, or its exact content if that is easier to quote.",
+    }),
   ),
   approach: Type.Optional(
     Type.String({

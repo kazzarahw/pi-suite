@@ -191,8 +191,41 @@ test("starting requires an approach", () => {
   expect(() => applyStart(withItems("a"), "1", "   ")).toThrow(/approach/);
 });
 
-test("starting an unknown id is refused", () => {
-  expect(() => applyStart(withItems("a"), "99", "x")).toThrow(/no open item with id 99/);
+test("starting an unknown id is refused, and the refusal names what would have worked", () => {
+  // A refusal that does not name the way out is the failure this extension complains
+  // about everywhere else. Dogfooding watched an agent burn two turns on this one and
+  // then abandon the plan mid-session.
+  expect(() => applyStart(withItems("a"), "99", "x")).toThrow(/no open item matches "99"/);
+  expect(() => applyStart(withItems("a", "b"), "99", "x")).toThrow(/1 \("a"\), 2 \("b"\)/);
+});
+
+test("an empty list says so rather than listing nothing", () => {
+  expect(() => applyStart(emptyPlan(), "1", "x")).toThrow(/nothing is open/);
+});
+
+// ---------------------------------------------------------------------------
+// Content is a way of naming an item, because `applyItems` already says so — it carries
+// id, status, approach, and worksheet across a rewrite by matching on content. `start`
+// and `drop` taking only the ordinal made them the two verbs that disagreed.
+// ---------------------------------------------------------------------------
+
+test("start accepts the item's content, not only its id", () => {
+  const plan = applyStart(withItems("write the tests", "b"), "write the tests", "read first").plan;
+  const active = activeItem(plan)!;
+  expect(active.id).toBe("1");
+  expect(active.approach).toBe("read first");
+});
+
+test("drop accepts the item's content too", () => {
+  const { plan, entry } = applyDrop(withItems("a", "unnecessary work"), "unnecessary work", "moot");
+  expect(entry.content).toBe("unnecessary work");
+  expect(plan.items.map((i) => i.content)).toEqual(["a"]);
+});
+
+test("an id wins over content that happens to collide with it", () => {
+  // An item literally called "1" must not shadow the item whose id is 1.
+  const plan = applyItems(emptyPlan(), [{ content: "first" }, { content: "1" }]).plan;
+  expect(activeItem(applyStart(plan, "1", "x").plan)!.content).toBe("first");
 });
 
 // THE constraint the whole extension is built on.
@@ -271,7 +304,7 @@ test("finishing costs a note, and there must be something active to finish", () 
 test("dropping costs a reason and records it, for an active or a pending item", () => {
   const active = applyStart(withItems("a", "b"), "1", "x").plan;
   expect(() => applyDrop(active, "1", " ")).toThrow(/requires a reason/);
-  expect(() => applyDrop(active, "99", "r")).toThrow(/no open item with id 99/);
+  expect(() => applyDrop(active, "99", "r")).toThrow(/no open item matches "99"/);
 
   const droppedActive = applyDrop(active, "1", "turned out to be unnecessary");
   expect(droppedActive.entry.outcome).toBe("dropped");

@@ -217,6 +217,43 @@ export function applyAdd(plan: Plan, incoming: ItemInput[]): { plan: Plan; added
 // ---------------------------------------------------------------------------
 
 /**
+ * Resolve the item an agent named, by id **or** by content.
+ *
+ * The content fallback is not leniency — it is the identity model this file already has.
+ * `applyItems` preserves an item's id, status, approach, and worksheet across a rewrite by
+ * *matching on content*, so content is already a way of naming an item here. `start` and
+ * `drop` accepting only the ordinal made them the two verbs that disagreed with that.
+ *
+ * Dogfooding is what surfaced it, and the failure was total rather than cosmetic: an agent
+ * created one item, called `start` with the item's own content, got "no open item with id
+ * …", called `items` again, tried the same thing, and then abandoned the plan mid-session —
+ * "the fix is done and tests pass, the important thing is the work is complete". It ended
+ * with the work finished and the plan still claiming it was open, which is the same class
+ * of lie as a false `finish`, only pointing the other way.
+ *
+ * Ambiguity is bounded by what already exists: duplicate content cannot enter through
+ * `applyAdd`, and where `applyItems` allows it, first-match is the rule there too.
+ */
+function findOpen(plan: Plan, ref: string): PlanItem | undefined {
+  return plan.items.find((i) => i.id === ref) ?? plan.items.find((i) => i.content === ref);
+}
+
+/**
+ * Refuse a reference that matches nothing, and say what would have matched.
+ *
+ * A refusal that does not name the way out is the failure mode this extension complains
+ * about everywhere else — see the gate's reasons, and `applyStart`'s "already active".
+ * "no open item with id X" was the one that did not.
+ */
+const noSuchItem = (plan: Plan, ref: string): never => {
+  const open = plan.items.map((i) => `${i.id} ("${i.content}")`).join(", ");
+  return fail(
+    `no open item matches "${ref}" — ` +
+      (open ? `open items are: ${open}` : `nothing is open. Lay work out with action "items" first`),
+  );
+};
+
+/**
  * Activate an item, which is the moment the approach has to exist.
  *
  * Supplying it *is* the decompose-before-you-commit step, and it is why `start` costs
@@ -236,8 +273,8 @@ export function applyStart(
         `One item at a time is the whole point.`,
     );
   }
-  const target = plan.items.find((i) => i.id === id);
-  if (!target) fail(`no open item with id ${id}`);
+  const target = findOpen(plan, id);
+  if (!target) noSuchItem(plan, id);
   const trimmed = approach.trim();
   if (!trimmed) fail(`action "start" requires a non-empty approach`);
 
@@ -245,7 +282,7 @@ export function applyStart(
   if (steps && steps.length > 0) {
     started.steps = steps.map((content) => ({ content, done: false }));
   }
-  return { plan: { ...plan, items: plan.items.map((i) => (i.id === id ? started : i)) } };
+  return { plan: { ...plan, items: plan.items.map((i) => (i.id === target!.id ? started : i)) } };
 }
 
 /** A worksheet edit: tick/untick one step, or append more. */
@@ -316,14 +353,18 @@ export function applyFinish(plan: Plan, note: string): { plan: Plan; entry: LogE
  * noise either way. Here it costs a reason and leaves a record.
  */
 export function applyDrop(plan: Plan, id: string, reason: string): { plan: Plan; entry: LogEntry } {
-  const target = plan.items.find((i) => i.id === id);
-  if (!target) fail(`no open item with id ${id}`);
+  const target = findOpen(plan, id);
+  if (!target) noSuchItem(plan, id);
   const trimmed = reason.trim();
   if (!trimmed) fail(`action "drop" requires a reason`);
 
   const entry: LogEntry = { content: target!.content, outcome: "dropped", note: trimmed };
   return {
-    plan: { ...plan, items: plan.items.filter((i) => i.id !== id), log: [...plan.log, entry] },
+    plan: {
+      ...plan,
+      items: plan.items.filter((i) => i.id !== target!.id),
+      log: [...plan.log, entry],
+    },
     entry,
   };
 }

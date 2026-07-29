@@ -66,8 +66,13 @@ the active item is untouchable by construction and the invariant `items` has to 
 is unreachable. It refuses to duplicate an open item, because a second copy is a small lie
 about how much work is left.
 
-`start` and `drop` take an `id` because they name an item. `step`, `promote`, and `finish`
-take none, because there is only ever one active item.
+`start` and `drop` take an `id` because they name an item — **or the item's exact content**,
+which is the same identity `items` already uses to carry an item's status, approach, and
+worksheet across a rewrite. Accepting only the ordinal made these the two verbs that
+disagreed with that, and in dogfooding an agent quoted its own item back, was refused
+twice, and abandoned the plan mid-session with the work done and the list still claiming it
+was open. `step`, `promote`, and `finish` take no reference at all, because there is only
+ever one active item.
 
 Restating the *same* objective carries omitted fields forward, so marking it met need not
 repeat the criteria, and amending the criteria cannot silently reopen one already met.
