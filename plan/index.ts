@@ -42,6 +42,16 @@ export default function piPlan(pi: ExtensionAPI): void {
   const itemGuard = createNudgeGuard();
   /** Bounds the Interdict half of `block`, per `shared/mode.ts`: no escalation without one. */
   const blockGuard = createNudgeGuard();
+  /**
+   * Whether the give-up notice for the current stall has already been shown.
+   *
+   * Once the guard is exhausted it keeps returning `false` for as long as the plan does
+   * not move — which is the point, since the whole purpose is to stop refusing — but the
+   * notice beside it fired on *every* subsequent edit. A warning telling the user how to
+   * turn the gate off, repeated once per write for the rest of the session, is the noise
+   * `drainSkips` and `warnOnce` exist to prevent elsewhere in the suite.
+   */
+  let blockGivenUp = false;
 
   const paint = (ctx: ExtensionContext): void => {
     const lines = renderPlan(plan, verify);
@@ -138,12 +148,18 @@ export default function piPlan(pi: ExtensionAPI): void {
       // The same signature twice means the last refusal achieved nothing. Rather than
       // wedging the session, give up and say so once.
       if (!blockGuard.allow(JSON.stringify(plan), loadConfig().maxBlocks)) {
-        ctx?.ui?.notify?.(
-          "[pi-plan] letting this edit through — blocking it again has not helped. Run /pi-plan notify to stop refusing edits.",
-          "warning",
-        );
+        if (!blockGivenUp) {
+          blockGivenUp = true;
+          ctx?.ui?.notify?.(
+            "[pi-plan] letting this edit through — blocking it again has not helped. Run /pi-plan notify to stop refusing edits.",
+            "warning",
+          );
+        }
         return undefined;
       }
+      // The guard allowed a refusal, so the plan moved since the last one — a fresh stall
+      // from here earns a fresh notice.
+      blockGivenUp = false;
       return { block: true, reason: decision.reason };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
