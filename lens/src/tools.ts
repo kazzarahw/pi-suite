@@ -6,7 +6,7 @@ import { relative, resolve } from "node:path";
 import type { AgentToolResult, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import type { LspManager } from "./lsp/manager.ts";
 import { REQUEST_TIMEOUT_MS } from "./lsp/client.ts";
-import { cwdOf, deadline } from "../../shared/index.ts";
+import { cwdOf, deadline, truncateForAgent } from "../../shared/index.ts";
 import { renderToolCall } from "../../shared/tool-render.ts";
 import type { Location } from "./diagnostics.ts";
 
@@ -139,7 +139,13 @@ export function buildLensTool(deps: LensToolDeps) {
         default:
           throw new Error(`[pi-lens] unknown action "${params.action}"`);
       }
-      return { content: [{ type: "text", text }], details: { action: params.action } };
+      // Truncated, like every other agent-facing string in the suite. This was the one
+      // tool result that was not, and it is among the likeliest to need it: `references`
+      // on a widely-used symbol returns one line per usage across the whole project, and a
+      // hover returns whatever the server chose to write. `shared/README.md` states the
+      // rule; pi-memory's index is where it was last found unenforced.
+      const out = truncateForAgent(text, { label: `lens ${params.action}` });
+      return { content: [{ type: "text", text: out }], details: { action: params.action } };
     },
     renderCall(args: LensParams, theme: Theme, context?: { lastComponent?: unknown }) {
       return renderToolCall("lens", describeCall(args), theme, context?.lastComponent);
