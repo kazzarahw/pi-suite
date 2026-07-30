@@ -36,6 +36,17 @@ interface Entry {
   ready: Promise<void>;
   /** Resolves on the server's first publishDiagnostics — a reliable "project loaded" signal. */
   warm: Promise<void>;
+  /**
+   * Documents this **server instance** has been sent `didOpen` for.
+   *
+   * Per entry, not per manager. A single shared set was wrong twice over: a server that
+   * died and was respawned (a crash, or `shutdownAll` on a fork) inherited the claim that
+   * every previously-seen file was open, so `syncFile` sent the fresh process a
+   * `didChange` for a document it had never been told about — which servers drop, so
+   * diagnostics silently stopped for the rest of the session. The same held across two
+   * servers keyed by different cwds.
+   */
+  opened: Set<string>;
 }
 
 /**
@@ -54,7 +65,6 @@ export function createManager(
 ): LspManager {
   const clients = new Map<string, Entry>();
   const diagnostics = new Map<string, Diagnostic[]>();
-  const opened = new Set<string>();
   const waiters = new Map<string, Array<(ds: Diagnostic[]) => void>>();
 
   function ensure(path: string, cwd: string): { entry: Entry; spec: ServerSpec } | null {
@@ -80,6 +90,9 @@ export function createManager(
       const warm = new Promise<void>((resolve) => {
         markWarm = resolve;
       });
+      // Built before `onDead` so the handler can clear this server's diagnostics as it
+      // drops the entry. See `Entry.opened`, and the deletion in `onDead` below.
+      const opened = new Set<string>();
       // Declared before `onDead` so the handler cannot hit a temporal dead zone: `proc` can
       // emit "error" synchronously, and `client?.` on a not-yet-initialised const throws
       // rather than short-circuiting.
@@ -91,6 +104,13 @@ export function createManager(
       const onDead = (): void => {
         markWarm();
         clients.delete(cmdKey);
+        // The findings go with the server that made them. `pull` resolves from this map
+        // when its wait times out, so a respawned server that has not published yet would
+        // otherwise hand the agent the *dead* one's diagnostics as the current state of a
+        // file it has edited since — reported as a real result, because `client` is
+        // non-null and nothing downstream can tell the two apart. Same argument as keeping
+        // `opened` per entry rather than per manager, which is what makes this possible.
+        for (const path of opened) diagnostics.delete(path);
         client?.dispose("language server exited");
       };
       proc.on("error", onDead);
@@ -104,7 +124,15 @@ export function createManager(
           }
         },
         onData: (cb) => {
-          proc.stdout?.on("data", (d) => cb(d.toString()));
+          // `setEncoding` rather than `d.toString()` per chunk. `framing.ts` is careful to
+          // count Content-Length in *bytes*, but that care is undone one layer up if each
+          // Buffer is decoded independently: a multi-byte character split across a chunk
+          // boundary becomes two U+FFFD replacements, which re-encode to a different byte
+          // length than the original. The frame then desyncs and every message after it is
+          // lost. Node's StringDecoder holds the partial sequence until the rest arrives,
+          // so `cb` only ever sees complete characters.
+          proc.stdout?.setEncoding("utf8");
+          proc.stdout?.on("data", (d: string) => cb(d));
         },
       });
       client.onDiagnostics((uri, ds) => {
@@ -120,7 +148,7 @@ export function createManager(
       // Race init against `warm`: a healthy server settles this when `initialize` returns; a
       // dead one settles `warm` via onDead — so `ready()` can never block on init forever.
       const ready = Promise.race([client.initialize(pathToFileURL(cwd).toString()).catch(() => {}), warm]);
-      entry = { client, proc, ready, warm };
+      entry = { client, proc, ready, warm, opened };
       clients.set(cmdKey, entry);
     }
     return { entry, spec };
@@ -130,10 +158,10 @@ export function createManager(
     const uri = pathToFileURL(path).toString();
     try {
       const text = readFileSync(path, "utf8");
-      if (opened.has(path)) entry.client.didChange(uri, text);
+      if (entry.opened.has(path)) entry.client.didChange(uri, text);
       else {
         entry.client.didOpen(uri, text, spec.languageId);
-        opened.add(path);
+        entry.opened.add(path);
       }
     } catch {
       /* file gone */
@@ -176,14 +204,22 @@ export function createManager(
         const arr = waiters.get(path) ?? [];
         waiters.set(path, arr);
         let done = false;
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        // Deregister on *every* settling path, not just the publish one. Only the
+        // publish handler used to clear `waiters`, so a file whose server never
+        // publishes — the case the timeout exists for — left its callback in the array
+        // and its timer armed, once per read or edit, for the life of the session.
         const finish = (ds: Diagnostic[]) => {
-          if (!done) {
-            done = true;
-            resolve(ds);
-          }
+          if (done) return;
+          done = true;
+          if (timer !== undefined) clearTimeout(timer);
+          const at = arr.indexOf(finish);
+          if (at >= 0) arr.splice(at, 1);
+          if (arr.length === 0) waiters.delete(path);
+          resolve(ds);
         };
         arr.push(finish);
-        setTimeout(() => finish(diagnostics.get(path) ?? []), timeoutMs);
+        timer = setTimeout(() => finish(diagnostics.get(path) ?? []), timeoutMs);
       });
     },
     async shutdownAll() {
@@ -204,6 +240,9 @@ export function createManager(
         client.dispose("shutting down");
       }
       clients.clear();
+      // Nothing is left that could vouch for these. A fork restarts the servers cold, and
+      // a cached finding surviving that would be attributed to the fresh one.
+      diagnostics.clear();
     },
   };
 }
