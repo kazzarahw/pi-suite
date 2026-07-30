@@ -125,6 +125,65 @@ function getPiInvocation(args: string[]): { command: string; args: string[] } {
   return { command: "pi", args };
 }
 
+/** How much of a failing child's stderr is kept for the error report. */
+export const STDERR_TAIL_BYTES = 4096;
+
+/** How long a cancelled child gets to honour SIGTERM before it is killed outright. */
+export const KILL_GRACE_MS = 3000;
+
+/** The slice of a child process this plumbing touches — structural, so a test can fake it. */
+export interface ProcStreams {
+  stdout: { setEncoding(enc: BufferEncoding): unknown; on(ev: "data", cb: (chunk: string) => void): unknown };
+  stderr: { setEncoding(enc: BufferEncoding): unknown; on(ev: "data", cb: (chunk: string) => void): unknown };
+}
+
+/**
+ * Wire a child's stdout to `onLine` and drain its stderr.
+ *
+ * Extracted from the spawn itself because both halves are load-bearing and neither could
+ * be exercised without launching a real `pi`:
+ *
+ * - **stdout is decoded with `setEncoding`, never `chunk.toString()`.** A chunk boundary
+ *   can fall inside a multi-byte UTF-8 character, and decoding each Buffer on its own
+ *   turns the two halves into replacement characters — which corrupts the JSON line
+ *   carrying them, so `JSON.parse` throws and the subagent's message is dropped in
+ *   silence. For a stream whose payload is model prose that is the common case, not an
+ *   exotic one. Node's `StringDecoder` holds the partial sequence until the rest arrives.
+ * - **stderr MUST be consumed.** It is piped, and a pipe nobody reads fills at ~64KB and
+ *   then blocks the child's next write *forever* — so a subagent that logs enough to
+ *   stderr deadlocked until its deadline killed it, having produced nothing at all.
+ *
+ * Returns `flush` for the trailing partial line at close, and the bounded stderr tail, so
+ * a failed launch has something to say instead of an empty transcript.
+ */
+export function pipeProcessOutput(
+  proc: ProcStreams,
+  onLine: (line: string) => void,
+): { flush: () => void; stderrTail: () => string } {
+  let buffer = "";
+  proc.stdout.setEncoding("utf8");
+  proc.stdout.on("data", (chunk: string) => {
+    buffer += chunk;
+    const parts = buffer.split("\n");
+    buffer = parts.pop() ?? "";
+    for (const line of parts) onLine(line);
+  });
+
+  let errTail = "";
+  proc.stderr.setEncoding("utf8");
+  proc.stderr.on("data", (chunk: string) => {
+    errTail = (errTail + chunk).slice(-STDERR_TAIL_BYTES);
+  });
+
+  return {
+    flush: () => {
+      if (buffer.trim()) onLine(buffer);
+      buffer = "";
+    },
+    stderrTail: () => errTail,
+  };
+}
+
 const defaultSpawn: SpawnFn = (argv, opts) =>
   new Promise((resolve) => {
     const { command, args } = getPiInvocation(argv);
@@ -134,24 +193,35 @@ const defaultSpawn: SpawnFn = (argv, opts) =>
       cwd: opts.cwd,
       env: { ...process.env, ...(opts.env ?? {}) },
     });
-    let buffer = "";
-    proc.stdout.on("data", (d) => {
-      buffer += d.toString();
-      const parts = buffer.split("\n");
-      buffer = parts.pop() ?? "";
-      for (const line of parts) opts.onLine(line);
-    });
+    const streams = pipeProcessOutput(proc as unknown as ProcStreams, opts.onLine);
+
     proc.on("close", (code) => {
-      if (buffer.trim()) opts.onLine(buffer);
+      streams.flush();
+      const tail = streams.stderrTail().trim();
+      // Not on an abort. Esc and a deadline both stop the child with a signal, so "exited
+      // non-zero with something on stderr" is the ordinary shape of a *cancellation* —
+      // reporting it dumped up to STDERR_TAIL_BYTES of the subagent's log into the
+      // terminal every time the user pressed Escape. What this line is for is a launch
+      // that failed on its own, where the transcript would otherwise be empty.
+      if (code !== 0 && tail && opts.signal?.aborted !== true) {
+        console.error(`[pi-spawn] subagent process exited ${code}: ${tail}`);
+      }
       resolve(code ?? 0);
     });
     proc.on("error", () => resolve(1));
     if (opts.signal) {
       const kill = () => {
         proc.kill("SIGTERM");
-        setTimeout(() => {
-          if (!proc.killed) proc.kill("SIGKILL");
-        }, 3000);
+        // `exitCode`/`signalCode`, not `proc.killed`. `killed` only records that a signal
+        // was successfully *sent*, so the SIGTERM above sets it — which meant this branch
+        // was never taken and the escalation was dead code: a subagent that ignores
+        // SIGTERM was never actually stopped, and the job hung until Pi itself exited.
+        const escalate = setTimeout(() => {
+          if (proc.exitCode === null && proc.signalCode === null) proc.kill("SIGKILL");
+        }, KILL_GRACE_MS);
+        // Cleared once the child is gone: an armed timer holds the event loop open, so
+        // every cancelled job would otherwise delay Pi's own exit by the grace period.
+        proc.once("close", () => clearTimeout(escalate));
       };
       if (opts.signal.aborted) kill();
       else opts.signal.addEventListener("abort", kill, { once: true });
