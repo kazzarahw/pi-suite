@@ -38,10 +38,22 @@ export function createVerifyGate(): VerifyGate {
 
   return {
     noteDiagnostics(diagnostics, isEdit) {
-      hasErrors = diagnostics.some((d) => d.severity === "error");
-      // A read never makes the tree dirty. Only an edit can, and `dirty` stays set until
-      // a verify consumes it — a clean read after an edit must not cancel the pending run.
-      if (isEdit) dirty = true;
+      const errors = diagnostics.some((d) => d.severity === "error");
+      if (isEdit) {
+        // An edit both makes the tree dirty and replaces the verdict: it is the write the
+        // gate is waiting on, so whatever it left behind is the current answer. This is
+        // what lets a fix reopen the gate without a further edit.
+        dirty = true;
+        hasErrors = errors;
+        return;
+      }
+      // A read only ever *adds* to the verdict, and the asymmetry is the same one `dirty`
+      // already has: a read is about some other file, so finding it clean is no evidence
+      // that the edited one parses. Letting a clean read clear the flag meant the very
+      // common "edit A, glance at B, settle" sequence ran the verify against the syntax
+      // error A had just introduced — which is the one thing this gate exists to prevent.
+      // Errors found by a read still hold it shut: the tree is broken, whoever noticed.
+      if (errors) hasErrors = true;
     },
     shouldVerify() {
       return dirty && !hasErrors;

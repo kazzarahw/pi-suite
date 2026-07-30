@@ -101,3 +101,24 @@ test("each gate carries its own state", () => {
   expect(b.shouldVerify()).toBe(false);
   expect(b.warnOnce()).toBe(true);
 });
+
+test("a clean read does not clear the errors an edit left behind", () => {
+  // The gate's whole purpose is not to spend a test run reporting what the diagnostics
+  // already said. `hasErrors` was replaced on every pass, edit or read, so the very common
+  // "edit A, glance at B, settle" sequence reopened it and ran the verify against the
+  // syntax error A had just introduced. A read is about some *other* file; finding that one
+  // clean is no evidence about this one. Same asymmetry `dirty` already had.
+  const gate = createVerifyGate();
+  gate.noteDiagnostics(ERROR, true);
+  gate.noteDiagnostics(CLEAN, false);
+  expect(gate.shouldVerify()).toBe(false);
+});
+
+test("only an edit can clear the error state, which is what a fix is", () => {
+  const gate = createVerifyGate();
+  gate.noteDiagnostics(ERROR, true);
+  gate.noteDiagnostics(CLEAN, false);
+  expect(gate.shouldVerify()).toBe(false);
+  gate.noteDiagnostics(CLEAN, true);
+  expect(gate.shouldVerify()).toBe(true);
+});
