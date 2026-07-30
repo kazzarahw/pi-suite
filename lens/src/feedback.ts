@@ -68,10 +68,15 @@ export async function gatherFeedback(input: GatherInput): Promise<Gathered> {
   const which = input.which ?? whichOnPath;
 
   let reformatNote = "";
-  if (isEdit && autoFormat && toolchain?.formatter) {
+  // PATH-probed for the same reason the linters below are: this runs after every edit, and
+  // a formatter that is not installed cost a process launch whose only possible outcome was
+  // an ENOENT read back as "no change". The linters were given this gate and the formatter
+  // beside them was not, which is the asymmetry rather than a decision.
+  const formatter = toolchain?.formatter;
+  if (isEdit && autoFormat && formatter && which(formatter.cmd("x")[0] ?? "")) {
     try {
-      if ((await runFormatter(file, toolchain.formatter, exec, cwd, signal)).changed) {
-        reformatNote = formatFormatted(rel, toolchain.formatter.name);
+      if ((await runFormatter(file, formatter, exec, cwd, signal)).changed) {
+        reformatNote = formatFormatted(rel, formatter.name);
       }
     } catch {
       /* never break an edit because the formatter misbehaved */
@@ -86,13 +91,17 @@ export async function gatherFeedback(input: GatherInput): Promise<Gathered> {
     const lsp = client ? await manager.pull(file, cwd) : [];
 
     // The same filter `runLinters` applies, plus a PATH probe: a linter that is disabled
-    // for this project, or simply not installed, did not check anything. Mirrored rather
-    // than returned by `runLinters` because that function reports diagnostics only — a
-    // missing binary and a clean file both reach it as an empty list.
+    // for this project, or simply not installed, did not check anything. Computed here
+    // rather than returned by `runLinters` because that function reports diagnostics only
+    // — a missing binary and a clean file both reach it as an empty list.
     const linters = (toolchain?.linters ?? []).filter(
       (spec) => (!spec.enabledFor || spec.enabledFor(cwd)) && which(spec.cmd("x")[0] ?? ""),
     );
-    const lint = toolchain ? await runLinters(file, toolchain.linters, exec, cwd) : [];
+    // Run the list already filtered, rather than handing `runLinters` the raw one and
+    // making it redo the `enabledFor` pass. It also stops the absent binaries being
+    // spawned at all: this fires after every read and edit, and each one cost a process
+    // launch whose only possible outcome was an ENOENT parsed into an empty list.
+    const lint = linters.length > 0 ? await runLinters(file, linters, exec, cwd) : [];
 
     return {
       diagnostics: mergeDiagnostics(lsp, lint),

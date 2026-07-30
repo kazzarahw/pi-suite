@@ -1,7 +1,7 @@
 import { Type, type Static } from "typebox";
 import { StringEnum } from "@earendil-works/pi-ai";
 import type { AgentToolResult, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
-import type { Emitter } from "../../shared/index.ts";
+import { truncateForAgent, type Emitter } from "../../shared/index.ts";
 import { renderToolCall } from "../../shared/tool-render.ts";
 import {
   OBJECTIVE_STATUSES,
@@ -305,7 +305,12 @@ export function buildPlanTool(deps: PlanToolDeps) {
       // The result is also the one place revision can be asked about in-band — see
       // src/checkpoint.ts. Blank-line separated so the state echo stays readable as itself.
       const checkpoint = checkpointFor(action, next);
-      const text = checkpoint ? `${body}\n\n${checkpoint}` : body;
+      const echoed = checkpoint ? `${body}\n\n${checkpoint}` : body;
+      // Bounded, per `shared/README.md`: this echo is one line per open item plus one per
+      // worksheet step, all of it agent-authored, and it is returned on every single call.
+      // `keep: "tail"` because the revision prompt is the part that asks for something, and
+      // dropping the question to keep the list would invert what the result is for.
+      const text = truncateForAgent(echoed, { label: "plan", keep: "tail" });
       return { content: [{ type: "text", text }], details: { plan: next } };
     },
     renderCall(args: PlanParams, theme: Theme, context?: { lastComponent?: unknown }) {

@@ -13,6 +13,7 @@ import {
   chat,
   formatMessages,
   formatChats,
+  MAX_UPDATES,
   type FetchFn,
   type TelegramAction,
   type TelegramDeps,
@@ -24,6 +25,27 @@ const ACTIONS = ["send", "read", "list", "chat"] as const;
 
 /** Default for `read`/`chat` when the caller names no bound. */
 const DEFAULT_LIMIT = 10;
+
+/**
+ * `limit`, validated **here** and not only in the schema.
+ *
+ * The schema's `minimum`/`maximum` are a hint the *provider* may act on; nothing
+ * guarantees it does, and per `shared/README.md` a tool whose actions have disjoint
+ * parameters has to do its own rejecting. `params.limit ?? DEFAULT_LIMIT` cannot help —
+ * `??` passes a `0` straight through, and `readMessages` answers `0` with `[]`, so the
+ * malformed call came back as "No recent messages from …": a confident wrong answer about
+ * the chat rather than news about the call. Throwing is the mechanism (Pi sets `isError`
+ * only when `execute` throws), the same reason `requireWriteFields` exists in pi-memory.
+ */
+function boundLimit(limit: number | undefined): number {
+  if (limit === undefined) return DEFAULT_LIMIT;
+  if (!Number.isInteger(limit) || limit < 1 || limit > MAX_UPDATES) {
+    throw new Error(
+      `[pi-telegram] "limit" must be a whole number between 1 and ${MAX_UPDATES} (got ${limit}).`,
+    );
+  }
+  return limit;
+}
 
 /**
  * Backstop deadline for one Telegram call.
@@ -50,9 +72,12 @@ const parameters = Type.Object({
     }),
   ),
   limit: Type.Optional(
+    // Bounded in the schema so a provider that validates rejects the call before it costs
+    // a round trip. The schema is not the enforcement, though — see `boundLimit`, which is.
     Type.Integer({
-      description:
-        "Maximum messages to return (1-100, default 10) — for read/chat.",
+      minimum: 1,
+      maximum: MAX_UPDATES,
+      description: `Maximum messages to return (1-${MAX_UPDATES}, default ${DEFAULT_LIMIT}) — for read/chat.`,
     }),
   ),
 });
@@ -142,7 +167,7 @@ export function buildTelegramTool(deps: TelegramToolDeps) {
         }
 
         if (action === "read") {
-          const limit = params.limit ?? DEFAULT_LIMIT;
+          const limit = boundLimit(params.limit);
           const messages = await readMessages(chatId, limit, api);
           const text = truncateForAgent(
             messages.length > 0
@@ -159,7 +184,7 @@ export function buildTelegramTool(deps: TelegramToolDeps) {
         if (!params.text) {
           throw new Error('[pi-telegram] "text" is required for action "chat"');
         }
-        const limit = params.limit ?? DEFAULT_LIMIT;
+        const limit = boundLimit(params.limit);
         const { sent, replies } = await chat(chatId, params.text, limit, api);
         const lines = [`Sent to ${chatId} (message ${sent.message_id})`];
         if (replies.length > 0) {

@@ -98,14 +98,20 @@ export function buildSpawnTool(deps: SpawnDeps) {
       });
 
       const env = deps.childEnv();
-      const status: Record<string, string> = {};
+      // Keyed by job index, not by agent name. `describeCall` already renders `worker ×2`,
+      // so running one agent several times in parallel is a supported call — and with a
+      // name-keyed record those jobs shared a row, so the widget showed one line for two
+      // subagents and whichever streamed last overwrote the other.
+      const status = new Map<number, string>();
       const paint = () =>
         ctx?.ui?.setWidget?.(
           "spawn",
-          Object.entries(status).map(([agent, line]) => `${agent}: ${line}`),
+          [...status.entries()]
+            .sort(([a], [b]) => a - b)
+            .map(([i, line]) => `${jobs[i]!.agentDef.name}: ${line}`),
         );
-      const onEventFor = (agent: string) => (e: SpawnEvent) => {
-        status[agent] = eventToLine(e);
+      const onEventFor = (index: number) => (e: SpawnEvent) => {
+        status.set(index, eventToLine(e));
         paint();
       };
 
@@ -114,23 +120,26 @@ export function buildSpawnTool(deps: SpawnDeps) {
         if (jobs.length === 1) {
           const job = jobs[0]!;
           deps.emit("spawn:started", { agent: job.agentDef.name, cwd });
-          status[job.agentDef.name] = "starting…";
+          status.set(0, "starting…");
           paint();
           const result = await runOne({
             ...job,
             signal,
             env,
             timeoutMs: deps.jobTimeoutMs(),
-            onEvent: onEventFor(job.agentDef.name),
+            onEvent: onEventFor(0),
           });
           deps.emit("spawn:finished", { agent: result.agent, cwd, summary: result.output.slice(0, 200) });
           results = [result];
         } else {
-          for (const job of jobs) {
+          jobs.forEach((job, i) => {
             deps.emit("spawn:started", { agent: job.agentDef.name, cwd });
-            status[job.agentDef.name] = "queued…";
-          }
+            status.set(i, "queued…");
+          });
           paint();
+          // `runParallel` preserves input order, so a job's position in `jobs` is the row
+          // it owns — which is what makes the index a stable widget key.
+          const indexOfJob = new Map(jobs.map((job, i) => [job, i]));
           results = await runParallel(
             jobs,
             deps.concurrency(),
@@ -140,7 +149,7 @@ export function buildSpawnTool(deps: SpawnDeps) {
                 signal: s,
                 env,
                 timeoutMs: deps.jobTimeoutMs(),
-                onEvent: onEventFor(job.agentDef.name),
+                onEvent: onEventFor(indexOfJob.get(job) ?? 0),
               }),
             signal,
           );

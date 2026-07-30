@@ -670,3 +670,37 @@ test("two same-size writes in quick succession are checkpointed distinctly", asy
   await s.restore("e2");
   expect(read(f)).toBe("v2");
 });
+
+// --- An unreadable path is reported, not swallowed --------------------------
+
+test("a path that cannot be captured is reported, and the rest of the turn still checkpoints", async () => {
+  // `capture` reads the file, so an unreadable path threw straight out of the loop and the
+  // caller lost the checkpoint for every *other* path in the turn. Containing it per path
+  // is right; containing it *silently* is not — the manifest is written without the path
+  // either way, so a checkpoint that quietly lost a file looked exactly like a complete
+  // one, and the rewind after it reported success.
+  const good = write("good.txt", "kept");
+  const bad = join(proj, "unreadable.txt");
+  writeFileSync(bad, "secret", "utf8");
+  // 0o000 is not enforced for root, which CI sometimes is; skip rather than assert nothing.
+  execFileSync("chmod", ["000", bad]);
+  let readable = true;
+  try {
+    readFileSync(bad);
+  } catch {
+    readable = false;
+  }
+  if (!readable) {
+    const unreadable: Array<{ path: string; message: string }> = [];
+    const s = store("s1", {
+      onUnreadable: (path: string, message: string) => unreadable.push({ path, message }),
+    });
+
+    const manifest = await s.checkpoint("e1", [bad, good]);
+
+    expect(Object.keys(manifest)).toEqual([good]);
+    expect(unreadable.map((u) => u.path)).toEqual([bad]);
+    expect(unreadable[0]!.message.length).toBeGreaterThan(0);
+  }
+  execFileSync("chmod", ["644", bad]);
+});

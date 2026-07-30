@@ -235,7 +235,7 @@ test("list returns nothing when the bot has seen no chats", async () => {
 test("chat sends, then reads that chat's replies", async () => {
   const { fn, urls } = okFetch(
     { message_id: 7, chat: { id: 5, type: "private" }, date: 1 },
-    [update(msg({ chat: { id: 5, type: "private" }, text: "sure" }))],
+    [update(msg({ message_id: 8, chat: { id: 5, type: "private" }, text: "sure" }))],
   );
 
   const { sent, replies } = await chat("5", "ping", 10, deps(fn));
@@ -244,6 +244,36 @@ test("chat sends, then reads that chat's replies", async () => {
   expect(replies.map((m) => m.text)).toEqual(["sure"]);
   expect(new URL(urls[0]!).pathname).toEndWith("/sendMessage");
   expect(new URL(urls[1]!).pathname).toEndWith("/getUpdates");
+});
+
+test("chat does not present the chat's existing messages as replies to the send", async () => {
+  // The failure this pins was total rather than cosmetic: `readMessages` returns a chat's
+  // recent traffic whatever its age, so labelling it "Replies:" reported whatever was
+  // already sitting there — very often the message the agent was answering — as a fresh
+  // response. A quiet chat produced a confident, entirely fabricated round-trip.
+  const { fn } = okFetch({ message_id: 7, chat: { id: 5, type: "private" }, date: 1 }, [
+    update(msg({ message_id: 5, chat: { id: 5, type: "private" }, text: "older" })),
+    update(msg({ message_id: 6, chat: { id: 5, type: "private" }, text: "also older" })),
+    update(msg({ message_id: 9, chat: { id: 5, type: "private" }, text: "actual reply" })),
+  ]);
+
+  const { replies } = await chat("5", "ping", 10, deps(fn));
+
+  expect(replies.map((m) => m.text)).toEqual(["actual reply"]);
+});
+
+test("read and list ask for the newest page, not the oldest unconfirmed one", async () => {
+  // `getUpdates` with no offset serves the *oldest* unconfirmed updates, and nothing here
+  // ever confirms one — so past a hundred of them inside Telegram's 24h window, every
+  // read returned the same stale page and new messages were permanently invisible. A
+  // negative offset reads from the end of the queue and still confirms nothing.
+  const { fn, urls } = okFetch([]);
+  await readMessages("5", 10, deps(fn));
+  expect(new URL(urls[0]!).searchParams.get("offset")).toBe("-100");
+
+  const { fn: fn2, urls: urls2 } = okFetch([]);
+  await listChats(deps(fn2));
+  expect(new URL(urls2[0]!).searchParams.get("offset")).toBe("-100");
 });
 
 test("chat reports no reply rather than inventing one", async () => {
@@ -267,4 +297,28 @@ test("the reply wait elapses when nothing cancels it", async () => {
   const started = performance.now();
   await chat("5", "ping", 10, deps(fn, { replyWaitMs: 25 }));
   expect(performance.now() - started).toBeGreaterThanOrEqual(20);
+});
+
+test("read matches a chat named by @username, not only by numeric id", async () => {
+  // `chat_id` is documented as "numeric string or @username" — by the tool schema, by
+  // `defaultChat`, and by `sendMessage`, which passes either straight through. The reader
+  // compared only against `chat.id`, so every `read` and every `chat` naming a channel or
+  // a public group by @username filtered out its own messages and reported "no recent
+  // messages" with them sitting right there.
+  const { fn } = okFetch([
+    update(msg({ chat: { id: 5, type: "channel", username: "MyChannel" }, text: "in scope" })),
+    update(msg({ message_id: 2, chat: { id: 9, type: "private" }, text: "someone else" })),
+  ]);
+
+  const got = await readMessages("@mychannel", 10, deps(fn));
+  expect(got.map((m) => m.text)).toEqual(["in scope"]);
+});
+
+test("an @username naming no chat in the page still returns nothing", async () => {
+  // The other direction of the same comparison: matching must stay a match, not become a
+  // fallback that hands back somebody else's traffic.
+  const { fn } = okFetch([
+    update(msg({ chat: { id: 5, type: "channel", username: "MyChannel" } })),
+  ]);
+  expect(await readMessages("@other", 10, deps(fn))).toEqual([]);
 });

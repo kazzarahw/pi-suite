@@ -95,6 +95,17 @@ export interface Unit {
   parse(input: string): number | null;
 }
 
+/**
+ * What a `secret` field shows in place of its value, once it has one.
+ *
+ * A sentinel rather than a run of asterisks, because the panel round-trips whatever
+ * `displayValue` produces: it offers the current value back as a choice and hands the
+ * chosen string to `parseValue`. `apply` recognises this exact string and writes nothing,
+ * which is the inverse half — the same trap `Display` warns about, where getting only one
+ * direction right silently persists the placeholder as the value.
+ */
+export const SECRET_MASK = "(set)";
+
 export type Field<T> =
   | (FieldBase<T> & { readonly kind: "enum"; readonly values: readonly string[] })
   | (FieldBase<T> & { readonly kind: "bool" })
@@ -104,7 +115,20 @@ export type Field<T> =
       readonly min?: number;
       readonly unit?: Unit;
     })
-  | (FieldBase<T> & { readonly kind: "string"; readonly presets?: Presets<string> });
+  | (FieldBase<T> & {
+      readonly kind: "string";
+      readonly presets?: Presets<string>;
+      /**
+       * This value is a credential: never render it, and never echo it back.
+       *
+       * pi-telegram's bot token is the first. `telegram.ts` goes to the trouble of
+       * `redact()`ing it out of every error string it produces, and then the settings panel
+       * drew it as a plaintext row, the no-TUI readout printed it beside the other fields,
+       * and `/pi-telegram token <tok>` confirmed the change by quoting it back — into a
+       * terminal, and into whatever scrolls that terminal into a log or a screen share.
+       */
+      readonly secret?: boolean;
+    });
 
 /** A verb that is not a config field — an action, or a field needing bespoke handling. */
 export interface ExtraVerb {
@@ -155,6 +179,10 @@ const verbOf = <T,>(field: Field<T>): string => field.verb ?? field.key.toLowerC
 export function displayValue<T>(field: Field<T>, cfg: T): string {
   const raw = cfg[field.key];
   if (field.display && (raw === "" || raw === undefined)) return field.display.placeholder;
+  // Before every other reading, so there is no path on which a credential renders. The
+  // placeholder above still wins when it is unset — "(not set)" is the useful answer, and
+  // it is not a secret.
+  if (field.kind === "string" && field.secret) return SECRET_MASK;
   if (field.kind === "bool") return raw ? "on" : "off";
   if (field.kind === "int" && field.unit && typeof raw === "number") return field.unit.format(raw);
   return String(raw ?? "");
@@ -276,6 +304,9 @@ export function defineConfigCommand<T extends object>(
 
   /** Validate and persist one field. Returns false when nothing was written. */
   const apply = (field: Field<T>, input: string, notify: Notify): boolean => {
+    // The mask is what a secret field *shows*, so the panel offers it straight back as the
+    // current value. Storing it would replace the credential with the word "(set)".
+    if (field.kind === "string" && field.secret && input === SECRET_MASK) return false;
     const parsed = parseValue(field, input);
     if ("error" in parsed) {
       notify.error(parsed.error);
@@ -328,7 +359,13 @@ export function defineConfigCommand<T extends object>(
           const field = byVerb.get(head);
           if (field) {
             if (apply(field, value, notify)) {
-              notify.info(`${verbOf(field)} set to: ${value || displayValue(field, deps.loadConfig())}`);
+              // A secret is confirmed, never quoted. `set to: <token>` put the credential
+              // in the terminal at the one moment the user is most likely to be sharing it.
+              const shown =
+                field.kind === "string" && field.secret
+                  ? SECRET_MASK
+                  : value || displayValue(field, deps.loadConfig());
+              notify.info(`${verbOf(field)} set to: ${shown}`);
             }
             return;
           }
@@ -341,7 +378,8 @@ export function defineConfigCommand<T extends object>(
           if (opts.bareValueField) {
             const bare = fields.find((f) => f.key === opts.bareValueField);
             if (bare) {
-              if (apply(bare, trimmed, notify)) notify.info(`${verbOf(bare)} set to: ${trimmed}`);
+              const shown = bare.kind === "string" && bare.secret ? SECRET_MASK : trimmed;
+              if (apply(bare, trimmed, notify)) notify.info(`${verbOf(bare)} set to: ${shown}`);
               return;
             }
           }
@@ -435,9 +473,14 @@ export const MEGABYTES: Unit = {
   },
 };
 
-/** `string` field — free text, optionally with presets offered in the panel. */
+/**
+ * `string` field — free text, optionally with presets offered in the panel.
+ *
+ * Pass `secret: true` for a credential: it is then shown as {@link SECRET_MASK} everywhere
+ * and never echoed back on a write.
+ */
 export const stringField = <T,>(
   key: keyof T & string,
   label: string,
-  extra: Partial<FieldBase<T>> & { presets?: Presets<string> } = {},
+  extra: Partial<FieldBase<T>> & { presets?: Presets<string>; secret?: boolean } = {},
 ): Field<T> => ({ kind: "string", key, label, ...extra });

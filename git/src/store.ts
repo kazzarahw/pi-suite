@@ -100,6 +100,16 @@ export interface StoreOptions {
   maxFileBytes?: number;
   /** Called for each file skipped for size, so the skip is visible rather than silent. */
   onSkip?: (path: string, bytes: number) => void;
+  /**
+   * Called for each path that could not be captured at all — EACCES, a file that vanished
+   * mid-turn, a blob write that failed.
+   *
+   * Separate from `onSkip` because the two are different news. A size skip is a *known,
+   * configured* gap; this one is a surprise, and the manifest is written without the path
+   * either way — so with no channel for it a checkpoint that quietly lost a file looked
+   * exactly like a complete one, and the rewind that followed reported success.
+   */
+  onUnreadable?: (path: string, message: string) => void;
 }
 
 export const DEFAULT_MAX_FILE_BYTES = 10_485_760; // 10 MB
@@ -234,6 +244,31 @@ export function createStore(sessionId: string, opts: StoreOptions = {}): Checkpo
     return { hash, mode };
   }
 
+  /**
+   * `capture`, with a per-path failure contained and reported.
+   *
+   * `capture` reads the file and writes a blob, so an unreadable path or a failed blob
+   * write threw straight out of the caller's loop — losing the checkpoint for every
+   * *other* path in the turn. One skipped file is a bounded gap; a skipped turn is the
+   * failure this store exists to prevent.
+   *
+   * Reported rather than swallowed, through `onUnreadable`, for the same reason a size
+   * skip is: the path is absent from the manifest either way, so silence would leave a
+   * checkpoint that looks complete and a rewind that says so while quietly leaving one
+   * file exactly as the turn left it.
+   *
+   * One helper for both callers, because they need identical handling and a second copy
+   * of it is how one of them would come to lack the report.
+   */
+  function tryCapture(key: string): FileState | null {
+    try {
+      return capture(key);
+    } catch (error) {
+      opts.onUnreadable?.(key, error instanceof Error ? error.message : String(error));
+      return null;
+    }
+  }
+
   /** Remove `dir` and its ancestors for as long as each is empty. */
   function pruneEmptyDirs(dir: string): void {
     let d = dir;
@@ -340,12 +375,7 @@ export function createStore(sessionId: string, opts: StoreOptions = {}): Checkpo
         const key = normalizePath(path);
         if (key in origin) continue;
         // Per path, so one unreadable file does not abandon the rest of the tree.
-        let state: FileState | null;
-        try {
-          state = capture(key);
-        } catch {
-          continue;
-        }
+        const state = tryCapture(key);
         if (state === null) continue;
         origin[key] = state;
         changed = true;
@@ -361,7 +391,8 @@ export function createStore(sessionId: string, opts: StoreOptions = {}): Checkpo
       for (const path of paths) {
         const key = normalizePath(path);
         if (key in manifest) continue;
-        const state = capture(key);
+        // Per path, matching `rememberOrigins` — and reported, not merely survived.
+        const state = tryCapture(key);
         if (state === null) continue;
         // A path first seen at checkpoint time — a file bash created, say — gets its
         // current state as its origin. The store has no evidence it was ever absent,

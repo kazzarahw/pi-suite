@@ -210,7 +210,9 @@ test("read renders the messages, and says so plainly when there are none", async
 });
 
 test("chat reports the send and any replies", async () => {
-  const t = tool(okFetch(message({ message_id: 7 }), [{ message: message({ text: "sure" }) }]));
+  // The reply's id has to be *past* the send's: `chat` only counts messages newer than
+  // the one it just posted, so that a chat's existing traffic is not reported as a reply.
+  const t = tool(okFetch(message({ message_id: 7 }), [{ message: message({ message_id: 8, text: "sure" }) }]));
   // Already cancelled, so the reply wait short-circuits: the wait itself is covered in
   // telegram.test.ts, and this keeps the suite from sitting through 1.5s per call.
   const controller = new AbortController();
@@ -314,4 +316,23 @@ test("the caller's signal reaches the request, by way of the deadline", async ()
   expect(seen[0]!.aborted).toBe(false);
   controller.abort();
   expect(seen[0]!.aborted).toBe(true);
+});
+
+test("a limit outside 1-100 is rejected rather than answered", async () => {
+  // The schema's `minimum`/`maximum` are a hint the provider may act on; the tool cannot
+  // rely on it. `params.limit ?? DEFAULT_LIMIT` passes a `0` straight through, and
+  // `readMessages` answers `0` with `[]` — so the malformed call came back as "No recent
+  // messages from 5", a confident claim about the chat rather than news about the call.
+  const t = tool(okFetch([{ message: message({}) }]));
+  for (const limit of [0, -1, 101, 2.5]) {
+    await expect(
+      t.execute("id", { action: "read", chat_id: "5", limit }, undefined, undefined, ctx),
+    ).rejects.toThrow(/"limit" must be a whole number between 1 and 100/);
+  }
+});
+
+test("an omitted limit still defaults rather than being rejected", async () => {
+  const t = tool(okFetch([{ message: message({ text: "hi" }) }]));
+  const r = await t.execute("id", { action: "read", chat_id: "5" }, undefined, undefined, ctx);
+  expect(textOf(r)).toContain("hi");
 });

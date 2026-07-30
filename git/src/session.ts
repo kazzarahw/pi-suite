@@ -13,10 +13,20 @@
  */
 import { createStore, type CheckpointStore } from "./store.ts";
 
-/** A file left out of a checkpoint because it exceeded the size cap. */
+/**
+ * A file left out of a checkpoint, and why.
+ *
+ * Two causes, one queue: the size cap (`bytes`) and a path that could not be read at all
+ * (`reason`). They share the announce-once channel because they are the same news to the
+ * user — this file is not in the checkpoint, so a rewind will not put it back — and
+ * exactly one of the two fields is ever set.
+ */
 export interface Skip {
   path: string;
-  bytes: number;
+  /** Size in bytes, when the cap is what left it out. */
+  bytes?: number;
+  /** Why it could not be captured, when that is what left it out. */
+  reason?: string;
 }
 
 /** What Pi tells us about the session. Structural, so a test can pass a plain object. */
@@ -91,6 +101,7 @@ export function createGitSession(
       const store = makeStore(sessionId, {
         maxFileBytes,
         onSkip: (path, bytes) => skipped.push({ path, bytes }),
+        onUnreadable: (path, reason) => skipped.push({ path, reason }),
       });
       cached = { sessionId, maxFileBytes, store };
       return store;

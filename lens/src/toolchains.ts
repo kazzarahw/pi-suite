@@ -4,6 +4,16 @@ import type { ServerSpec } from "./lsp/config.ts";
 import { RUFF, ESLINT, SHELLCHECK, type LinterSpec } from "./linters.ts";
 import type { ExecFn } from "../../shared/exec.ts";
 
+/**
+ * A formatter that has not answered in this long is not going to.
+ *
+ * Matches `LINTER_TIMEOUT_MS`, and for the same reason: both run inside the `tool_result`
+ * hook after every edit. Without one this fell through to `DEFAULT_EXEC_TIMEOUT_MS`, so a
+ * wedged formatter held the agent's write open for ten minutes — on the one path that is
+ * supposed to be invisible.
+ */
+export const FORMATTER_TIMEOUT_MS = 30_000;
+
 /** An in-place code formatter for a language. Success = exit 0; we diff bytes to detect changes. */
 export interface FormatterSpec {
   name: string;
@@ -129,7 +139,7 @@ export async function runFormatter(
   const [cmd, ...args] = spec.cmd(path);
   if (!cmd) return { changed: false };
   try {
-    const { code } = await exec(cmd, args, { cwd, signal });
+    const { code } = await exec(cmd, args, { cwd, signal, timeout: FORMATTER_TIMEOUT_MS });
     if (code !== 0) return { changed: false };
   } catch {
     return { changed: false };
