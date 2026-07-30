@@ -60,8 +60,36 @@ export interface TelegramDeps {
 
 const API_ROOT = "https://api.telegram.org";
 
-/** The Bot API's own ceiling for one `getUpdates` page. */
-const MAX_UPDATES = 100;
+/**
+ * The Bot API's own ceiling for one `getUpdates` page.
+ *
+ * Exported because the tool's `limit` bound is the same number for the same reason — a
+ * `limit` above it cannot be honoured — and a second literal in `tools.ts` is how the two
+ * would come to disagree.
+ */
+export const MAX_UPDATES = 100;
+
+/**
+ * Read from the **end** of the update queue, not the start.
+ *
+ * `getUpdates` with no offset returns the oldest unconfirmed updates, and this extension
+ * never names a positive one. Those two together meant that once a bot accumulated more
+ * than `MAX_UPDATES` unconfirmed updates inside Telegram's 24h retention window, every
+ * `read` and `list` returned the same oldest hundred forever and new messages were
+ * permanently invisible.
+ *
+ * A negative offset is the API's own answer: "retrieve updates starting from -offset
+ * updates from the end of the queue".
+ *
+ * **It is not free, and the cost belongs written down here.** The same sentence in the Bot
+ * API reference continues "All previous updates will be forgotten" — so the first read of
+ * a backlog deeper than `MAX_UPDATES` permanently discards everything older than the page
+ * it returns, for this bot, for every consumer of it. Repeat reads stay idempotent over the
+ * window that survives, which is what `chat` and a second `read` need; what is given up is
+ * the tail beyond a hundred, and giving it up is strictly better than the alternative this
+ * replaced, where that same tail was the *only* thing any read could ever see.
+ */
+const RECENT_OFFSET = -MAX_UPDATES;
 
 /** How long `chat` gives a reply to arrive before reading. */
 export const REPLY_WAIT_MS = 1500;
@@ -76,6 +104,26 @@ export const REPLY_WAIT_MS = 1500;
  * other is how that branch would have stayed permanently dead.
  */
 const ALLOWED_UPDATES = JSON.stringify(["message", "edited_message"]);
+
+/**
+ * Does this message belong to the chat the caller named?
+ *
+ * `chat_id` is documented as "numeric string or @username" — by the tool schema, by
+ * `defaultChat`, by this extension's README, and by the Bot API itself, which accepts
+ * either for `sendMessage`. The reader compared only against `chat.id`, so a `read` or a
+ * `chat` naming a channel or a public group by `@username` filtered out every one of its
+ * own messages and reported "no recent messages" with them sitting right there — the same
+ * failure `readMessages` documents about paging, arriving through the other key.
+ *
+ * Usernames are case-insensitive on Telegram's side, so the comparison is too. A numeric
+ * id is compared as a string because that is the form the caller supplies it in.
+ */
+function matchesChat(msg: TelegramMessage, chatId: string): boolean {
+  if (String(msg.chat.id) === chatId) return true;
+  if (!chatId.startsWith("@")) return false;
+  const wanted = chatId.slice(1).toLowerCase();
+  return wanted.length > 0 && msg.chat.username?.toLowerCase() === wanted;
+}
 
 /**
  * Never let the bot token reach a message.
@@ -199,7 +247,7 @@ export async function readMessages(
 ): Promise<TelegramMessage[]> {
   const result = await callTelegramApi(
     "getUpdates",
-    { timeout: 0, limit: MAX_UPDATES, allowed_updates: ALLOWED_UPDATES },
+    { timeout: 0, offset: RECENT_OFFSET, limit: MAX_UPDATES, allowed_updates: ALLOWED_UPDATES },
     deps,
   );
 
@@ -211,7 +259,7 @@ export async function readMessages(
   const messages: TelegramMessage[] = [];
   for (const update of updates) {
     const msg = update.message ?? update.edited_message;
-    if (msg && String(msg.chat.id) === chatId) messages.push(msg);
+    if (msg && matchesChat(msg, chatId)) messages.push(msg);
   }
 
   // Newest last, so the most recent `limit` are the tail.
@@ -227,7 +275,7 @@ export async function readMessages(
 export async function listChats(deps: TelegramDeps): Promise<TelegramChat[]> {
   const result = await callTelegramApi(
     "getUpdates",
-    { timeout: 0, limit: MAX_UPDATES, allowed_updates: ALLOWED_UPDATES },
+    { timeout: 0, offset: RECENT_OFFSET, limit: MAX_UPDATES, allowed_updates: ALLOWED_UPDATES },
     deps,
   );
 
@@ -266,8 +314,17 @@ export async function listChats(deps: TelegramDeps): Promise<TelegramChat[]> {
 /**
  * Send a message and read the reply in one call.
  *
- * Sends the message, then polls once for a response. Returns both the sent message
- * and any new messages that arrived after it.
+ * Sends the message, then polls once for a response.
+ *
+ * **Only messages newer than the one just sent count as replies.** `readMessages` returns
+ * the chat's most recent traffic regardless of when it arrived, so labelling that output
+ * "Replies:" presented whatever was already sitting in the chat — possibly hours old, and
+ * possibly the very message the agent was answering — as a response to the send. A quiet
+ * chat therefore produced a confident, entirely fabricated round-trip.
+ *
+ * Filtered on `message_id` rather than `date`: ids are per-chat sequential and cover both
+ * ends of the send, where `date` is second-granular and cannot separate a reply from a
+ * message that arrived in the same second just before it.
  */
 export async function chat(
   chatId: string,
@@ -277,8 +334,12 @@ export async function chat(
 ): Promise<{ sent: TelegramMessage; replies: TelegramMessage[] }> {
   const sent = await sendMessage(chatId, text, deps);
   await sleep(deps.replyWaitMs ?? REPLY_WAIT_MS, deps.signal);
-  const replies = await readMessages(chatId, limit, deps);
-  return { sent, replies };
+  // Take the whole page, then cut to `limit` *after* filtering: trimming first would
+  // spend the budget on messages that predate the send and report "no reply" with one
+  // sitting right there — the same mistake `readMessages` documents about its own filter.
+  const recent = await readMessages(chatId, MAX_UPDATES, deps);
+  const after = recent.filter((m) => m.message_id > sent.message_id);
+  return { sent, replies: limit > 0 ? after.slice(-limit) : [] };
 }
 
 /**
