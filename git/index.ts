@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { cwdOf, EDIT_TOOLS, OPAQUE_WRITE_TOOLS, editedPath } from "../shared/index.ts";
+import { cwdOf, EDIT_TOOLS, OPAQUE_WRITE_TOOLS, editedPath, type Emitter } from "../shared/index.ts";
 import { defaultExec } from "../shared/exec.ts";
 import { loadConfig, saveConfig, type GitConfig } from "./src/config.ts";
 import type { CheckpointStore, Heads } from "./src/store.ts";
@@ -66,7 +66,11 @@ interface GitCtx {
  * used to expose rewind before it had tree navigation.
  */
 export default function piGit(pi: ExtensionAPI): void {
-  const emit = (event: string, data: unknown) => pi.events.emit(event, data);
+  // `Emitter`, not `(event: string, data: unknown)`. `shared/events.ts` names that exact
+  // signature as the reason its "a mismatch is caught by the compiler" claim was false for
+  // so long — and names `git:checkpoint` as the payload that drifted behind it. This was
+  // the last untyped emitter in the suite.
+  const emit: Emitter = (event, data) => pi.events.emit(event, data);
   const session = createGitSession();
 
   // Genuine hook-to-hook handoff: one hook observes something the next one acts on.
@@ -115,7 +119,14 @@ export default function piGit(pi: ExtensionAPI): void {
    */
   function reportSkips(ctx: GitCtx): void {
     for (const skip of session.drainSkips()) {
-      const message = `[pi-git] ${skip.path} is too large to checkpoint (${skip.bytes} bytes) — a rewind will not restore it.`;
+      // Both causes, one sentence shape: what was left out, and the consequence. A path
+      // the store could not read at all used to be dropped in silence, which left a
+      // checkpoint looking complete and the rewind after it reporting success.
+      const why =
+        skip.reason !== undefined
+          ? `could not be checkpointed (${skip.reason})`
+          : `is too large to checkpoint (${skip.bytes} bytes)`;
+      const message = `[pi-git] ${skip.path} ${why} — a rewind will not restore it.`;
       if (ctx.hasUI) ctx.ui?.notify?.(message, "warning");
       else console.error(message);
     }
