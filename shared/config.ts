@@ -10,7 +10,7 @@
  * Each extension exports a {@link ConfigSpec} and thin `loadConfig`/`saveConfig`
  * wrappers, so its call sites stay unchanged.
  */
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, chmodSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { CONFIG_DIR_NAME, getAgentDir } from "@earendil-works/pi-coding-agent";
 
@@ -73,14 +73,32 @@ export function loadConfig<T>(spec: ConfigSpec<T>, path: string = configPath(spe
   }
 }
 
-/** Write a config, creating the parent directory if needed. */
+/**
+ * Write a config, creating the parent directory if needed.
+ *
+ * Owner-only, because at least one of these files holds a credential: pi-telegram's bot
+ * token is the whole of that bot's authority, and it was landing in a world-readable
+ * `pi-telegram.json` while the extension itself took care to keep the token out of its own
+ * error messages. Nothing but this process reads these files, so there is nothing to lose
+ * by narrowing them, and the narrowing belongs here rather than in one extension — a
+ * per-spec opt-in is how the *next* secret would be written at 0644.
+ *
+ * `writeFileSync`'s `mode` applies only when it creates the file, so the `chmod` is what
+ * makes this hold for a config that already exists. It is best-effort: a filesystem with no
+ * permission bits at all must not turn saving a setting into an error.
+ */
 export function saveConfig<T>(
   spec: ConfigSpec<T>,
   cfg: T,
   path: string = configPath(spec.name),
 ): void {
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(cfg, null, 2)}\n`, "utf8");
+  writeFileSync(path, `${JSON.stringify(cfg, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+  try {
+    chmodSync(path, 0o600);
+  } catch {
+    /* no permission bits to set, or someone else owns it — the write itself succeeded */
+  }
 }
 
 /** The per-extension accessors {@link defineConfig} produces. */

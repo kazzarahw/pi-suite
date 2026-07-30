@@ -11,7 +11,12 @@ export interface CommandDeps {
 }
 
 export const FIELDS: readonly Field<TelegramConfig>[] = [
+  // `secret`, and it is the reason that flag exists. The token is a credential — the whole
+  // of the bot's authority — and `telegram.ts` redacts it out of every error string it
+  // builds. The panel then drew it as an ordinary row, the no-TUI readout printed it, and
+  // `/pi-telegram token <tok>` quoted it straight back into the terminal.
   stringField("token", "Bot token", {
+    secret: true,
     display: { placeholder: "(not set)", storedWhenPlaceholder: "" },
   }),
   stringField("defaultChat", "Default chat ID", {

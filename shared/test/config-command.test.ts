@@ -586,3 +586,86 @@ test("the panel lists a unit field's presets in numeric order, not text order", 
   const items = cmd.options.getArgumentCompletions?.("") ?? [];
   expect(items.length).toBeGreaterThan(0);
 });
+
+// ---------------------------------------------------------------------------
+// Secret fields.
+//
+// pi-telegram's bot token is the first credential in the suite, and `telegram.ts` takes
+// care to `redact()` it out of every error string it builds. The command surface then
+// undid all of that: the panel drew it as an ordinary row, the no-TUI readout printed it
+// beside the other fields, and `/pi-telegram token <tok>` confirmed the write by quoting
+// it back into the terminal.
+// ---------------------------------------------------------------------------
+
+interface SecretCfg {
+  token: string;
+}
+const SECRET_FIELDS: readonly Field<SecretCfg>[] = [
+  stringField("token", "Bot token", {
+    secret: true,
+    display: { placeholder: "(not set)", storedWhenPlaceholder: "" },
+  }),
+];
+
+function secretHarness(start: SecretCfg): {
+  command: ReturnType<typeof defineConfigCommand<SecretCfg>>;
+  saved: SecretCfg[];
+  notices: string[];
+  ctx(mode?: string): ExtensionCommandContext;
+} {
+  const saved: SecretCfg[] = [];
+  const notices: string[] = [];
+  let current = { ...start };
+  const command = defineConfigCommand<SecretCfg>(
+    "demo",
+    SECRET_FIELDS,
+    {
+      loadConfig: () => current,
+      saveConfig: (c) => {
+        current = c;
+        saved.push(c);
+      },
+    },
+    {},
+  );
+  const ctx = (mode = "tui") =>
+    ({ mode, ui: { notify: (msg: string) => notices.push(msg) } }) as unknown as ExtensionCommandContext;
+  return { command, saved, notices, ctx };
+}
+
+test("a secret field never renders its stored value", () => {
+  expect(displayValue(SECRET_FIELDS[0]!, { token: "123456:AAH-real-token" })).toBe("(set)");
+  // Unset is not a secret, and "(not set)" is the useful answer.
+  expect(displayValue(SECRET_FIELDS[0]!, { token: "" })).toBe("(not set)");
+});
+
+test("setting a secret confirms the write without quoting the value", async () => {
+  const h = secretHarness({ token: "" });
+  await h.command.options.handler("token 123456:AAH-real-token", h.ctx());
+
+  expect(h.saved).toEqual([{ token: "123456:AAH-real-token" }]);
+  expect(h.notices.join("\n")).not.toContain("AAH-real-token");
+  expect(h.notices.join("\n")).toContain("(set)");
+});
+
+test("the no-TUI readout masks a secret too", async () => {
+  const h = secretHarness({ token: "123456:AAH-real-token" });
+  await h.command.options.handler("", h.ctx("print"));
+  expect(h.notices.join("\n")).not.toContain("AAH-real-token");
+  expect(h.notices.join("\n")).toContain("token: (set)");
+});
+
+test("choosing the mask back out of the panel leaves the credential alone", async () => {
+  // The trap `Display` warns about, in its sharpest form: the panel offers whatever
+  // `displayValue` produced as the current value and hands the chosen string straight to
+  // the writer, so a masked field with no inverse would replace the token with "(set)".
+  const h = secretHarness({ token: "123456:AAH-real-token" });
+  await h.command.options.handler("token (set)", h.ctx());
+  expect(h.saved).toEqual([]);
+});
+
+test("the placeholder still clears a secret, so there is a way to unset one", async () => {
+  const h = secretHarness({ token: "123456:AAH-real-token" });
+  await h.command.options.handler("token (not set)", h.ctx());
+  expect(h.saved).toEqual([{ token: "" }]);
+});
