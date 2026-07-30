@@ -207,8 +207,10 @@ export async function runBrowser(
   if (action === "search") {
     const query = req(args.query, "query", "search");
     let last = "";
+    let lastCode = 0;
+    let lastErr = "";
     for (const build of SEARCH_URLS) {
-      const { stdout, code } = await exec(cfg.binPath, [...sessionArgs, "read", build(query)], {
+      const { stdout, stderr, code } = await exec(cfg.binPath, [...sessionArgs, "read", build(query)], {
         cwd,
         signal,
       });
@@ -217,8 +219,20 @@ export async function runBrowser(
       // should cost noise, never results.
       if (code === 0 && !looksBlocked(out)) return formatSearchResults(out) ?? out;
       if (out) last = out;
+      lastCode = code;
+      lastErr = stderr.trim();
     }
-    return last || "(search returned no usable results — try the 'open' action on a specific URL)";
+    // A blocked-looking page is still a page, and handing it over beats inventing a
+    // verdict about it. Nothing at all is a different answer, and it has to *throw*:
+    // every other action here does on a non-zero exit, and `shared/README.md` is explicit
+    // that a tool which cannot answer must throw rather than return prose about it. This
+    // branch is what `agent-browser` not being installed looks like, and returning
+    // "no usable results" for that told the agent the web had nothing to say.
+    if (last) return last;
+    throw new Error(
+      `[pi-browser] search failed: no engine returned any output (agent-browser exited ${lastCode}` +
+        `${lastErr ? `: ${lastErr}` : ""}). Check that "${cfg.binPath}" is installed and on PATH.`,
+    );
   }
 
   const argv = [...sessionArgs, ...browserArgv(action, args)];
