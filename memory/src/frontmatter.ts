@@ -28,7 +28,19 @@ export function parseMemory(fileText: string): Omit<Memory, "scope"> | null {
   return { name: meta.name, description: meta.description ?? "", type, body };
 }
 
+/**
+ * Collapse a frontmatter value onto one line.
+ *
+ * The format is `key: value` per line, terminated by `---`, and both fields here are
+ * agent-supplied free text. A newline in a description split the value across lines, so
+ * the tail was reparsed as garbage keys — and a description containing `\n---\n` closed
+ * the block outright, turning the rest of it into the memory's body. Either way the file
+ * round-tripped into something other than what was stored, which for a store injected
+ * into every LLM call is worse than a rejected write.
+ */
+const oneLine = (s: string): string => s.replace(/[\r\n]+/g, " ").trim();
+
 /** Serialize a memory to markdown+frontmatter (scope is NOT written — it's the dir). */
 export function serializeMemory(m: Memory): string {
-  return `---\nname: ${m.name}\ndescription: ${m.description}\ntype: ${m.type}\n---\n${m.body}\n`;
+  return `---\nname: ${oneLine(m.name)}\ndescription: ${oneLine(m.description)}\ntype: ${m.type}\n---\n${m.body}\n`;
 }
