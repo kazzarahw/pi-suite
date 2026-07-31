@@ -35,9 +35,19 @@ interface Cfg {
   count: number;
   cmd: string;
   session?: string;
+  path: string;
+  token: string;
 }
 
-const DEFAULTS: Cfg = { mode: "notify", detect: true, count: 3, cmd: "", session: "work" };
+const DEFAULTS: Cfg = {
+  mode: "notify",
+  detect: true,
+  count: 3,
+  cmd: "",
+  session: "work",
+  path: "agent-browser",
+  token: "",
+};
 
 const FIELDS: readonly Field<Cfg>[] = [
   enumField("mode", ["off", "notify", "block"], "Mode"),
@@ -48,6 +58,11 @@ const FIELDS: readonly Field<Cfg>[] = [
   stringField("session", "Session", {
     display: { placeholder: "(default)", storedWhenPlaceholder: undefined },
   }),
+  // No `display`, so blank is not a value it can hold — the field kind whose typed-in
+  // refusal has to revert the row rather than sit there looking accepted.
+  stringField("path", "Binary"),
+  // A credential: prefilled blank, masked on the way back out, never echoed.
+  stringField("token", "Token", { secret: true, display: { placeholder: "(not set)" } }),
 ];
 
 interface Harness {
@@ -445,6 +460,28 @@ function panelHarness(start: Cfg = DEFAULTS, opts = {}) {
       for (let i = 0; i < n; i++) p.handleInput("[B"); // arrow down
       p.handleInput(" ");
     },
+    /** Move down `n` rows and open that row's text field. */
+    enter(p: Panel, n = 0): void {
+      for (let i = 0; i < n; i++) p.handleInput("[B");
+      p.handleInput(" ");
+    },
+    /**
+     * Open row `n`'s text field, type `text`, and submit it.
+     *
+     * A character at a time, because that is what a terminal delivers and what `Input`
+     * handles — a whole string arrives as one keystroke only through a paste, which has its
+     * own bracketed sequence and its own code path.
+     */
+    type(p: Panel, n: number, text: string): void {
+      for (let i = 0; i < n; i++) p.handleInput("[B");
+      p.handleInput(" ");
+      // The field opens prefilled with the stored value and the cursor at its end, so this
+      // *replaces* rather than appends: ctrl+u is `tui.editor.deleteToLineStart`. Without it
+      // an empty `text` would submit the prefill back, which is not a blank submission.
+      p.handleInput("\x15");
+      for (const ch of text) p.handleInput(ch);
+      p.handleInput("\n");
+    },
   };
 }
 
@@ -469,25 +506,94 @@ test("cycling a bool row in the panel writes a boolean, not the string 'off'", a
   expect(h.latest().detect).toBe(false);
 });
 
-test("selecting the placeholder row stores the underlying value, not the label", async () => {
-  // `cmd` starts at "" and so displays "(auto)"; its values are the placeholder followed
-  // by the presets, so one cycle moves to "a" and a full lap returns to the placeholder.
+// ---------------------------------------------------------------------------
+// String rows are typed, not cycled.
+//
+// A string is free text by definition — `presets` are the likely values, never the possible
+// ones — so cycling could only ever offer a subset, and for a credential it offered nothing at
+// all: pi-telegram's token row cycled `(not set)` → `(not set)`, and the token was hand-written
+// into `~/.pi/agent/pi-telegram.json` because the panel had no way to accept it.
+// ---------------------------------------------------------------------------
+
+test("typing into a string row persists what was typed", async () => {
   const h = panelHarness();
   const panel = await h.open();
-  h.cycle(panel, 3);
-  expect(h.latest().cmd).toBe("a");
-  h.cycle(panel, 0); // already on row 3
-  h.cycle(panel, 0);
-  // Back on "(auto)" — and what lands in the config is "", never the label itself.
+  h.type(panel, 3, "bun test --coverage"); // row 3 is `cmd`
+  expect(h.latest().cmd).toBe("bun test --coverage");
+});
+
+test("escaping out of a string row writes nothing", async () => {
+  const h = panelHarness();
+  const panel = await h.open();
+  h.enter(panel, 3);
+  panel.handleInput("x");
+  panel.handleInput("\x1b");
+  expect(h.saved).toHaveLength(0);
+});
+
+/**
+ * A blank submission is picking the placeholder, in both of its meanings.
+ *
+ * `parseValue` maps the placeholder *label* to `storedWhenPlaceholder`, and a typed field
+ * cannot expect the user to reproduce `(auto)` character for character. Passing the empty
+ * string straight through would also lose the distinction the `Display` contract is built
+ * around: `cmd` stores `""` for "autodetect", while `session` removes the key entirely.
+ */
+test("a blank submission stores the placeholder's value, not an empty string", async () => {
+  const h = panelHarness();
+  const panel = await h.open();
+  h.type(panel, 3, ""); // `cmd` — placeholder "(auto)", stored as ""
   expect(h.latest().cmd).toBe("");
 });
 
-test("a placeholder declaring undefined removes the key when picked in the panel", async () => {
+test("a blank submission on a placeholder declaring undefined removes the key", async () => {
   const h = panelHarness();
   const panel = await h.open();
-  // Row 4 is `session`, starting at "work"; values are ["work", "(default)"].
-  h.cycle(panel, 4);
+  h.type(panel, 4, ""); // `session` — placeholder "(default)", stored as undefined
   expect(h.latest().session).toBeUndefined();
+});
+
+/**
+ * The credential case, end to end — the one the whole submenu exists for.
+ *
+ * Typing it in has to work, and the panel has to keep the promise `telegram.ts` makes when it
+ * redacts the token out of every error string it builds: it is never rendered. `SettingsList`
+ * sets the row to whatever `done` returned *before* calling back, so without the display
+ * string coming back out of `apply` the panel would draw the token in plaintext at the one
+ * moment a user is most likely to be sharing their screen.
+ */
+test("a typed secret is stored, and the row shows the mask rather than the value", async () => {
+  const h = panelHarness();
+  const panel = await h.open();
+  h.type(panel, 6, "8113038589:AAH-not-a-real-token"); // row 6 is `token`
+  expect(h.latest().token).toBe("8113038589:AAH-not-a-real-token");
+
+  const drawn = panel.render(80).join("\n");
+  expect(drawn).toContain("(set)");
+  expect(drawn).not.toContain("8113038589");
+  // Nor may the confirmation notice quote it back into the terminal.
+  expect(h.notices.map((n) => n.msg).join("\n")).not.toContain("8113038589");
+});
+
+test("submitting a blank secret changes nothing, since the field opens empty", async () => {
+  const h = panelHarness({ ...DEFAULTS, token: "already-set" });
+  const panel = await h.open();
+  h.type(panel, 6, "");
+  // A secret is prefilled blank because it may never be rendered, so Enter on an untouched
+  // field would read as a confirmation and land as a deletion.
+  expect(h.saved).toHaveLength(0);
+  expect(h.latest().token).toBe("already-set");
+});
+
+test("a value the field refuses is reported and nothing is written", async () => {
+  const h = panelHarness();
+  const panel = await h.open();
+  // `path` has no `display`, so blank is not a value it can hold — the correlation
+  // `parseValue` documents: the fields without a placeholder are the ones read with
+  // `nonEmptyStr`, and storing "" would name a binary that cannot be executed.
+  h.type(panel, 5, "");
+  expect(h.saved).toHaveLength(0);
+  expect(h.notices.at(-1)!.level).toBe("error");
 });
 
 test("each panel toggle re-reads, so one row never reverts another", async () => {

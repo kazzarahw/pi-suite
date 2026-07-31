@@ -49,7 +49,7 @@ test("an active item with no worksheet at all is asked to resolve it too", () =>
 test("items open with none active asks for start, an id, and an approach", () => {
   const reminder = planReminder(listed())!;
   expect(reminder).toContain("2 item(s) open and none active");
-  expect(reminder).toContain('"design the state shape" (id 1)');
+  expect(reminder).toContain('1 ("design the state shape")');
   expect(reminder).toContain("approach you are committing to before you edit");
 });
 

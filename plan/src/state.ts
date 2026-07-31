@@ -167,7 +167,7 @@ export function applyItems(plan: Plan, incoming: ItemInput[]): { plan: Plan } {
   const active = activeItem(plan);
   if (active && !items.some((i) => i.id === active.id)) {
     fail(
-      `the active item "${active.content}" (id ${active.id}) is missing from the list — ` +
+      `the active item ${itemLabel(active)} is missing from the list — ` +
         `finish it with action "finish" or abandon it with action "drop", but do not drop it silently`,
     );
   }
@@ -238,6 +238,21 @@ function findOpen(plan: Plan, ref: string): PlanItem | undefined {
   return plan.items.find((i) => i.id === ref) ?? plan.items.find((i) => i.content === ref);
 }
 
+/** Does `ref` name this item, by either identity {@link findOpen} accepts? */
+const namesItem = (item: PlanItem, ref: string): boolean =>
+  item.id === ref || item.content === ref;
+
+/**
+ * How an item is named to the agent: `1 ("write the test")`.
+ *
+ * One spelling, exported, because there were three. The refusal listing open items wrote
+ * `1 ("a")`, the settle reminder wrote `"a" (id 1)`, and the edit gate wrote `1: "a"` — three
+ * shapes for one fact, across four files an agent reads in the same session while trying to
+ * work out what to type back. Id first, since the id is the part it types.
+ */
+export const itemLabel = (item: Pick<PlanItem, "id" | "content">): string =>
+  `${item.id} ("${item.content}")`;
+
 /**
  * Refuse a reference that matches nothing, and say what would have matched.
  *
@@ -246,12 +261,35 @@ function findOpen(plan: Plan, ref: string): PlanItem | undefined {
  * "no open item with id X" was the one that did not.
  */
 const noSuchItem = (plan: Plan, ref: string): never => {
-  const open = plan.items.map((i) => `${i.id} ("${i.content}")`).join(", ");
+  const open = plan.items.map(itemLabel).join(", ");
   return fail(
     `no open item matches "${ref}" — ` +
       (open ? `open items are: ${open}` : `nothing is open. Lay work out with action "items" first`),
   );
 };
+
+/**
+ * The way forward from "nothing is active", which is three refusals' worth of the same
+ * sentence.
+ *
+ * `applyStep`, `applyPromote`, and `applyFinish` all reached for it and all stopped at
+ * `call action "start" first` — which names the verb, omits both arguments it requires,
+ * and leaves the agent to work out *which* item from a list it cannot see from inside a
+ * tool error. Dogfooding shows what that costs: an agent answered one of these by calling
+ * `start` with the approach `"Already done - test was added and passes"`, purely to make
+ * the `finish` it actually wanted legal. Naming the id and the approach in the refusal is
+ * the difference between a repair and a guess.
+ */
+function startHint(plan: Plan): string {
+  const next = plan.items[0];
+  if (!next) {
+    return `nothing is open either — lay the work out with action "items" first, then start one of them`;
+  }
+  return (
+    `call action "start" with an id (next up is ${itemLabel(next)}) ` +
+    `and the approach you are committing to`
+  );
+}
 
 /**
  * Activate an item, which is the moment the approach has to exist.
@@ -269,8 +307,9 @@ export function applyStart(
   const current = activeItem(plan);
   if (current) {
     fail(
-      `"${current.content}" (id ${current.id}) is already active — finish or drop it before starting another. ` +
-        `One item at a time is the whole point.`,
+      `${itemLabel(current)} is already active, so nothing was started. ` +
+        `Resolve it first — action "finish" with a note saying what you changed, or action "drop" with a reason — ` +
+        `then start this one. One item at a time is the whole point.`,
     );
   }
   const target = findOpen(plan, id);
@@ -288,17 +327,36 @@ export function applyStart(
 /** A worksheet edit: tick/untick one step, or append more. */
 export type StepEdit = { index: number; done: boolean } | { steps: string[] };
 
+/**
+ * Refuse a worksheet index that is not there, and separate the two reasons it can miss.
+ *
+ * The empty worksheet is the case worth telling apart. `start` takes `steps` *optionally*,
+ * so an item started without them has none — and a dogfooded session ticked step 0 twice
+ * against `no step at index 0 (the worksheet has 0)`, which is a count and nothing else. It
+ * does not say the worksheet is empty rather than merely short, and it does not mention that
+ * `step` is also the verb that fills one. Out of range genuinely *is* a count, so that
+ * branch names the range it has instead.
+ */
+const noSuchStep = (item: PlanItem, index: number, have: number, outcome: string): never =>
+  fail(
+    have === 0
+      ? `no step at index ${index}: "${item.content}" has an empty worksheet, so ${outcome}. ` +
+          `Append steps by calling action "step" with a "steps" array, then tick one with index and done.`
+      : `no step at index ${index}, so ${outcome} — "${item.content}" has ${have} step${have === 1 ? "" : "s"}, ` +
+          `so the valid indexes are 0-${have - 1}.`,
+  );
+
 /** Tick, untick, or extend the active item's worksheet. */
 export function applyStep(plan: Plan, edit: StepEdit): { plan: Plan } {
   const active = activeItem(plan);
-  if (!active) fail(`nothing is active — call action "start" first`);
+  if (!active) fail(`nothing is active, so there is no worksheet to edit — ${startHint(plan)}`);
 
   const steps = [...(active!.steps ?? [])];
   if ("steps" in edit) {
     steps.push(...edit.steps.map((content) => ({ content, done: false })));
   } else {
     const at = steps[edit.index];
-    if (!at) fail(`no step at index ${edit.index} (the worksheet has ${steps.length})`);
+    if (!at) noSuchStep(active!, edit.index, steps.length, "nothing was ticked");
     steps[edit.index] = { ...at!, done: edit.done };
   }
   const updated: PlanItem = { ...active!, steps };
@@ -313,11 +371,11 @@ export function applyStep(plan: Plan, edit: StepEdit): { plan: Plan } {
  */
 export function applyPromote(plan: Plan, index: number): { plan: Plan; item: PlanItem } {
   const active = activeItem(plan);
-  if (!active) fail(`nothing is active — there is no worksheet to promote from`);
+  if (!active) fail(`nothing is active, so there is no worksheet to promote from — ${startHint(plan)}`);
 
   const steps = [...(active!.steps ?? [])];
   const step = steps[index];
-  if (!step) fail(`no step at index ${index} (the worksheet has ${steps.length})`);
+  if (!step) noSuchStep(active!, index, steps.length, "nothing was promoted");
   steps.splice(index, 1);
 
   const promoted: PlanItem = { id: String(plan.seq), content: step!.content, status: "pending" };
@@ -327,10 +385,50 @@ export function applyPromote(plan: Plan, index: number): { plan: Plan; item: Pla
   return { plan: { ...plan, items, seq: plan.seq + 1 }, item: promoted };
 }
 
-/** Resolve the active item as done. The worksheet is discarded; the note survives it. */
-export function applyFinish(plan: Plan, note: string): { plan: Plan; entry: LogEntry } {
+/**
+ * Resolve the active item as done. The worksheet is discarded; the note survives it.
+ *
+ * **`ref` is checked, never used to select.** `finish` takes no id by design — there is only
+ * ever one active item, which is the constraint the extension is built on — but the schema
+ * carries an `id` for `start` and `drop`, and an agent reading eight actions off one
+ * parameter list supplies it here too. Dogfooding did exactly that, twice in one session.
+ *
+ * Ignoring it was the worst of the three options available, and it is what this did: with
+ * item 1 active, `finish` naming id 2 filed item **1** into the log under item 2's note and
+ * left item 2 open. A wrong entry in the log, silently, in the extension whose entire
+ * purpose is to stop items being marked done that aren't — the same class of lie as
+ * pi-todo's free `in_progress`, and harder to spot because the record looks well-formed.
+ *
+ * So a `ref` that names the active item is accepted as the confirmation it was meant to be,
+ * and one that names anything else is refused with both items named. What it may never do is
+ * decide *which* item resolves.
+ */
+export function applyFinish(plan: Plan, note: string, ref?: string): { plan: Plan; entry: LogEntry } {
   const active = activeItem(plan);
-  if (!active) fail(`nothing is active — call action "start" first`);
+  if (!active) {
+    // The id the agent supplied is the most useful thing in the refusal: it turns "nothing
+    // is active" from a fact about the plan into a repair for the call actually made.
+    const named = ref ? findOpen(plan, ref) : undefined;
+    if (named) {
+      fail(
+        `nothing is active, so nothing was finished — ${itemLabel(named)} is open but was never started. ` +
+          `If you have already done the work, call action "start" with id ${named.id} and the approach you actually took, then finish it. ` +
+          `If it turned out not to need doing, call action "drop" with id ${named.id} and a reason.`,
+      );
+    }
+    fail(`nothing is active, so nothing was finished — ${startHint(plan)}`);
+  }
+  if (ref && !namesItem(active!, ref)) {
+    const named = findOpen(plan, ref);
+    fail(
+      `nothing was finished: action "finish" always resolves the active item, which is ` +
+        `${itemLabel(active!)} — not "${ref}". ` +
+        (named
+          ? `To resolve id ${named.id} instead, finish or drop the active item first, then action "start" that one. `
+          : `Nothing open matches "${ref}". `) +
+        `Omit "id" on finish; there is only ever one active item.`,
+    );
+  }
   const trimmed = note.trim();
   if (!trimmed) fail(`action "finish" requires a note saying what the outcome was`);
 

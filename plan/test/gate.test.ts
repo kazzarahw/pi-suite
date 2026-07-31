@@ -67,7 +67,9 @@ test("the refusal names the tool call to make, and the next item by id", () => {
   expect(decision.block).toBe(true);
   expect(decision.reason).toContain("[pi-plan]");
   expect(decision.reason).toContain('action "start"');
-  expect(decision.reason).toContain('1: "design the state shape"');
+  // One spelling for naming an item, shared with the reducers, the reminder, and the
+  // checkpoint — see `itemLabel`. This file used to write its own third variant.
+  expect(decision.reason).toContain('1 ("design the state shape")');
 });
 
 test("an objective with no plan under it gets its own wording", () => {

@@ -66,6 +66,35 @@ test("a blank objective is refused rather than stored as the session's north sta
   await expect(call({ action: "objective", objective: "   " })).rejects.toThrow();
 });
 
+/**
+ * Marking the objective met does not have to repeat it.
+ *
+ * `applyObjective` carries omitted fields forward across a restatement and its comment names
+ * this as the common second call, but the required-field check demanded the text anyway — so
+ * the cheap call the reducer exists for was the one the tool refused. A dogfooded session hit
+ * it exactly: `objective` with `status: "met"` was rejected, and the agent resent the whole
+ * sentence verbatim to say one word.
+ */
+test("restating the recorded objective may omit its text", async () => {
+  const h = harness();
+  await h.call({ action: "objective", objective: "merge todo and goal", criteria: "one tool" });
+  await h.call({ action: "objective", status: "met" });
+
+  const objective = h.plan().objective!;
+  expect(objective.objective).toBe("merge todo and goal");
+  expect(objective.status).toBe("met");
+  // Carried forward, not dropped — the omission means "as recorded", for every field.
+  expect(objective.criteria).toBe("one tool");
+  // And it is a real transition, so the event fires once.
+  expect(h.emitted.filter((e) => e.event === "plan:met")).toHaveLength(1);
+});
+
+test("with no objective recorded, the text is still required", async () => {
+  const { call } = harness();
+  // Nothing to restate: an omission here would store `undefined` as the session's north star.
+  await expect(call({ action: "objective", status: "met" })).rejects.toThrow(/requires objective/);
+});
+
 // ---------------------------------------------------------------------------
 // State, persistence, and the events.
 // ---------------------------------------------------------------------------
@@ -163,7 +192,8 @@ test("the tool paints the widget on every call", async () => {
 test("clearing the list to nothing reports it rather than rendering blank", async () => {
   const h = harness();
   const result = await h.call({ action: "items", items: [] });
-  expect((result.content[0] as { text: string }).text).toBe("(plan is empty)");
+  // The state echo is the first thing in the result; the guidance line follows it.
+  expect((result.content[0] as { text: string }).text.startsWith("(plan is empty)")).toBe(true);
 });
 
 // ---------------------------------------------------------------------------
@@ -218,12 +248,23 @@ test("resolving an item appends the revision checkpoint to the result", async ()
   expect(text).toContain("does what you just learned change any of them?");
 });
 
-test("the checkpoint stays off the calls that are not reflection points", async () => {
+/**
+ * Every result names the transition that is legal from the state it just produced.
+ *
+ * This used to assert the opposite — that the checkpoint stayed off any call that was not a
+ * resolution, on the argument that committing to an approach is not the moment to ask whether
+ * the plan changed. That argument still holds for the *question*, and `src/checkpoint.ts`
+ * keeps it: what rides a non-resolution is not a question but the next call, which is the one
+ * thing a dogfooded session could not work out from an echo of the list.
+ */
+test("every result names the call that is legal next", async () => {
   const h = harness();
   await h.call({ action: "items", items: [{ content: "a" }, { content: "b" }] });
   const start = await h.call({ action: "start", id: "1", approach: "x" });
-  // Committing to an approach is not the moment to ask whether the plan changed.
-  expect((start.content[0] as { text: string }).text).not.toContain("[pi-plan]");
+  const text = (start.content[0] as { text: string }).text;
+  expect(text).toContain("[pi-plan] next:");
+  // Just started, no worksheet: the item is resolvable and there is nothing to tick.
+  expect(text).toContain('action "finish"');
 });
 
 // ---------------------------------------------------------------------------

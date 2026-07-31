@@ -19,7 +19,7 @@
  * a pure function it is a handful of one-line tests.
  */
 import { EDIT_TOOLS, type Mode } from "../../shared/index.ts";
-import { activeItem, type Plan } from "./state.ts";
+import { activeItem, itemLabel, type Plan } from "./state.ts";
 
 export interface GateDecision {
   block: boolean;
@@ -116,7 +116,7 @@ export function gateEdit(plan: Plan, mode: Mode, toolName: string): GateDecision
     block: true,
     reason:
       `${REFUSED} No item is active, so this edit is not part of any planned work. ` +
-      `Call the plan tool with action "start", an id (next up is ${next.id}: "${next.content}"), and the approach you are committing to. ` +
+      `Call the plan tool with action "start", an id (next up is ${itemLabel(next)}), and the approach you are committing to. ` +
       `Deciding the approach before editing is the point; stating it afterwards is not the same thing. ${RETRY}`,
   };
 }

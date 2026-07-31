@@ -66,6 +66,17 @@ the active item is untouchable by construction and the invariant `items` has to 
 is unreachable. It refuses to duplicate an open item, because a second copy is a small lie
 about how much work is left.
 
+`finish` takes **no** `id`: there is only ever one active item, and that is what it resolves.
+An `id` is accepted as confirmation when it names the active item and **refused when it names
+anything else** — it may never decide *which* item resolves. It used to be ignored, which is
+how a wrong entry reached the log: with item 1 active, `finish` naming id 2 filed item 1 under
+item 2's note and left item 2 open. Silently, in the extension whose whole purpose is to stop
+items being marked done that aren't.
+
+`objective` may **omit the objective text** to restate the one already recorded — which is how
+it is marked met without repeating the sentence. Omitted fields carry forward either way, so
+the cheap second call is the one the reducer was always built for.
+
 `start` and `drop` take an `id` because they name an item — **or the item's exact content**,
 which is the same identity `items` already uses to carry an item's status, approach, and
 worksheet across a rewrite. Accepting only the ordinal made these the two verbs that
@@ -81,11 +92,20 @@ Reopening is still possible — it just has to be said, with an explicit `status
 Emits `plan:objective`, `plan:met` (once, on the transition), `plan:updated`,
 `plan:item-done`, and `plan:item-dropped`.
 
-### Revision is asked about in the tool result
+### The lifecycle is taught in the tool result
 
-`finish` and `drop` return the usual state echo plus one line asking whether what the agent
-just learned changes what is left — or, when the list empties, whether the objective is
-achieved.
+Every call returns the state echo plus **one line**. After `finish` and `drop` it asks whether
+what the agent just learned changes what is left — or, when the list empties, whether the
+objective is achieved. After anything else it names **the transition that is legal from here**:
+the id to `start`, the step to tick, the resolution to make.
+
+That second half exists because knowing the eight verbs is not the same as knowing which one
+the current state will accept. A dogfooded session knew them all and still ticked step 0 of an
+empty worksheet, started a second item over an active one, passed an id to `finish`, and
+`start`ed an item it had already finished with the approach "Already done". Every one of those
+is legal-shaped and wrong *for the state it was made in* — and the state was the one thing the
+result never spoke to, because it echoed the list and stopped. A list shows what exists; it
+does not show which transition is available, and the lifecycle is the whole abstraction.
 
 This is a third shape alongside the two in `shared/mode.ts`, and it exists because neither
 of those fits. **Interdict** works on preconditions, knowable when `tool_call` fires;
@@ -98,7 +118,11 @@ The result is a better surface than the nudge in every respect that matters: it 
 unambiguously harness output, where a nudge arrives as `{ role: "user" }` and has to
 prefix itself by hand; it lands in-band, as the direct answer to the model's own call; and
 it costs no turn, no quota, and no mode. It is one line, deliberately, because it rides
-every resolution and anything longer becomes wallpaper.
+every single call and anything longer becomes wallpaper.
+
+Items are named one way everywhere — `1 ("write the test")`, id first, because the id is the
+part the agent types back. There were three spellings across the reducers, the reminder, and
+the gate, for one fact, in files an agent reads in the same session.
 
 ## Where each piece of state goes
 

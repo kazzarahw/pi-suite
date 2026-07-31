@@ -116,10 +116,42 @@ test("[memory] loadConfig rejects a sub-1 recallLimit and an invalid mode, keepi
   expect(loadConfig(MEMORY, path)).toEqual({ ...MEMORY_DEFAULTS, autoCapture: true });
 });
 
-test("[telegram] loadConfig keeps a stored token and rejects a non-string defaultChat", () => {
+test("[telegram] loadConfig keeps a stored token and rejects a non-string chat", () => {
   const path = tmp("telegram");
-  writeFileSync(path, JSON.stringify({ token: "123:AAH", defaultChat: 42 }));
-  expect(loadConfig(TELEGRAM, path)).toEqual({ token: "123:AAH", defaultChat: "" });
+  writeFileSync(path, JSON.stringify({ token: "123:AAH", chat: 42 }));
+  expect(loadConfig(TELEGRAM, path)).toEqual({
+    ...TELEGRAM.defaults,
+    token: "123:AAH",
+    chat: "",
+  });
+});
+
+/**
+ * `defaultChat` is read as `chat`.
+ *
+ * It is what the key was called when the extension was a tool and the field meant "the chat to use
+ * when the agent names none". The bridge's `chat` is narrower — the only chat it trusts — but it is
+ * the same value a user already put there, and silently ignoring a populated config would look
+ * exactly like the bridge being broken, which is the report this whole rewrite came from.
+ */
+test("[telegram] a config written before the rewrite still names its chat", () => {
+  const path = tmp("telegram");
+  writeFileSync(path, JSON.stringify({ token: "123:AAH", defaultChat: "8300959766" }));
+  expect(loadConfig(TELEGRAM, path).chat).toBe("8300959766");
+
+  // An explicit `chat` wins, so a migrated config that has since been re-saved is not overridden
+  // by the stale key sitting beside it.
+  writeFileSync(path, JSON.stringify({ token: "T", chat: "111", defaultChat: "222" }));
+  expect(loadConfig(TELEGRAM, path).chat).toBe("111");
+});
+
+test("[telegram] the bridge refuses to run without both halves of its wiring", () => {
+  const path = tmp("telegram");
+  writeFileSync(path, JSON.stringify({ token: "T", chat: "42", bridge: false, reply: "bogus" }));
+  const cfg = loadConfig(TELEGRAM, path);
+  expect(cfg.bridge).toBe(false);
+  // An unreadable enum falls back rather than disabling the feature by accident.
+  expect(cfg.reply).toBe("telegram");
 });
 
 test("[lens] loadConfig backfills missing fields and rejects an invalid mode", () => {

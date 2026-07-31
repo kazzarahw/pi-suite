@@ -9,7 +9,7 @@
  * actionable rather than a general complaint. An agent with an active item and unticked
  * steps does not need to be told the objective is open; it needs the next step named.
  */
-import { activeItem, type Plan } from "./state.ts";
+import { activeItem, itemLabel, type Plan } from "./state.ts";
 import type { VerifyState } from "./peers.ts";
 
 /**
@@ -72,7 +72,7 @@ function reminderBody(plan: Plan, verify: VerifyState | null): string | null {
   if (plan.items.length > 0) {
     const next = plan.items[0]!;
     return (
-      `${plan.items.length} item(s) open and none active. Next: "${next.content}" (id ${next.id}). ` +
+      `${plan.items.length} item(s) open and none active. Next: ${itemLabel(next)}. ` +
       `Call the plan tool with action "start", that id, and the approach you are committing to before you edit anything.`
     );
   }

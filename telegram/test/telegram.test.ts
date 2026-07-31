@@ -1,324 +1,186 @@
 import { test, expect } from "bun:test";
 import {
+  describeSender,
+  matchesChat,
+  messageOf,
+  poll,
   sendMessage,
-  readMessages,
-  listChats,
-  chat,
+  startingOffset,
+  wasAborted,
   type FetchFn,
   type TelegramDeps,
   type TelegramMessage,
 } from "../src/telegram.ts";
+import { DEFAULTS, type TelegramConfig } from "../src/config.ts";
 
-/**
- * The half of pi-telegram that talks to Telegram.
- *
- * It had no tests at all — it closed over the global `fetch`, so the only way to run it
- * was against the network. The `FetchFn` seam is what makes these possible, and two of
- * the bugs below (a bare-word `allowed_updates`, a page size taken from the caller's
- * `limit`) were live defects that no amount of testing the formatters could have found.
- */
+const CONFIG: TelegramConfig = { ...DEFAULTS, token: "T", chat: "42" };
 
-const TOKEN = "123456:AAH-secret-token";
-const CONFIG = { token: TOKEN, defaultChat: "" };
-
-/** A fetch that records its URLs and replays one canned `ok` body per call. */
-function okFetch(...results: unknown[]): { fn: FetchFn; urls: string[] } {
+/** A fetch that answers every call with `{ ok: true, result }`, recording the URLs it saw. */
+function stub(result: unknown, body?: unknown, status = 200) {
   const urls: string[] = [];
-  let i = 0;
-  const fn: FetchFn = async (url) => {
+  const fetch: FetchFn = (url) => {
     urls.push(url);
-    const result = results[Math.min(i++, results.length - 1)];
-    return { ok: true, status: 200, json: async () => ({ ok: true, result }) };
+    return Promise.resolve({
+      ok: status < 400,
+      status,
+      json: async () => body ?? { ok: true, result },
+    });
   };
-  return { fn, urls };
+  return { fetch, urls, params: () => new URL(urls.at(-1)!).searchParams };
 }
 
-const deps = (fn: FetchFn, extra?: Partial<TelegramDeps>): TelegramDeps => ({
-  config: CONFIG,
-  fetch: fn,
-  replyWaitMs: 0,
-  ...extra,
-});
+const deps = (fetch: FetchFn, config: TelegramConfig = CONFIG): TelegramDeps => ({ config, fetch });
 
-const msg = (over: Partial<TelegramMessage> & { chat: TelegramMessage["chat"] }): TelegramMessage => ({
+const message = (over: Partial<TelegramMessage> = {}): TelegramMessage => ({
   message_id: 1,
-  date: 1700000000,
-  text: "hi",
+  chat: { id: 42, type: "private" },
+  date: 1_700_000_000,
+  text: "hello",
   ...over,
 });
 
-const update = (m: TelegramMessage) => ({ message: m });
-
 // ---------------------------------------------------------------------------
-// The call itself
-// ---------------------------------------------------------------------------
-
-test("sendMessage passes chat_id and text, and returns the sent message", async () => {
-  const { fn, urls } = okFetch({ message_id: 42, chat: { id: 7, type: "private" }, date: 1 });
-  const sent = await sendMessage("@alice", "hello", deps(fn));
-
-  expect(sent.message_id).toBe(42);
-  const url = new URL(urls[0]!);
-  expect(url.pathname).toBe(`/bot${TOKEN}/sendMessage`);
-  expect(url.searchParams.get("chat_id")).toBe("@alice");
-  expect(url.searchParams.get("text")).toBe("hello");
-});
-
-test("a missing token fails before any request is made", async () => {
-  let called = false;
-  const fn: FetchFn = async () => {
-    called = true;
-    return { ok: true, status: 200, json: async () => ({ ok: true }) };
-  };
-  await expect(
-    sendMessage("1", "x", { config: { token: "", defaultChat: "" }, fetch: fn }),
-  ).rejects.toThrow(/no bot token configured/);
-  expect(called).toBe(false);
-});
-
-test("an API-level failure surfaces Telegram's own description", async () => {
-  const fn: FetchFn = async () => ({
-    ok: true,
-    status: 200,
-    json: async () => ({ ok: false, description: "Bad Request: chat not found" }),
-  });
-  await expect(sendMessage("1", "x", deps(fn))).rejects.toThrow(/chat not found/);
-});
-
-test("a non-JSON response reports the status instead of 'unknown error'", async () => {
-  const fn: FetchFn = async () => ({
-    ok: false,
-    status: 502,
-    json: async () => {
-      throw new SyntaxError("Unexpected token <");
-    },
-  });
-  await expect(sendMessage("1", "x", deps(fn))).rejects.toThrow(/non-JSON response \(HTTP 502\)/);
-});
-
-test("a network failure is reported as a failure of the method", async () => {
-  const fn: FetchFn = async () => {
-    throw new TypeError("fetch failed");
-  };
-  await expect(sendMessage("1", "x", deps(fn))).rejects.toThrow(
-    /\[pi-telegram\] sendMessage failed: fetch failed/,
-  );
-});
-
-test("the deadline and the user's cancel are told apart", async () => {
-  const abort = (name: string): FetchFn => async () => {
-    const err = new Error("aborted");
-    err.name = name;
-    throw err;
-  };
-  await expect(sendMessage("1", "x", deps(abort("TimeoutError")))).rejects.toThrow(/timed out/);
-  await expect(sendMessage("1", "x", deps(abort("AbortError")))).rejects.toThrow(/cancelled/);
-});
-
-/**
- * The token is a credential, it lives in the URL path because that is where the Bot API
- * puts it, and these messages go to the agent and into logs. A platform that echoes the
- * request URL back in its error — several do — would otherwise leak it verbatim.
- */
-test("the bot token never reaches an error message", async () => {
-  const fn: FetchFn = async (url) => {
-    throw new TypeError(`request to ${url} failed`);
-  };
-  const err: Error = await sendMessage("1", "x", deps(fn)).then(
-    () => new Error("expected the request to fail"),
-    (e: Error) => e,
-  );
-  expect(err.message).not.toContain(TOKEN);
-  expect(err.message).toContain("<token>");
-});
-
-test("the signal reaches the request", async () => {
-  const seen: Array<AbortSignal | undefined> = [];
-  const fn: FetchFn = async (_url, init) => {
-    seen.push(init?.signal);
-    return { ok: true, status: 200, json: async () => ({ ok: true, result: {} }) };
-  };
-  const signal = AbortSignal.timeout(60_000);
-  await sendMessage("1", "x", deps(fn, { signal }));
-  expect(seen[0]).toBe(signal);
-});
-
-// ---------------------------------------------------------------------------
-// read
+// The offset contract — the difference between reading a chat and listening to one.
 // ---------------------------------------------------------------------------
 
 /**
- * The regression that made `read` useless on any bot with more than one conversation.
+ * The defect this module was rebuilt around.
  *
- * `getUpdates` pages over *every* chat. Asking it for the caller's `limit` and then
- * keeping the ones for this chat returns nothing whenever the newest few updates belong
- * to someone else — so a chat with messages sitting in it reported "no recent messages".
+ * The tool version polled with a *negative* offset, which confirms nothing: the same updates come
+ * back on every call. A bridge built on that would deliver every message forever.
  */
-test("read asks for a full page regardless of the caller's limit, then trims", async () => {
-  const mine = { id: 5, type: "private" as const };
-  const theirs = { id: 9, type: "private" as const };
-  const { fn, urls } = okFetch([
-    update(msg({ chat: theirs, text: "noise", date: 10 })),
-    update(msg({ chat: theirs, text: "noise", date: 11 })),
-    update(msg({ chat: mine, text: "first", date: 12 })),
-    update(msg({ chat: mine, text: "second", date: 13 })),
+test("poll returns a confirming offset, one past the highest update seen", async () => {
+  const s = stub([
+    { update_id: 10, message: message() },
+    { update_id: 12, message: message({ message_id: 2 }) },
   ]);
-
-  const got = await readMessages("5", 1, deps(fn));
-
-  expect(new URL(urls[0]!).searchParams.get("limit")).toBe("100");
-  expect(got.map((m) => m.text)).toEqual(["second"]);
+  const result = await poll(0, deps(s.fetch), 0);
+  expect(result.updates).toHaveLength(2);
+  expect(result.nextOffset).toBe(13);
 });
 
-test("allowed_updates is sent as JSON, which is the only form the Bot API accepts", async () => {
-  const { fn, urls } = okFetch([]);
-  await readMessages("5", 10, deps(fn));
-  const allowed = new URL(urls[0]!).searchParams.get("allowed_updates");
-  expect(JSON.parse(allowed!)).toEqual(["message", "edited_message"]);
+test("poll keeps the offset it was given when nothing arrived", async () => {
+  expect((await poll(99, deps(stub([]).fetch), 0)).nextOffset).toBe(99);
 });
 
-test("read accepts an edited message in place of a message", async () => {
-  const { fn } = okFetch([
-    { edited_message: msg({ chat: { id: 5, type: "private" }, text: "fixed" }) },
-  ]);
-  expect((await readMessages("5", 10, deps(fn))).map((m) => m.text)).toEqual(["fixed"]);
+test("poll asks for a long poll, and for both message shapes", async () => {
+  const s = stub([]);
+  await poll(7, deps(s.fetch), 25);
+  expect(s.params().get("offset")).toBe("7");
+  expect(s.params().get("timeout")).toBe("25");
+  // JSON, not a bare word: the Bot API rejects `allowed_updates=message` outright, which is
+  // what made every read fail against a real bot.
+  expect(s.params().get("allowed_updates")).toBe('["message","edited_message"]');
 });
 
-test("read returns nothing when the chat has no updates", async () => {
-  const { fn } = okFetch([]);
-  expect(await readMessages("5", 10, deps(fn))).toEqual([]);
+/**
+ * Starting *after* the queue, not at the front of it.
+ *
+ * A bot's update queue holds 24 hours of unretrieved messages, so starting from 0 would open the
+ * session by replaying all of them into the agent, as instructions, at once.
+ */
+test("startingOffset skips whatever is already queued", async () => {
+  const s = stub([{ update_id: 500, message: message() }]);
+  expect(await startingOffset(deps(s.fetch))).toBe(501);
+  expect(s.params().get("offset")).toBe("-1");
+  expect(s.params().get("limit")).toBe("1");
 });
 
-test("read tolerates a result the API omitted entirely", async () => {
-  const fn: FetchFn = async () => ({
-    ok: true,
-    status: 200,
-    json: async () => ({ ok: true }),
-  });
-  expect(await readMessages("5", 10, deps(fn))).toEqual([]);
+test("startingOffset is 0 for a bot nobody has written to", async () => {
+  expect(await startingOffset(deps(stub([]).fetch))).toBe(0);
 });
 
-test("a non-positive limit returns nothing rather than the whole page", async () => {
-  const { fn } = okFetch([update(msg({ chat: { id: 5, type: "private" } }))]);
-  expect(await readMessages("5", 0, deps(fn))).toEqual([]);
-});
-
-// ---------------------------------------------------------------------------
-// list
-// ---------------------------------------------------------------------------
-
-test("list collapses updates to one entry per chat, newest first, with the newest preview", async () => {
-  const a = { id: 1, type: "private" as const };
-  const b = { id: 2, type: "group" as const, title: "Group" };
-  const { fn } = okFetch([
-    update(msg({ chat: a, text: "old", date: 100, from: { id: 9, first_name: "Alice" } })),
-    update(msg({ chat: b, text: "newest", date: 300 })),
-    update(msg({ chat: a, text: "newer", date: 200 })),
-  ]);
-
-  const chats = await listChats(deps(fn));
-
-  expect(chats.map((c) => c.id)).toEqual([2, 1]);
-  expect(chats.find((c) => c.id === 1)?.last_message).toBe("newer");
-  expect(chats.find((c) => c.id === 1)?.first_name).toBe("Alice");
-});
-
-test("list returns nothing when the bot has seen no chats", async () => {
-  const { fn } = okFetch([]);
-  expect(await listChats(deps(fn))).toEqual([]);
+test("messageOf accepts an edit in place of a message", () => {
+  expect(messageOf({ update_id: 1, message: message({ text: "a" }) })?.text).toBe("a");
+  expect(messageOf({ update_id: 1, edited_message: message({ text: "b" }) })?.text).toBe("b");
+  expect(messageOf({ update_id: 1 })).toBeNull();
 });
 
 // ---------------------------------------------------------------------------
-// chat
+// Authorisation. Here a missed match is a closed door, not a missing read.
 // ---------------------------------------------------------------------------
 
-test("chat sends, then reads that chat's replies", async () => {
-  const { fn, urls } = okFetch(
-    { message_id: 7, chat: { id: 5, type: "private" }, date: 1 },
-    [update(msg({ message_id: 8, chat: { id: 5, type: "private" }, text: "sure" }))],
+test("a chat matches by numeric id or by @username, case-insensitively", () => {
+  expect(matchesChat(message(), "42")).toBe(true);
+  expect(matchesChat(message(), "43")).toBe(false);
+  const named = message({ chat: { id: 7, type: "channel", username: "MyChannel" } });
+  expect(matchesChat(named, "@mychannel")).toBe(true);
+  expect(matchesChat(named, "@MYCHANNEL")).toBe(true);
+  // The id still wins where it is the thing configured.
+  expect(matchesChat(named, "7")).toBe(true);
+  expect(matchesChat(named, "@other")).toBe(false);
+});
+
+test("a bare @ matches nothing rather than everything", () => {
+  expect(matchesChat(message({ chat: { id: 7, type: "channel", username: "x" } }), "@")).toBe(false);
+});
+
+test("describeSender names whoever wrote, so the user can authorise them", () => {
+  expect(describeSender(message({ from: { id: 1, username: "kazzarah" } }))).toBe(
+    "@kazzarah (chat 42)",
   );
-
-  const { sent, replies } = await chat("5", "ping", 10, deps(fn));
-
-  expect(sent.message_id).toBe(7);
-  expect(replies.map((m) => m.text)).toEqual(["sure"]);
-  expect(new URL(urls[0]!).pathname).toEndWith("/sendMessage");
-  expect(new URL(urls[1]!).pathname).toEndWith("/getUpdates");
+  expect(describeSender(message({ from: { id: 1, first_name: "K" } }))).toBe("K (chat 42)");
+  expect(describeSender(message())).toBe("unknown (chat 42)");
 });
 
-test("chat does not present the chat's existing messages as replies to the send", async () => {
-  // The failure this pins was total rather than cosmetic: `readMessages` returns a chat's
-  // recent traffic whatever its age, so labelling it "Replies:" reported whatever was
-  // already sitting there — very often the message the agent was answering — as a fresh
-  // response. A quiet chat produced a confident, entirely fabricated round-trip.
-  const { fn } = okFetch({ message_id: 7, chat: { id: 5, type: "private" }, date: 1 }, [
-    update(msg({ message_id: 5, chat: { id: 5, type: "private" }, text: "older" })),
-    update(msg({ message_id: 6, chat: { id: 5, type: "private" }, text: "also older" })),
-    update(msg({ message_id: 9, chat: { id: 5, type: "private" }, text: "actual reply" })),
-  ]);
+// ---------------------------------------------------------------------------
+// Failure reporting, and the credential.
+// ---------------------------------------------------------------------------
 
-  const { replies } = await chat("5", "ping", 10, deps(fn));
-
-  expect(replies.map((m) => m.text)).toEqual(["actual reply"]);
+test("no token is refused before any request is made", async () => {
+  const s = stub([]);
+  await expect(poll(0, deps(s.fetch, { ...CONFIG, token: "" }), 0)).rejects.toThrow(/no bot token/);
+  expect(s.urls).toEqual([]);
 });
 
-test("read and list ask for the newest page, not the oldest unconfirmed one", async () => {
-  // `getUpdates` with no offset serves the *oldest* unconfirmed updates, and nothing here
-  // ever confirms one — so past a hundred of them inside Telegram's 24h window, every
-  // read returned the same stale page and new messages were permanently invisible. A
-  // negative offset reads from the end of the queue and still confirms nothing.
-  const { fn, urls } = okFetch([]);
-  await readMessages("5", 10, deps(fn));
-  expect(new URL(urls[0]!).searchParams.get("offset")).toBe("-100");
-
-  const { fn: fn2, urls: urls2 } = okFetch([]);
-  await listChats(deps(fn2));
-  expect(new URL(urls2[0]!).searchParams.get("offset")).toBe("-100");
+test("an API-level failure reports Telegram's own description", async () => {
+  const s = stub(null, { ok: false, description: "Unauthorized" });
+  await expect(poll(0, deps(s.fetch), 0)).rejects.toThrow(/Unauthorized/);
 });
 
-test("chat reports no reply rather than inventing one", async () => {
-  const { fn } = okFetch({ message_id: 7, chat: { id: 5, type: "private" }, date: 1 }, []);
-  expect((await chat("5", "ping", 10, deps(fn))).replies).toEqual([]);
+test("a non-JSON response keeps the status code, which is the only useful part", async () => {
+  const fetch: FetchFn = () =>
+    Promise.resolve({ ok: false, status: 502, json: () => Promise.reject(new Error("not json")) });
+  await expect(poll(0, deps(fetch), 0)).rejects.toThrow(/HTTP 502/);
 });
 
-test("an already-cancelled call does not sit through the reply wait", async () => {
-  const { fn } = okFetch({ message_id: 7, chat: { id: 5, type: "private" }, date: 1 }, []);
-  const controller = new AbortController();
-  controller.abort();
-  // The real wait, but a signal that is already down: `sleep` returns immediately rather
-  // than holding the tool open for a reply that cancellation means nobody wants.
-  const started = performance.now();
-  await chat("5", "ping", 10, deps(fn, { replyWaitMs: 5_000, signal: controller.signal }));
-  expect(performance.now() - started).toBeLessThan(1_000);
+/**
+ * The token never reaches a message.
+ *
+ * It sits in the URL path because that is where the Bot API puts it, and these strings are shown
+ * to the user and written to logs.
+ */
+test("the token is redacted out of both failure paths", async () => {
+  const secret = "8113038589:AAH-secret";
+  const cfg = { ...CONFIG, token: secret };
+
+  const apiError = stub(null, { ok: false, description: `bad token ${secret}` });
+  await expect(poll(0, deps(apiError.fetch, cfg), 0)).rejects.toThrow(/<token>/);
+
+  const netError: FetchFn = () => Promise.reject(new Error(`connect failed to ${secret}`));
+  const thrown = await poll(0, deps(netError, cfg), 0).catch((e: Error) => e.message);
+  expect(thrown).toContain("<token>");
+  expect(thrown).not.toContain(secret);
 });
 
-test("the reply wait elapses when nothing cancels it", async () => {
-  const { fn } = okFetch({ message_id: 7, chat: { id: 5, type: "private" }, date: 1 }, []);
-  const started = performance.now();
-  await chat("5", "ping", 10, deps(fn, { replyWaitMs: 25 }));
-  expect(performance.now() - started).toBeGreaterThanOrEqual(20);
+/**
+ * An abort is rethrown as itself rather than wrapped in prose.
+ *
+ * The poll loop's exit depends on telling "we stopped" from "Telegram is down": one ends the
+ * loop, the other backs off and retries.
+ */
+test("an abort is distinguishable from a network failure", async () => {
+  const abort: FetchFn = () =>
+    Promise.reject(Object.assign(new Error("aborted"), { name: "AbortError" }));
+  const err = await poll(0, deps(abort), 0).catch((e: unknown) => e);
+  expect(wasAborted(err)).toBe(true);
+  expect(wasAborted(new Error("connection reset"))).toBe(false);
 });
 
-test("read matches a chat named by @username, not only by numeric id", async () => {
-  // `chat_id` is documented as "numeric string or @username" — by the tool schema, by
-  // `defaultChat`, and by `sendMessage`, which passes either straight through. The reader
-  // compared only against `chat.id`, so every `read` and every `chat` naming a channel or
-  // a public group by @username filtered out its own messages and reported "no recent
-  // messages" with them sitting right there.
-  const { fn } = okFetch([
-    update(msg({ chat: { id: 5, type: "channel", username: "MyChannel" }, text: "in scope" })),
-    update(msg({ message_id: 2, chat: { id: 9, type: "private" }, text: "someone else" })),
-  ]);
-
-  const got = await readMessages("@mychannel", 10, deps(fn));
-  expect(got.map((m) => m.text)).toEqual(["in scope"]);
-});
-
-test("an @username naming no chat in the page still returns nothing", async () => {
-  // The other direction of the same comparison: matching must stay a match, not become a
-  // fallback that hands back somebody else's traffic.
-  const { fn } = okFetch([
-    update(msg({ chat: { id: 5, type: "channel", username: "MyChannel" } })),
-  ]);
-  expect(await readMessages("@other", 10, deps(fn))).toEqual([]);
+test("sendMessage posts the text to the named chat", async () => {
+  const s = stub({ message_id: 9, chat: { id: 42, type: "private" }, date: 1 });
+  const sent = await sendMessage("42", "done", deps(s.fetch));
+  expect(sent.message_id).toBe(9);
+  expect(s.params().get("chat_id")).toBe("42");
+  expect(s.params().get("text")).toBe("done");
 });

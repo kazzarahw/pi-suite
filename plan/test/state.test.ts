@@ -258,9 +258,51 @@ test("a worksheet edit with nothing active is refused", () => {
   expect(() => applyStep(withItems("a"), { steps: ["x"] })).toThrow(/nothing is active/);
 });
 
+/**
+ * Every "nothing is active" refusal names the item to start and the argument to start it
+ * with.
+ *
+ * They all used to end at `call action "start" first` — the verb, without either required
+ * argument, and without the id, from inside an error that shows no list. The dogfooded answer
+ * to one of these was `start` with the approach "Already done - test was added and passes".
+ */
+test("a refusal for nothing being active names the id and the approach", () => {
+  const plan = withItems("first thing", "second thing");
+  for (const attempt of [
+    () => applyStep(plan, { steps: ["x"] }),
+    () => applyPromote(plan, 0),
+    () => applyFinish(plan, "a note"),
+  ]) {
+    expect(attempt).toThrow(/next up is 1 \("first thing"\)/);
+    expect(attempt).toThrow(/approach/);
+  }
+  // With nothing open either, starting is not the advice — laying the work out is.
+  expect(() => applyStep(emptyPlan(), { steps: ["x"] })).toThrow(/nothing is open either/);
+  expect(() => applyStep(emptyPlan(), { steps: ["x"] })).toThrow(/action "items"/);
+});
+
 test("a worksheet edit out of range is refused rather than silently ignored", () => {
   const plan = applyStart(withItems("a"), "1", "x", ["one"]).plan;
   expect(() => applyStep(plan, { index: 5, done: true })).toThrow(/no step at index 5/);
+  // Out of range genuinely is a count, so it says which indexes there are.
+  expect(() => applyStep(plan, { index: 5, done: true })).toThrow(/valid indexes are 0-0/);
+});
+
+/**
+ * An empty worksheet is told apart from a short one.
+ *
+ * `start` takes `steps` optionally, so an item started without them has none — and a
+ * dogfooded session ticked step 0 twice against `no step at index 0 (the worksheet has 0)`,
+ * which is a count and nothing else: it does not say the worksheet is *empty* rather than
+ * merely short, and it never mentions that `step` is also the verb that fills one.
+ */
+test("ticking a step of an empty worksheet says it is empty, and how to fill it", () => {
+  const plan = applyStart(withItems("a"), "1", "x").plan;
+  expect(() => applyStep(plan, { index: 0, done: true })).toThrow(/empty worksheet/);
+  expect(() => applyStep(plan, { index: 0, done: true })).toThrow(/"steps" array/);
+  // Leading with the outcome, per the precedent gate.ts sets: nothing was ticked.
+  expect(() => applyStep(plan, { index: 0, done: true })).toThrow(/nothing was ticked/);
+  expect(() => applyPromote(plan, 0)).toThrow(/nothing was promoted/);
 });
 
 test("promoting a step removes it from the worksheet and lands it after the active item", () => {
@@ -299,6 +341,47 @@ test("finishing costs a note, and there must be something active to finish", () 
   const plan = applyStart(withItems("a"), "1", "x").plan;
   expect(() => applyFinish(plan, "  ")).toThrow(/requires a note/);
   expect(() => applyFinish(withItems("a"), "done")).toThrow(/nothing is active/);
+});
+
+// ---------------------------------------------------------------------------
+// `finish` and the id it does not take.
+//
+// The schema carries an `id` for `start` and `drop`, and an agent reading eight actions off
+// one parameter list supplies it to `finish` too — twice in one dogfooded session. This
+// used to ignore it, which is how a wrong entry got into the log: with item 1 active,
+// `finish` naming id 2 filed item 1 under item 2's note and left item 2 open.
+// ---------------------------------------------------------------------------
+
+test("an id naming a DIFFERENT item never resolves the active one", () => {
+  const plan = applyStart(withItems("a", "b"), "1", "x").plan;
+  expect(() => applyFinish(plan, "did b", "2")).toThrow(/nothing was finished/);
+  // The refusal names both, since the confusion is about which is which.
+  expect(() => applyFinish(plan, "did b", "2")).toThrow(/1 \("a"\)/);
+  // And the plan is untouched: nothing filed, nothing removed.
+  expect(applyItems(plan, [{ content: "a" }, { content: "b" }]).plan.log).toEqual([]);
+});
+
+test("an id naming the active item is accepted as the confirmation it was meant to be", () => {
+  const plan = applyStart(withItems("a", "b"), "1", "x").plan;
+  for (const ref of ["1", "a"]) {
+    const { entry, plan: after } = applyFinish(plan, "landed", ref);
+    expect(entry).toEqual({ content: "a", outcome: "done", note: "landed" });
+    expect(after.items.map((i) => i.id)).toEqual(["2"]);
+  }
+});
+
+test("an id for an item that was never started says how to record work already done", () => {
+  const plan = withItems("a", "b");
+  // The most useful thing in the refusal is the id the agent supplied: the dogfooded answer
+  // to a bare "nothing is active" was a `start` with the approach "Already done".
+  expect(() => applyFinish(plan, "did it", "2")).toThrow(/2 \("b"\) is open but was never started/);
+  expect(() => applyFinish(plan, "did it", "2")).toThrow(/action "start" with id 2/);
+  expect(() => applyFinish(plan, "did it", "2")).toThrow(/action "drop" with id 2/);
+});
+
+test("an id matching nothing at all still refuses rather than resolving something else", () => {
+  const plan = applyStart(withItems("a"), "1", "x").plan;
+  expect(() => applyFinish(plan, "note", "99")).toThrow(/Nothing open matches "99"/);
 });
 
 test("dropping costs a reason and records it, for an active or a pending item", () => {

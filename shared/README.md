@@ -26,7 +26,7 @@ each other. Both are enforced by `test/boundaries.test.ts`.
 | `tags.ts` | the `<pi-*>` context-injection format |
 | `config.ts` | config path resolution, read/write, corrupt-file fallback |
 | `fields.ts` | config field validators (`str`, `bool`, `posNum`, `int`, `oneOf`, …) |
-| `settings-panel.ts` | the shared `/pi-<name>` settings panel |
+| `settings-panel.ts` | the shared `/pi-<name>` settings panel, and the text field for the rows a cycle cannot express |
 | `exec.ts` | the subprocess runner — always resolves, never rejects |
 | `cwd.ts` | `cwdOf(ctx)` — the only permitted way to resolve a working directory |
 | `trust.ts` | `projectTrusted(ctx)` — the gate on anything the repository supplied |

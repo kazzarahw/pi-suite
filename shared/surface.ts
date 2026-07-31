@@ -8,7 +8,7 @@
  * this can.
  *
  * Deliberately few tools. The rules that keep it small: automatic behavior is a hook,
- * not a tool (pi-git registers none); many variant actions collapse behind one
+ * not a tool (pi-git and pi-telegram register none); many variant actions collapse behind one
  * `action`-enum tool (`browser`, `lens`, `plan`); and read paths are covered by tool-result
  * echoes and context injection rather than extra read tools (pi-plan, pi-memory).
  *
@@ -54,7 +54,10 @@ export const SURFACE: readonly ExtensionSurface[] = [
   { dir: "git", command: "pi-git", tools: [] },
   { dir: "spawn", command: "pi-spawn", tools: ["spawn"] },
   { dir: "browser", command: "pi-browser", tools: ["browser"] },
-  { dir: "telegram", command: "pi-telegram", tools: ["telegram"] },
+  // No tools: pi-telegram is a bridge, and everything it does is a hook. It used to register
+  // one so the *agent* could send a message, which is the wrong direction for a messaging
+  // extension — see telegram/index.ts.
+  { dir: "telegram", command: "pi-telegram", tools: [] },
   { dir: "lens", command: "pi-lens", tools: ["lens"], wrapsToolResult: true },
 ] as const;
 

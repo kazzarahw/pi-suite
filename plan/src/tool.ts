@@ -54,7 +54,7 @@ const parameters = Type.Object({
   objective: Type.Optional(
     Type.String({
       description:
-        "For 'objective': the single overarching outcome this session is working toward, in one sentence.",
+        "For 'objective': the single overarching outcome this session is working toward, in one sentence. Omit it to restate the objective already recorded — that is how you mark the current one met without repeating its text.",
     }),
   ),
   criteria: Type.Optional(
@@ -79,14 +79,14 @@ const parameters = Type.Object({
       }),
       {
         description:
-          "For 'items': the COMPLETE list of OPEN work — it replaces the previous list. Resolved items are not in it and must not be re-sent. The active item may not be omitted: finish or drop it instead. For 'add': only the new items, appended to what is already open — prefer this when you discovered work rather than re-planning.",
+          "For 'items': the COMPLETE list of OPEN work — it replaces the previous list. Resolved items are not in it and must not be re-sent. The active item may not be omitted: finish or drop it instead. For 'add': only the new items, appended to what is already open — prefer this when you discovered work rather than re-planning. Every item is work still to be done, phrased as the change you will make ('add a test for boundLimit'), never a finding, a status, or a note about work already finished — those belong in the 'note' on finish. If it cannot be started, it is not an item.",
       },
     ),
   ),
   id: Type.Optional(
     Type.String({
       description:
-        "For 'start' and 'drop': which open item — its id, or its exact content if that is easier to quote.",
+        "For 'start' and 'drop': which open item — its id, or its exact content if that is easier to quote. 'finish' takes no id: it always resolves the one active item. Passing one that names a different item is refused rather than obeyed.",
     }),
   ),
   approach: Type.Optional(
@@ -104,7 +104,7 @@ const parameters = Type.Object({
   index: Type.Optional(
     Type.Integer({
       description:
-        "For 'step' (with `done`) and 'promote': which worksheet step, zero-based.",
+        "For 'step' (with `done`) and 'promote': which worksheet step, zero-based. Only steps that exist can be ticked — an item started without `steps` has an empty worksheet, so append some first.",
     }),
   ),
   done: Type.Optional(
@@ -155,9 +155,20 @@ const REQUIRED: Record<Action, ReadonlyArray<keyof PlanParams>> = {
   drop: ["id", "reason"],
 };
 
-function requireFields(params: PlanParams): void {
+function requireFields(params: PlanParams, plan: Plan): void {
   const action = params.action as Action;
+  // Restating the objective already on record does not have to repeat it.
+  //
+  // `applyObjective` carries every omitted field forward across a restatement — that is
+  // the documented behaviour, and marking one met is named in its comment as the common
+  // second call. This check then demanded the objective text anyway, so the cheap call the
+  // reducer was built for was the one the tool refused. A dogfooded session hit it exactly:
+  // `objective` with `status: "met"` was rejected, and the agent resent the full sentence
+  // verbatim to say a single word. The text is required only when there is nothing to
+  // restate.
+  const optional = action === "objective" && plan.objective !== null ? new Set(["objective"]) : null;
   const missing = REQUIRED[action].filter((k) => {
+    if (optional?.has(k)) return false;
     const v = params[k];
     return v === undefined || v === "";
   });
@@ -224,14 +235,16 @@ export function buildPlanTool(deps: PlanToolDeps) {
       _onUpdate: unknown,
       ctx: ExtensionContext,
     ): Promise<AgentToolResult<{ plan: Plan }>> {
-      requireFields(params);
       const action = params.action as Action;
       const prev = deps.getState();
+      requireFields(params, prev);
       let next: Plan;
 
       switch (action) {
         case "objective": {
-          const objective = params.objective!.trim();
+          // Omitted means "the one already recorded" — see `requireFields`, which is what
+          // permits the omission, and `applyObjective`, which carries the rest forward.
+          const objective = (params.objective ?? prev.objective!.objective).trim();
           if (!objective) throw new Error("[pi-plan] objective must not be blank");
           const incoming: ObjectiveInput = { objective };
           const criteria = params.criteria?.trim();
@@ -276,7 +289,9 @@ export function buildPlanTool(deps: PlanToolDeps) {
           break;
         }
         case "finish": {
-          const result = applyFinish(prev, params.note!);
+          // `params.id` is passed to be *checked*, not to select — see `applyFinish`, which
+          // dropped it on the floor and filed the active item under another item's note.
+          const result = applyFinish(prev, params.note!, params.id);
           next = result.plan;
           deps.emit("plan:item-done", { content: result.entry.content, note: result.entry.note });
           deps.emit("plan:updated", { items: next.items });
@@ -302,8 +317,10 @@ export function buildPlanTool(deps: PlanToolDeps) {
       // Plain text, per shared/README.md: Pi's default renderResult prints it verbatim, so
       // markdown and `<pi-plan>` tags would reach the transcript as literal characters.
       const body = lines.length > 0 ? lines.join("\n") : "(plan is empty)";
-      // The result is also the one place revision can be asked about in-band — see
-      // src/checkpoint.ts. Blank-line separated so the state echo stays readable as itself.
+      // The result is also where the lifecycle is taught: one line naming the transition
+      // that is legal from here, and after a resolution asking whether the list still
+      // describes the work — see src/checkpoint.ts for why this surface and not a nudge.
+      // Blank-line separated so the state echo stays readable as itself.
       const checkpoint = checkpointFor(action, next);
       const echoed = checkpoint ? `${body}\n\n${checkpoint}` : body;
       // Bounded, per `shared/README.md`: this echo is one line per open item plus one per

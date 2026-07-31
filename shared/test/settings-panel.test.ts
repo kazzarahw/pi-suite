@@ -1,7 +1,7 @@
 import { test, expect, beforeAll } from "bun:test";
 import { initTheme, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import type { SettingItem } from "@earendil-works/pi-tui";
-import { openSettingsPanel } from "../settings-panel.ts";
+import { visibleWidth, type SettingItem } from "@earendil-works/pi-tui";
+import { openSettingsPanel, textEntry } from "../settings-panel.ts";
 
 // The panel calls `getSettingsListTheme()`, which throws unless Pi's global theme has
 // been initialized. In a real session the TUI does that during startup; here it is one
@@ -164,4 +164,83 @@ test("an empty item list still renders a header rather than throwing", async () 
   const cap = capture();
   await openSettingsPanel(cap.ctx, "t", "s", [], () => {});
   expect(cap.component().render(40).length).toBeGreaterThanOrEqual(3);
+});
+
+// ---------------------------------------------------------------------------
+// The text field, for the rows a cycle cannot express.
+//
+// `SettingsList` changes a row by stepping through the `values` it was handed, which cannot
+// express a value nobody can enumerate. pi-telegram's bot token proved it: the only string a panel
+// could offer for a credential it has never seen is the placeholder meaning *unset*, so the row
+// cycled `(not set)` → `(not set)` and the token had to be hand-edited into the JSON file.
+// ---------------------------------------------------------------------------
+
+test("the text field submits what was typed", () => {
+  const seen: Array<string | undefined> = [];
+  const field = textEntry({ label: "Token", initial: "", done: (v) => seen.push(v) });
+  for (const ch of "abc") field.handleInput?.(ch);
+  field.handleInput?.("\n");
+  expect(seen).toEqual(["abc"]);
+});
+
+/**
+ * The cursor starts at the end of a prefilled value.
+ *
+ * `Input.setValue` *clamps* the cursor rather than moving it, and a fresh `Input` has it at 0 — so
+ * without correcting it the first character typed would land at the front of the existing value.
+ */
+test("typing into a prefilled field appends rather than prepends", () => {
+  const seen: Array<string | undefined> = [];
+  const field = textEntry({ label: "Command", initial: "bun", done: (v) => seen.push(v) });
+  for (const ch of " test") field.handleInput?.(ch);
+  field.handleInput?.("\n");
+  expect(seen).toEqual(["bun test"]);
+});
+
+test("escape cancels without a value", () => {
+  const seen: Array<string | undefined> = [];
+  const field = textEntry({ label: "Token", initial: "x", done: (v) => seen.push(v) });
+  field.handleInput?.("\x1b");
+  expect(seen).toEqual([undefined]);
+});
+
+/**
+ * A blank submission is a value everywhere except on a credential.
+ *
+ * A secret opens *blank* because it may never be rendered, so Enter on an untouched field would
+ * read as a confirmation and land as a deletion of the token.
+ */
+test("blankIsCancel separates an empty value from an untouched credential", () => {
+  const plain: Array<string | undefined> = [];
+  textEntry({ label: "Cmd", initial: "", done: (v) => plain.push(v) }).handleInput?.("\n");
+  expect(plain).toEqual([""]);
+
+  const secret: Array<string | undefined> = [];
+  textEntry({
+    label: "Token",
+    initial: "",
+    blankIsCancel: true,
+    done: (v) => secret.push(v),
+  }).handleInput?.("\n");
+  expect(secret).toEqual([undefined]);
+});
+
+test("every line the text field renders is clipped to the width", () => {
+  const field = textEntry({
+    label: "A very long label ".repeat(10),
+    initial: "y".repeat(300),
+    hint: "and a hint that also runs well past the edge of any terminal ".repeat(5),
+    done: () => {},
+  });
+  for (const width of [20, 40, 80]) {
+    for (const line of field.render(width)) {
+      // `visibleWidth`, not `line.length`: the `Input` draws its cursor with a reverse-video
+      // escape sequence, so the *string* is legitimately longer than the column it occupies.
+      // Pi's own limit is on columns — measuring characters here would fail a correct render and,
+      // worse, invite someone to "fix" it by clipping the escape codes in half.
+      // DO NOT RELAX: a line wider than the terminal crashes pi outright.
+      expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+    }
+  }
+  field.invalidate();
 });

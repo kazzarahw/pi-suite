@@ -19,7 +19,7 @@
  */
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type { AutocompleteItem, SettingItem } from "@earendil-works/pi-tui";
-import { openSettingsPanel } from "./settings-panel.ts";
+import { openSettingsPanel, textEntry } from "./settings-panel.ts";
 
 /**
  * How a field's stored value is shown to a user.
@@ -268,6 +268,55 @@ function panelValues<T>(field: Field<T>, cfg: T): string[] {
   return values.sort((a, b) => asNumber(a) - asNumber(b));
 }
 
+/**
+ * The row's text field, for the fields a cycle cannot express.
+ *
+ * Only `string` fields get one, and every one of them gets one. A string is free text by
+ * definition: `presets` are the *likely* values, never the possible ones, and a field whose
+ * possible values were enumerable would have been declared an `enum`. pi-telegram's token is
+ * the case that proves the point — its only preset-shaped value is the placeholder meaning
+ * *unset*, so the row cycled `(not set)` → `(not set)` and the credential had to be
+ * hand-written into the JSON.
+ *
+ * Presets survive as a hint rather than as keystrokes, which is the one thing this costs:
+ * `binPath`, `verifyCmd`, and `defaultModel` were a Space away from their common value and are
+ * now a typed line. They are also still one Tab away on the command form, which completes from
+ * the same list. Enum, bool, and int fields keep cycling untouched — their value sets really
+ * are closed, or (for int) a bounded set of presets plus a command-line escape hatch.
+ */
+function textFieldSubmenu<T>(field: Field<T>, cfg: T): SettingItem["submenu"] | undefined {
+  if (field.kind !== "string") return undefined;
+  const secret = field.secret === true;
+  const stored = cfg[field.key];
+
+  const hints: string[] = [];
+  if (field.display) hints.push(`blank = ${field.display.placeholder}`);
+  const presets = resolvePresets(field.presets);
+  if (presets.length > 0) hints.push(`e.g. ${presets.join(", ")}`);
+  // A secret starts blank because it may never be rendered, so Enter on an untouched field
+  // would read as a confirmation and land as a deletion. `blankIsCancel` stops that, which
+  // leaves the field with no way to clear itself — so the hint names the one that works.
+  if (secret) hints.push("stored value never shown");
+
+  return (_currentValue, done) =>
+    textEntry({
+      label: `  ${field.label}`,
+      initial: secret ? "" : typeof stored === "string" ? stored : "",
+      hint: hints.length > 0 ? `  ${hints.join(" · ")}` : undefined,
+      blankIsCancel: secret,
+      done: (value) => {
+        if (value === undefined) return done(undefined);
+        // A blank submission *is* picking the placeholder, so `parseValue` takes that branch
+        // and `storedWhenPlaceholder` still decides what lands — including an explicit
+        // `undefined`, which means remove the key rather than blank it. Passing `""` straight
+        // through would quietly turn pi-browser's "agent-browser decides" back into an empty
+        // string, which is the exact trap `Display` warns about, arriving from the new
+        // direction.
+        done(value === "" && field.display ? field.display.placeholder : value);
+      },
+    });
+}
+
 /** What `pi.registerCommand(name, options)` takes — the shape Pi's registry expects. */
 export interface CommandOptions {
   description: string;
@@ -398,19 +447,32 @@ export function defineConfigCommand<T extends object>(
           return;
         }
 
-        const items: SettingItem[] = fields.map((f) => ({
-          id: f.key,
-          label: f.label,
-          currentValue: displayValue(f, cfg),
-          values: panelValues(f, cfg),
-        }));
+        const items: SettingItem[] = fields.map((f) => {
+          const submenu = textFieldSubmenu(f, cfg);
+          return {
+            id: f.key,
+            label: f.label,
+            currentValue: displayValue(f, cfg),
+            // One or the other, never both: `SettingsList` prefers a submenu and ignores
+            // `values` entirely when there is one, and a row carrying a list nothing reads is
+            // the kind of thing a later reader tries to make work.
+            ...(submenu ? { submenu } : { values: panelValues(f, cfg) }),
+          };
+        });
         const subtitle =
           typeof opts.subtitle === "function" ? opts.subtitle(ctx) : (opts.subtitle ?? "");
         await openSettingsPanel(ctx, `${command} · settings`, subtitle, items, (id, val) => {
           const field = fields.find((f) => f.key === id);
           // The panel only ever emits ids it was given, but a silent no-op on a
           // mismatch is how a renamed key stops persisting without anyone noticing.
-          if (field) apply(field, val, notify);
+          if (!field) return;
+          apply(field, val, notify);
+          // Re-read and re-derive rather than echoing `val` back, which is what the panel
+          // would otherwise display. Three cases need it and they all arrive here: a secret
+          // must show the mask instead of the credential, a blank must show its placeholder
+          // instead of an empty row, and a value `apply` *refused* must revert to what is
+          // still stored rather than sit there looking accepted.
+          return displayValue(field, deps.loadConfig());
         });
       },
     },

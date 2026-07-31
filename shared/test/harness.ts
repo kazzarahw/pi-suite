@@ -45,6 +45,14 @@ export interface FakeApi {
   emitted: Array<{ event: string; data: unknown }>;
   /** Everything queued via `pi.sendMessage`. */
   messages: Array<{ message: unknown; options?: unknown }>;
+  /**
+   * Everything injected via `pi.sendUserMessage` — a message arriving *as the user*.
+   *
+   * Distinct from `messages` because the two are different acts. `sendMessage` queues harness
+   * output the model reads as context; this speaks in the user's own voice and always triggers a
+   * turn. pi-telegram's whole inbound half is this call, and there was nowhere to assert it.
+   */
+  userMessages: Array<{ content: unknown; options?: unknown }>;
   /** Everything persisted via `pi.appendEntry`. */
   entries: Array<{ customType: string; data?: unknown }>;
   /** Every `pi.setLabel` call, in order. `undefined` clears a label. */
@@ -58,6 +66,7 @@ export interface FakeApi {
     on(event: string, handler: (data: unknown) => void): void;
   };
   sendMessage(message: unknown, options?: unknown): void;
+  sendUserMessage(content: unknown, options?: unknown): void;
   appendEntry(customType: string, data?: unknown): void;
   setLabel(entryId: string, label: string | undefined): void;
 
@@ -77,6 +86,7 @@ export function createFakeApi(): FakeApi {
   const busHandlers = new Map<string, Array<(data: unknown) => void>>();
   const emitted: Array<{ event: string; data: unknown }> = [];
   const messages: Array<{ message: unknown; options?: unknown }> = [];
+  const userMessages: Array<{ content: unknown; options?: unknown }> = [];
   const entries: Array<{ customType: string; data?: unknown }> = [];
   const labels: FakeApi["labels"] = [];
 
@@ -87,6 +97,7 @@ export function createFakeApi(): FakeApi {
     busHandlers,
     emitted,
     messages,
+    userMessages,
     entries,
     labels,
     registerTool(tool) {
@@ -112,6 +123,9 @@ export function createFakeApi(): FakeApi {
     },
     sendMessage(message, options) {
       messages.push({ message, options });
+    },
+    sendUserMessage(content, options) {
+      userMessages.push({ content, options });
     },
     appendEntry(customType, data) {
       entries.push({ customType, data });
